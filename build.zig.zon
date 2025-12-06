@@ -1,0 +1,17 @@
+.{
+    .name = .guiz,
+    .version = "0.0.0",
+    .fingerprint = 0xd160f2d1f466069d,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .zig_objc = .{
+            .url = "git+https://github.com/mitchellh/zig-objc.git#49dae46e413647545cc5c1f3e7798e9c761976b0",
+            .hash = "zig_objc-0.0.0-Ir_Sp5wTAQDuSB-PaIBSxNPhnQFT-H8UGd5kBAdnUaD4",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
