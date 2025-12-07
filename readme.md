@@ -1,8 +1,8 @@
-# gooey 🎨
+# gooey
 
 **A GPU-accelerated UI framework for Zig, inspired by [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui)**
 
-gooey (Zig GUI) is a hybrid immediate/retained mode UI framework designed for building fast, GPU-rendered applications on macOS. It uses Metal for rendering and integrates deeply with macOS system APIs.
+Gooey is a hybrid immediate/retained mode UI framework designed for building fast, GPU-rendered applications on macOS. It uses Metal for rendering and integrates deeply with macOS system APIs.
 
 > ⚠️ **Early Development**: This project is in its initial stages. Currently macOS-only, with plans for cross-platform support.
 
@@ -105,7 +105,7 @@ zig build test # Run tests
 
 ### Phase 4: Layout System
 
-- [ ] Flexbox layout (port/bind Taffy)
+- [ ] Flexbox layout (port/bind Taffy or Clay.h)
 - [ ] Element abstraction
 - [ ] View composition
 
