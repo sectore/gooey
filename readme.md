@@ -16,6 +16,7 @@ Gooey is a hybrid immediate/retained mode UI framework designed for building fas
 
 ## Architecture
 
+```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Application │
 ├─────────────────────────────────────────────────────────────────────┤
@@ -34,9 +35,11 @@ Gooey is a hybrid immediate/retained mode UI framework designed for building fas
 │ - NSApplication / NSWindow │ - CVDisplayLink (vsync) │
 │ - CAMetalLayer │ - GCD dispatcher │
 └─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Project Structure
 
+```
 src/
 ├── main.zig # Example application
 ├── root.zig # Library root, re-exports public API
@@ -65,6 +68,7 @@ src/
 ├── quad.zig # Quad shader (rounded rects)
 ├── shadow.zig # Shadow shader (SDF blur)
 └── text.zig # Text pipeline
+```
 
 ## Quick Start
 
