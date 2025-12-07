@@ -288,6 +288,14 @@ pub const MTLRegion = extern struct {
     size: MTLSize,
 };
 
+/// https://developer.apple.com/documentation/metal/mtlstoragemode
+pub const MTLStorageMode = enum(c_ulong) {
+    shared = 0, // CPU + GPU (unified memory)
+    managed = 1, // CPU + GPU with sync (discrete GPUs)
+    private = 2, // GPU only
+    memoryless = 3, // Tile memory only (Apple GPUs, render targets)
+};
+
 /// CoreGraphics size - used by CAMetalLayer
 pub const CGSize = extern struct {
     width: f64,

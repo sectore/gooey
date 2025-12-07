@@ -24,6 +24,7 @@ pub const Window = struct {
     scene: ?*const scene_mod.Scene,
     delegate: ?objc.Object = null,
     resize_mutex: std.Thread.Mutex = .{},
+    benchmark_mode: bool = true, // Set true to force
     in_live_resize: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub const Options = struct {
@@ -186,6 +187,10 @@ pub const Window = struct {
 
         // During live resize, render synchronously for smooth visuals
         if (self.in_live_resize.load(.acquire)) {
+            // Create autorelease pool for Metal objects created during render
+            const pool = createAutoreleasePool() orelse return;
+            defer drainAutoreleasePool(pool);
+
             if (self.scene) |s| {
                 self.renderer.renderSceneSynchronous(s, self.background_color) catch {};
             } else {
@@ -313,8 +318,23 @@ fn displayLinkCallback(
     if (user_info) |ptr| {
         const window: *Window = @ptrCast(@alignCast(ptr));
 
+        // Skip rendering during live resize - main thread handles it synchronously
+        if (window.in_live_resize.load(.acquire)) {
+            return .success;
+        }
+
+        // Benchmark mode: always render. Normal mode: only when dirty
+        const should_render = window.benchmark_mode or
+            window.needs_render.swap(false, .acq_rel);
+
         // Only render if needed (dirty flag pattern)
-        if (window.needs_render.swap(false, .acq_rel)) {
+        if (should_render) {
+            // CRITICAL: Create autorelease pool for this background thread!
+            // Metal objects (command buffers, render pass descriptors, drawables)
+            // are autoreleased and will leak without a pool.
+            const pool = createAutoreleasePool() orelse return .success;
+            defer drainAutoreleasePool(pool);
+
             // Lock to prevent race with resize on main thread
             window.resize_mutex.lock();
             defer window.resize_mutex.unlock();
@@ -331,6 +351,17 @@ fn displayLinkCallback(
     }
 
     return .success;
+}
+
+// Autorelease pool helpers for background threads
+fn createAutoreleasePool() ?objc.Object {
+    const NSAutoreleasePool = objc.getClass("NSAutoreleasePool") orelse return null;
+    const pool = NSAutoreleasePool.msgSend(objc.Object, "alloc", .{});
+    return pool.msgSend(objc.Object, "init", .{});
+}
+
+fn drainAutoreleasePool(pool: objc.Object) void {
+    pool.msgSend(void, "drain", .{});
 }
 
 // CoreGraphics types for Objective-C interop

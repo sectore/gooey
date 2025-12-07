@@ -18,6 +18,8 @@ pub const Renderer = struct {
     command_queue: objc.Object,
     layer: objc.Object,
 
+    unified_memory: bool, // True on Apple Silicon
+
     // Triangle pipeline (existing demo)
     pipeline_state: ?objc.Object,
     vertex_buffer: ?objc.Object,
@@ -41,7 +43,11 @@ pub const Renderer = struct {
         const device_ptr = mtl.MTLCreateSystemDefaultDevice() orelse
             return error.MetalNotAvailable;
 
+        // In init(), after getting device:
         const device = objc.Object.fromId(device_ptr);
+
+        // Detect unified memory (Apple Silicon)
+        const unified_memory = device.msgSend(bool, "hasUnifiedMemory", .{});
 
         // Create command queue
         const command_queue = device.msgSend(objc.Object, "newCommandQueue", .{});
@@ -69,6 +75,7 @@ pub const Renderer = struct {
             .msaa_texture = null,
             .size = size,
             .sample_count = 4, // MSAA 4x
+            .unified_memory = unified_memory,
         };
 
         try self.createMSAATexture();
@@ -108,8 +115,14 @@ pub const Renderer = struct {
         const usage = mtl.MTLTextureUsage.render_target_only;
         desc.msgSend(void, "setUsage:", .{@as(c_ulong, @bitCast(usage))});
 
-        // Private storage mode (GPU only)
-        desc.msgSend(void, "setStorageMode:", .{@intFromEnum(mtl.MTLResourceOptions.StorageMode.private)});
+        // Use memoryless on unified memory (Apple Silicon)
+        // MSAA textures are only needed during the render pass
+        const storage_mode: mtl.MTLStorageMode = if (self.unified_memory)
+            .memoryless // No backing memory needed!
+        else
+            .private; // GPU-only memory for discrete GPUs
+
+        desc.msgSend(void, "setStorageMode:", .{@intFromEnum(storage_mode)});
 
         const texture_ptr = self.device.msgSend(?*anyopaque, "newTextureWithDescriptor:", .{desc.value});
         if (texture_ptr == null) {
@@ -206,15 +219,21 @@ pub const Renderer = struct {
         self.pipeline_state = objc.Object.fromId(pipeline_ptr);
 
         // Create vertex buffer with triangle vertices
+        const buffer_storage: mtl.MTLResourceOptions = if (self.unified_memory)
+            .{ .storage_mode = .shared }
+        else
+            .{ .storage_mode = .managed };
+
         const buffer_ptr = self.device.msgSend(
             ?*anyopaque,
             "newBufferWithBytes:length:options:",
             .{
                 @as(*const anyopaque, @ptrCast(&shaders.triangle_vertices)),
                 @as(c_ulong, @sizeOf(@TypeOf(shaders.triangle_vertices))),
-                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+                @as(c_ulong, @bitCast(buffer_storage)),
             },
         );
+
         if (buffer_ptr == null) {
             return error.BufferCreationFailed;
         }
@@ -291,6 +310,11 @@ pub const Renderer = struct {
         }
         self.quad_pipeline_state = objc.Object.fromId(pipeline_ptr);
 
+        const buffer_storage: mtl.MTLResourceOptions = if (self.unified_memory)
+            .{ .storage_mode = .shared }
+        else
+            .{ .storage_mode = .managed };
+
         // Create unit vertex buffer (6 vertices for 2 triangles forming a quad)
         const buffer_ptr = self.device.msgSend(
             ?*anyopaque,
@@ -298,7 +322,7 @@ pub const Renderer = struct {
             .{
                 @as(*const anyopaque, @ptrCast(&quad_shader.unit_vertices)),
                 @as(c_ulong, @sizeOf(@TypeOf(quad_shader.unit_vertices))),
-                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+                @as(c_ulong, @bitCast(buffer_storage)),
             },
         );
         if (buffer_ptr == null) {
@@ -322,12 +346,18 @@ pub const Renderer = struct {
         const new_capacity = @max(count, self.quad_instance_capacity * 2);
         const buffer_size = new_capacity * @sizeOf(scene_mod.Quad);
 
+        // Use shared storage on unified memory (zero-copy!)
+        const storage_options: mtl.MTLResourceOptions = if (self.unified_memory)
+            .{ .storage_mode = .shared } // CPU + GPU same memory
+        else
+            .{ .storage_mode = .managed }; // Needs explicit sync
+
         const buffer_ptr = self.device.msgSend(
             ?*anyopaque,
             "newBufferWithLength:options:",
             .{
                 @as(c_ulong, buffer_size),
-                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+                @as(c_ulong, @bitCast(storage_options)),
             },
         );
         if (buffer_ptr == null) {
