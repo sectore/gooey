@@ -4,5 +4,6 @@
 
 pub const api = @import("api.zig");
 pub const shaders = @import("shaders.zig");
+pub const quad = @import("quad.zig");
 pub const Renderer = @import("renderer.zig").Renderer;
 pub const Vertex = @import("renderer.zig").Vertex;

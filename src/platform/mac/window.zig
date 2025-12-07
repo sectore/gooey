@@ -3,6 +3,7 @@
 const std = @import("std");
 const objc = @import("objc");
 const geometry = @import("../../core/geometry.zig");
+const scene_mod = @import("../../core/scene.zig");
 const platform = @import("platform.zig");
 const metal = @import("metal/metal.zig");
 const display_link = @import("display_link.zig");
@@ -20,6 +21,10 @@ pub const Window = struct {
     title: []const u8,
     background_color: geometry.Color,
     needs_render: std.atomic.Value(bool),
+    scene: ?*const scene_mod.Scene,
+    delegate: ?objc.Object = null,
+    resize_mutex: std.Thread.Mutex = .{},
+    in_live_resize: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     pub const Options = struct {
         title: []const u8 = "Guiz Window",
@@ -49,6 +54,7 @@ pub const Window = struct {
             .title = options.title,
             .background_color = options.background_color,
             .needs_render = std.atomic.Value(bool).init(true),
+            .scene = null,
         };
 
         // Create NSWindow
@@ -75,6 +81,10 @@ pub const Window = struct {
                 false,
             },
         );
+
+        const window_delegate = @import("window_delegate.zig");
+        self.delegate = try window_delegate.create(self);
+        self.ns_window.msgSend(void, "setDelegate:", .{self.delegate.?.value});
 
         // Set window title
         self.setTitle(options.title);
@@ -117,13 +127,102 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Self) void {
-        // Stop display link first
+        if (self.delegate) |d| {
+            self.ns_window.msgSend(void, "setDelegate:", .{@as(?*anyopaque, null)});
+            d.msgSend(void, "release", .{});
+        }
+        // Stop display link
         if (self.display_link) |*dl| {
             dl.deinit();
         }
         self.renderer.deinit();
         self.ns_window.msgSend(void, "close", .{});
         self.allocator.destroy(self);
+    }
+
+    /// Called by delegate when window is resized
+    pub fn handleResize(self: *Self) void {
+        // Get current view bounds
+        const bounds: NSRect = self.ns_view.msgSend(NSRect, "bounds", .{});
+
+        const new_width = bounds.size.width;
+        const new_height = bounds.size.height;
+
+        // Validate minimum size to prevent invalid textures
+        if (new_width < 1 or new_height < 1) {
+            return;
+        }
+
+        // Get current scale factor (may have changed if moved between displays)
+        const new_scale = self.ns_window.msgSend(f64, "backingScaleFactor", .{});
+
+        // Only update if something changed
+        if (new_width == self.size.width and
+            new_height == self.size.height and
+            new_scale == self.scale_factor)
+        {
+            return;
+        }
+
+        // Lock to prevent race with render thread
+        self.resize_mutex.lock();
+        defer self.resize_mutex.unlock();
+
+        self.size.width = new_width;
+        self.size.height = new_height;
+        self.scale_factor = new_scale;
+
+        // Update Metal layer contents scale (for Retina)
+        self.metal_layer.msgSend(void, "setContentsScale:", .{new_scale});
+
+        // Let renderer handle drawable size and MSAA texture
+        self.renderer.resize(geometry.Size(f64).init(
+            new_width * new_scale,
+            new_height * new_scale,
+        ));
+
+        // Request re-render
+        self.requestRender();
+
+        // During live resize, render synchronously for smooth visuals
+        if (self.in_live_resize.load(.acquire)) {
+            if (self.scene) |s| {
+                self.renderer.renderSceneSynchronous(s, self.background_color) catch {};
+            } else {
+                self.renderer.clearSynchronous(self.background_color);
+            }
+        }
+    }
+
+    pub fn handleClose(self: *Self) void {
+        // Stop display link before window closes
+        if (self.display_link) |*dl| {
+            dl.stop();
+        }
+    }
+
+    pub fn handleFocusChange(self: *Self, focused: bool) void {
+        _ = focused;
+        // Could track focus state, adjust rendering, etc.
+        self.requestRender();
+    }
+
+    pub fn handleLiveResizeStart(self: *Self) void {
+        self.in_live_resize.store(true, .release);
+        // Enable synchronous presentation for smooth resize
+        self.metal_layer.msgSend(void, "setPresentsWithTransaction:", .{true});
+    }
+
+    pub fn handleLiveResizeEnd(self: *Self) void {
+        self.in_live_resize.store(false, .release);
+        // Disable synchronous presentation for better performance
+        self.metal_layer.msgSend(void, "setPresentsWithTransaction:", .{false});
+        self.requestRender();
+    }
+
+    /// Check if currently in live resize
+    pub fn isInLiveResize(self: *const Self) bool {
+        return self.in_live_resize.load(.acquire);
     }
 
     fn setupMetalLayer(self: *Self) !void {
@@ -185,6 +284,11 @@ pub const Window = struct {
         self.requestRender(); // Mark dirty for next vsync
     }
 
+    pub fn setScene(self: *Self, s: *const scene_mod.Scene) void {
+        self.scene = s;
+        self.requestRender();
+    }
+
     pub fn getSize(self: *const Self) geometry.Size(f64) {
         return self.size;
     }
@@ -209,12 +313,20 @@ fn displayLinkCallback(
     if (user_info) |ptr| {
         const window: *Window = @ptrCast(@alignCast(ptr));
 
-        // Always render for now (to see Metal HUD)
-        // window.renderer.clear(window.background_color);
-
         // Only render if needed (dirty flag pattern)
         if (window.needs_render.swap(false, .acq_rel)) {
-            window.renderer.clear(window.background_color);
+            // Lock to prevent race with resize on main thread
+            window.resize_mutex.lock();
+            defer window.resize_mutex.unlock();
+
+            if (window.scene) |s| {
+                window.renderer.renderScene(s, window.background_color) catch |err| {
+                    std.debug.print("renderScene error: {}\n", .{err});
+                    window.renderer.clear(window.background_color);
+                };
+            } else {
+                window.renderer.clear(window.background_color);
+            }
         }
     }
 

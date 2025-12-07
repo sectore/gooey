@@ -2,8 +2,10 @@
 const std = @import("std");
 const objc = @import("objc");
 const geometry = @import("../../../core/geometry.zig");
+const scene_mod = @import("../../../core/scene.zig");
 const mtl = @import("api.zig");
 const shaders = @import("shaders.zig");
+const quad_shader = @import("quad.zig");
 
 /// Vertex data: position (x, y) + color (r, g, b, a)
 pub const Vertex = extern struct {
@@ -15,16 +17,27 @@ pub const Renderer = struct {
     device: objc.Object,
     command_queue: objc.Object,
     layer: objc.Object,
+
+    // Triangle pipeline (existing demo)
     pipeline_state: ?objc.Object,
     vertex_buffer: ?objc.Object,
+
+    // Quad pipeline (new)
+    quad_pipeline_state: ?objc.Object,
+    quad_unit_vertex_buffer: ?objc.Object,
+    quad_instance_buffer: ?objc.Object,
+    quad_instance_capacity: usize,
+
+    // MSAA
     msaa_texture: ?objc.Object,
     size: geometry.Size(f64),
     sample_count: u32,
 
     const Self = @This();
+    const INITIAL_QUAD_CAPACITY = 256;
 
     pub fn init(layer: objc.Object, size: geometry.Size(f64)) !Self {
-        // Get default Metal device using clean extern declaration
+        // Get default Metal device
         const device_ptr = mtl.MTLCreateSystemDefaultDevice() orelse
             return error.MetalNotAvailable;
 
@@ -49,6 +62,10 @@ pub const Renderer = struct {
             .layer = layer,
             .pipeline_state = null,
             .vertex_buffer = null,
+            .quad_pipeline_state = null,
+            .quad_unit_vertex_buffer = null,
+            .quad_instance_buffer = null,
+            .quad_instance_capacity = 0,
             .msaa_texture = null,
             .size = size,
             .sample_count = 4, // MSAA 4x
@@ -56,6 +73,7 @@ pub const Renderer = struct {
 
         try self.createMSAATexture();
         try self.setupPipeline();
+        try self.setupQuadPipeline();
 
         return self;
     }
@@ -70,7 +88,7 @@ pub const Renderer = struct {
         const MTLTextureDescriptor = objc.getClass("MTLTextureDescriptor") orelse
             return error.ClassNotFound;
 
-        // Create 2D multisample texture descriptor with clean enum values
+        // Create 2D multisample texture descriptor
         const desc = MTLTextureDescriptor.msgSend(
             objc.Object,
             "texture2DDescriptorWithPixelFormat:width:height:mipmapped:",
@@ -82,11 +100,11 @@ pub const Renderer = struct {
             },
         );
 
-        // Set texture type to 2DMultisample using clean enum
+        // Set texture type to 2DMultisample
         desc.msgSend(void, "setTextureType:", .{@intFromEnum(mtl.MTLTextureType.type_2d_multisample)});
         desc.msgSend(void, "setSampleCount:", .{@as(c_ulong, self.sample_count)});
 
-        // Use clean packed struct for texture usage
+        // Set texture usage
         const usage = mtl.MTLTextureUsage.render_target_only;
         desc.msgSend(void, "setUsage:", .{@as(c_ulong, @bitCast(usage))});
 
@@ -137,7 +155,7 @@ pub const Renderer = struct {
         defer vertex_fn.msgSend(void, "release", .{});
         defer fragment_fn.msgSend(void, "release", .{});
 
-        // Create vertex descriptor with clean enum values
+        // Create vertex descriptor
         const MTLVertexDescriptor = objc.getClass("MTLVertexDescriptor") orelse
             return error.ClassNotFound;
         const vertex_desc = MTLVertexDescriptor.msgSend(objc.Object, "vertexDescriptor", .{});
@@ -171,7 +189,7 @@ pub const Renderer = struct {
         pipeline_desc_init.msgSend(void, "setVertexDescriptor:", .{vertex_desc.value});
         pipeline_desc_init.msgSend(void, "setSampleCount:", .{@as(c_ulong, self.sample_count)});
 
-        // Set pixel format using clean enum
+        // Set pixel format
         const color_attachments = pipeline_desc_init.msgSend(objc.Object, "colorAttachments", .{});
         const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
         color_attachment_0.msgSend(void, "setPixelFormat:", .{@intFromEnum(mtl.MTLPixelFormat.bgra8unorm)});
@@ -203,10 +221,130 @@ pub const Renderer = struct {
         self.vertex_buffer = objc.Object.fromId(buffer_ptr);
     }
 
+    fn setupQuadPipeline(self: *Self) !void {
+        const NSString = objc.getClass("NSString") orelse return error.ClassNotFound;
+        const source_str = NSString.msgSend(
+            objc.Object,
+            "stringWithUTF8String:",
+            .{quad_shader.quad_shader_source.ptr},
+        );
+
+        // Compile shader library
+        const library_ptr = self.device.msgSend(
+            ?*anyopaque,
+            "newLibraryWithSource:options:error:",
+            .{ source_str.value, @as(?*anyopaque, null), @as(?*anyopaque, null) },
+        );
+        if (library_ptr == null) {
+            std.debug.print("Failed to compile quad shader library\n", .{});
+            return error.ShaderCompilationFailed;
+        }
+        const library = objc.Object.fromId(library_ptr);
+        defer library.msgSend(void, "release", .{});
+
+        // Get vertex and fragment functions
+        const vertex_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"quad_vertex"});
+        const fragment_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"quad_fragment"});
+
+        const vertex_fn_ptr = library.msgSend(?*anyopaque, "newFunctionWithName:", .{vertex_name.value});
+        const fragment_fn_ptr = library.msgSend(?*anyopaque, "newFunctionWithName:", .{fragment_name.value});
+
+        if (vertex_fn_ptr == null or fragment_fn_ptr == null) {
+            std.debug.print("Failed to find quad shader functions\n", .{});
+            return error.ShaderFunctionNotFound;
+        }
+        const vertex_fn = objc.Object.fromId(vertex_fn_ptr);
+        const fragment_fn = objc.Object.fromId(fragment_fn_ptr);
+        defer vertex_fn.msgSend(void, "release", .{});
+        defer fragment_fn.msgSend(void, "release", .{});
+
+        // Create pipeline descriptor
+        const MTLRenderPipelineDescriptor = objc.getClass("MTLRenderPipelineDescriptor") orelse
+            return error.ClassNotFound;
+        const pipeline_desc = MTLRenderPipelineDescriptor.msgSend(objc.Object, "alloc", .{});
+        const pipeline_desc_init = pipeline_desc.msgSend(objc.Object, "init", .{});
+
+        pipeline_desc_init.msgSend(void, "setVertexFunction:", .{vertex_fn.value});
+        pipeline_desc_init.msgSend(void, "setFragmentFunction:", .{fragment_fn.value});
+        pipeline_desc_init.msgSend(void, "setSampleCount:", .{@as(c_ulong, self.sample_count)});
+
+        // Set pixel format and blending
+        const color_attachments = pipeline_desc_init.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+        color_attachment_0.msgSend(void, "setPixelFormat:", .{@intFromEnum(mtl.MTLPixelFormat.bgra8unorm)});
+
+        // Enable alpha blending
+        color_attachment_0.msgSend(void, "setBlendingEnabled:", .{true});
+        color_attachment_0.msgSend(void, "setSourceRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.source_alpha)});
+        color_attachment_0.msgSend(void, "setDestinationRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
+        color_attachment_0.msgSend(void, "setSourceAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one)});
+        color_attachment_0.msgSend(void, "setDestinationAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
+
+        // Create pipeline state
+        const pipeline_ptr = self.device.msgSend(
+            ?*anyopaque,
+            "newRenderPipelineStateWithDescriptor:error:",
+            .{ pipeline_desc_init.value, @as(?*anyopaque, null) },
+        );
+        if (pipeline_ptr == null) {
+            return error.PipelineCreationFailed;
+        }
+        self.quad_pipeline_state = objc.Object.fromId(pipeline_ptr);
+
+        // Create unit vertex buffer (6 vertices for 2 triangles forming a quad)
+        const buffer_ptr = self.device.msgSend(
+            ?*anyopaque,
+            "newBufferWithBytes:length:options:",
+            .{
+                @as(*const anyopaque, @ptrCast(&quad_shader.unit_vertices)),
+                @as(c_ulong, @sizeOf(@TypeOf(quad_shader.unit_vertices))),
+                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+            },
+        );
+        if (buffer_ptr == null) {
+            return error.BufferCreationFailed;
+        }
+        self.quad_unit_vertex_buffer = objc.Object.fromId(buffer_ptr);
+
+        // Pre-allocate instance buffer
+        try self.ensureQuadCapacity(INITIAL_QUAD_CAPACITY);
+    }
+
+    fn ensureQuadCapacity(self: *Self, count: usize) !void {
+        if (count <= self.quad_instance_capacity) return;
+
+        // Release old buffer
+        if (self.quad_instance_buffer) |buf| {
+            buf.msgSend(void, "release", .{});
+        }
+
+        // Allocate new buffer with room to grow
+        const new_capacity = @max(count, self.quad_instance_capacity * 2);
+        const buffer_size = new_capacity * @sizeOf(scene_mod.Quad);
+
+        const buffer_ptr = self.device.msgSend(
+            ?*anyopaque,
+            "newBufferWithLength:options:",
+            .{
+                @as(c_ulong, buffer_size),
+                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+            },
+        );
+        if (buffer_ptr == null) {
+            return error.BufferCreationFailed;
+        }
+
+        self.quad_instance_buffer = objc.Object.fromId(buffer_ptr);
+        self.quad_instance_capacity = new_capacity;
+    }
+
     pub fn deinit(self: *Self) void {
         if (self.msaa_texture) |tex| tex.msgSend(void, "release", .{});
         if (self.pipeline_state) |ps| ps.msgSend(void, "release", .{});
         if (self.vertex_buffer) |vb| vb.msgSend(void, "release", .{});
+        if (self.quad_pipeline_state) |ps| ps.msgSend(void, "release", .{});
+        if (self.quad_unit_vertex_buffer) |vb| vb.msgSend(void, "release", .{});
+        if (self.quad_instance_buffer) |ib| ib.msgSend(void, "release", .{});
         self.command_queue.msgSend(void, "release", .{});
         self.device.msgSend(void, "release", .{});
     }
@@ -233,7 +371,6 @@ pub const Renderer = struct {
         const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
         const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
 
-        // Use clean enum values for load/store actions
         color_attachment_0.msgSend(void, "setTexture:", .{msaa_tex.value});
         color_attachment_0.msgSend(void, "setResolveTexture:", .{resolve_texture.value});
         color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.clear)});
@@ -268,12 +405,317 @@ pub const Renderer = struct {
         command_buffer.msgSend(void, "commit", .{});
     }
 
+    /// Render a scene containing quads
+    pub fn renderScene(self: *Self, s: *const scene_mod.Scene, clear_color: geometry.Color) !void {
+        const quads = s.getQuads();
+
+        if (quads.len == 0) {
+            self.render(clear_color, false);
+            return;
+        }
+
+        // Ensure we have enough buffer space
+        try self.ensureQuadCapacity(quads.len);
+
+        // Copy quad data to GPU buffer
+        const buffer = self.quad_instance_buffer orelse return error.NoBuffer;
+        const contents_ptr = buffer.msgSend(?*anyopaque, "contents", .{});
+        if (contents_ptr) |ptr| {
+            const dest: [*]scene_mod.Quad = @ptrCast(@alignCast(ptr));
+            @memcpy(dest[0..quads.len], quads);
+        }
+
+        // Begin rendering
+        const drawable_ptr = self.layer.msgSend(?*anyopaque, "nextDrawable", .{});
+        if (drawable_ptr == null) return;
+        const drawable = objc.Object.fromId(drawable_ptr);
+
+        const texture_ptr = drawable.msgSend(?*anyopaque, "texture", .{});
+        if (texture_ptr == null) return;
+        const resolve_texture = objc.Object.fromId(texture_ptr);
+
+        const msaa_tex = self.msaa_texture orelse return;
+
+        // Create render pass descriptor
+        const MTLRenderPassDescriptor = objc.getClass("MTLRenderPassDescriptor") orelse return;
+        const render_pass = MTLRenderPassDescriptor.msgSend(objc.Object, "renderPassDescriptor", .{});
+
+        const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+
+        color_attachment_0.msgSend(void, "setTexture:", .{msaa_tex.value});
+        color_attachment_0.msgSend(void, "setResolveTexture:", .{resolve_texture.value});
+        color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.clear)});
+        color_attachment_0.msgSend(void, "setStoreAction:", .{@intFromEnum(mtl.MTLStoreAction.multisample_resolve)});
+        color_attachment_0.msgSend(void, "setClearColor:", .{mtl.MTLClearColor.fromColor(clear_color)});
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+        const encoder_ptr = command_buffer.msgSend(?*anyopaque, "renderCommandEncoderWithDescriptor:", .{render_pass.value});
+        if (encoder_ptr == null) return;
+        const encoder = objc.Object.fromId(encoder_ptr);
+
+        // Draw quads
+        if (self.quad_pipeline_state) |pipeline| {
+            if (self.quad_unit_vertex_buffer) |unit_verts| {
+                encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.value});
+
+                // Set viewport
+                const viewport = mtl.MTLViewport{
+                    .x = 0,
+                    .y = 0,
+                    .width = self.size.width,
+                    .height = self.size.height,
+                    .znear = 0,
+                    .zfar = 1,
+                };
+                encoder.msgSend(void, "setViewport:", .{viewport});
+
+                // Buffer 0: unit vertices
+                encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+                    unit_verts.value,
+                    @as(c_ulong, 0),
+                    @as(c_ulong, 0),
+                });
+
+                // Buffer 1: quad instances - use setVertexBytes instead of buffer
+                encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+                    @as(*const anyopaque, @ptrCast(quads.ptr)),
+                    @as(c_ulong, quads.len * @sizeOf(scene_mod.Quad)),
+                    @as(c_ulong, 1),
+                });
+
+                // Buffer 2: viewport size (accounting for retina scale)
+                const viewport_size: [2]f32 = .{
+                    @floatCast(self.size.width),
+                    @floatCast(self.size.height),
+                };
+                encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+                    @as(*const anyopaque, @ptrCast(&viewport_size)),
+                    @as(c_ulong, @sizeOf([2]f32)),
+                    @as(c_ulong, 2),
+                });
+
+                // Draw instanced quads (6 vertices per quad, quads.len instances)
+                encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{
+                    @intFromEnum(mtl.MTLPrimitiveType.triangle),
+                    @as(c_ulong, 0),
+                    @as(c_ulong, 6),
+                    @as(c_ulong, quads.len),
+                });
+            }
+        }
+
+        encoder.msgSend(void, "endEncoding", .{});
+        command_buffer.msgSend(void, "presentDrawable:", .{drawable.value});
+        command_buffer.msgSend(void, "commit", .{});
+    }
+
+    /// Synchronous clear - waits for completion, used during live resize
+    pub fn clearSynchronous(self: *Self, color: geometry.Color) void {
+        self.renderSynchronous(color, false);
+    }
+
+    /// Synchronous render - presents with CATransaction for smooth resize
+    fn renderSynchronous(self: *Self, clear_color: geometry.Color, draw_triangle: bool) void {
+        const CATransaction = objc.getClass("CATransaction") orelse return;
+
+        // Begin CA transaction
+        CATransaction.msgSend(void, "begin", .{});
+        CATransaction.msgSend(void, "setDisableActions:", .{true});
+
+        const drawable_ptr = self.layer.msgSend(?*anyopaque, "nextDrawable", .{});
+        if (drawable_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const drawable = objc.Object.fromId(drawable_ptr);
+
+        const texture_ptr = drawable.msgSend(?*anyopaque, "texture", .{});
+        if (texture_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const resolve_texture = objc.Object.fromId(texture_ptr);
+
+        const msaa_tex = self.msaa_texture orelse {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        };
+
+        const MTLRenderPassDescriptor = objc.getClass("MTLRenderPassDescriptor") orelse {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        };
+        const render_pass = MTLRenderPassDescriptor.msgSend(objc.Object, "renderPassDescriptor", .{});
+
+        const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+
+        color_attachment_0.msgSend(void, "setTexture:", .{msaa_tex.value});
+        color_attachment_0.msgSend(void, "setResolveTexture:", .{resolve_texture.value});
+        color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.clear)});
+        color_attachment_0.msgSend(void, "setStoreAction:", .{@intFromEnum(mtl.MTLStoreAction.multisample_resolve)});
+        color_attachment_0.msgSend(void, "setClearColor:", .{mtl.MTLClearColor.fromColor(clear_color)});
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+        const encoder_ptr = command_buffer.msgSend(?*anyopaque, "renderCommandEncoderWithDescriptor:", .{render_pass.value});
+        if (encoder_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const encoder = objc.Object.fromId(encoder_ptr);
+
+        if (draw_triangle) {
+            if (self.pipeline_state) |pipeline| {
+                if (self.vertex_buffer) |buffer| {
+                    encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.value});
+                    encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+                        buffer.value,
+                        @as(c_ulong, 0),
+                        @as(c_ulong, 0),
+                    });
+                    encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:", .{
+                        @intFromEnum(mtl.MTLPrimitiveType.triangle),
+                        @as(c_ulong, 0),
+                        @as(c_ulong, 3),
+                    });
+                }
+            }
+        }
+
+        encoder.msgSend(void, "endEncoding", .{});
+
+        // Wait until scheduled, then present via drawable (layer has presentsWithTransaction=YES)
+        command_buffer.msgSend(void, "commit", .{});
+        command_buffer.msgSend(void, "waitUntilScheduled", .{});
+        drawable.msgSend(void, "present", .{});
+
+        // Commit CA transaction
+        CATransaction.msgSend(void, "commit", .{});
+    }
+
+    /// Synchronous scene render - for live resize
+    pub fn renderSceneSynchronous(self: *Self, s: *const scene_mod.Scene, clear_color: geometry.Color) !void {
+        const quads = s.getQuads();
+
+        if (quads.len == 0) {
+            self.renderSynchronous(clear_color, false);
+            return;
+        }
+
+        const CATransaction = objc.getClass("CATransaction") orelse return;
+
+        // Begin CA transaction
+        CATransaction.msgSend(void, "begin", .{});
+        CATransaction.msgSend(void, "setDisableActions:", .{true});
+
+        const drawable_ptr = self.layer.msgSend(?*anyopaque, "nextDrawable", .{});
+        if (drawable_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const drawable = objc.Object.fromId(drawable_ptr);
+
+        const texture_ptr = drawable.msgSend(?*anyopaque, "texture", .{});
+        if (texture_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const resolve_texture = objc.Object.fromId(texture_ptr);
+
+        const msaa_tex = self.msaa_texture orelse {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        };
+
+        const MTLRenderPassDescriptor = objc.getClass("MTLRenderPassDescriptor") orelse {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        };
+        const render_pass = MTLRenderPassDescriptor.msgSend(objc.Object, "renderPassDescriptor", .{});
+
+        const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+
+        color_attachment_0.msgSend(void, "setTexture:", .{msaa_tex.value});
+        color_attachment_0.msgSend(void, "setResolveTexture:", .{resolve_texture.value});
+        color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.clear)});
+        color_attachment_0.msgSend(void, "setStoreAction:", .{@intFromEnum(mtl.MTLStoreAction.multisample_resolve)});
+        color_attachment_0.msgSend(void, "setClearColor:", .{mtl.MTLClearColor.fromColor(clear_color)});
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+        const encoder_ptr = command_buffer.msgSend(?*anyopaque, "renderCommandEncoderWithDescriptor:", .{render_pass.value});
+        if (encoder_ptr == null) {
+            CATransaction.msgSend(void, "commit", .{});
+            return;
+        }
+        const encoder = objc.Object.fromId(encoder_ptr);
+
+        // Draw quads
+        if (self.quad_pipeline_state) |pipeline| {
+            if (self.quad_unit_vertex_buffer) |unit_verts| {
+                encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.value});
+
+                const viewport = mtl.MTLViewport{
+                    .x = 0,
+                    .y = 0,
+                    .width = self.size.width,
+                    .height = self.size.height,
+                    .znear = 0,
+                    .zfar = 1,
+                };
+                encoder.msgSend(void, "setViewport:", .{viewport});
+
+                encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+                    unit_verts.value,
+                    @as(c_ulong, 0),
+                    @as(c_ulong, 0),
+                });
+
+                encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+                    @as(*const anyopaque, @ptrCast(quads.ptr)),
+                    @as(c_ulong, quads.len * @sizeOf(scene_mod.Quad)),
+                    @as(c_ulong, 1),
+                });
+
+                const viewport_size: [2]f32 = .{
+                    @floatCast(self.size.width),
+                    @floatCast(self.size.height),
+                };
+                encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+                    @as(*const anyopaque, @ptrCast(&viewport_size)),
+                    @as(c_ulong, @sizeOf([2]f32)),
+                    @as(c_ulong, 2),
+                });
+
+                encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{
+                    @intFromEnum(mtl.MTLPrimitiveType.triangle),
+                    @as(c_ulong, 0),
+                    @as(c_ulong, 6),
+                    @as(c_ulong, quads.len),
+                });
+            }
+        }
+
+        encoder.msgSend(void, "endEncoding", .{});
+
+        // Wait until scheduled, then present via drawable
+        command_buffer.msgSend(void, "commit", .{});
+        command_buffer.msgSend(void, "waitUntilScheduled", .{});
+        drawable.msgSend(void, "present", .{});
+
+        // Commit CA transaction
+        CATransaction.msgSend(void, "commit", .{});
+    }
+
     pub fn resize(self: *Self, size: geometry.Size(f64)) void {
         self.size = size;
         self.layer.msgSend(void, "setDrawableSize:", .{mtl.CGSize{
             .width = size.width,
             .height = size.height,
         }});
-        self.createMSAATexture() catch {};
+        self.createMSAATexture() catch |err| {
+            std.debug.print("Failed to recreate MSAA texture on resize: {}\n", .{err});
+        };
     }
 };
