@@ -16,26 +16,50 @@ Gooey is a hybrid immediate/retained mode UI framework designed for building fas
 
 ## Architecture
 
+## Architecture
+
+```mermaid
+graph TB
+    subgraph Application
+        App[App Context]
+        Window[Window]
+        Scene[Scene Graph]
+    end
+
+    subgraph Rendering
+        Renderer[Metal Renderer]
+        Text[Text Pipeline]
+    end
+
+    subgraph Text System
+        TextSys[TextSystem]
+        Cache[Glyph Cache]
+        Atlas[Texture Atlas]
+    end
+
+    subgraph Platform [Platform - macOS]
+        NSApp[NSApplication]
+        NSWin[NSWindow]
+        Metal[CAMetalLayer]
+        DL[CVDisplayLink]
+        GCD[GCD Dispatcher]
+    end
+
+    App --> Window
+    App --> Scene
+    Window --> Renderer
+    Scene --> Renderer
+    Renderer --> Text
+    Text --> Atlas
+    TextSys --> Cache
+    Cache --> Atlas
+    Window --> NSWin
+    Window --> Metal
+    Window --> DL
+    Renderer --> Metal
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Application │
-├─────────────────────────────────────────────────────────────────────┤
-│ App Context │ Window │ Scene Graph │
-│ - Platform │ - NSWindow │ - Quads (rounded rects) │
-│ - Event loop │ - Metal layer │ - Shadows (SDF-based) │
-│ - Windows │ - DisplayLink │ - Glyphs (text) │
-├─────────────────────────────────────────────────────────────────────┤
-│ Metal Renderer │ Text System │
-│ - Pipeline states (quad, shadow, │ - CoreText font loading │
-│ text) │ - Glyph cache + atlas │
-│ - Instanced rendering │ - Text shaping │
-│ - MSAA resolve │ │
-├─────────────────────────────────────────────────────────────────────┤
-│ Platform Layer (macOS) │
-│ - NSApplication / NSWindow │ - CVDisplayLink (vsync) │
-│ - CAMetalLayer │ - GCD dispatcher │
-└─────────────────────────────────────────────────────────────────────┘
-```
+
+`
 
 ## Project Structure
 
