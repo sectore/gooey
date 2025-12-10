@@ -12,8 +12,6 @@ const gooey = @import("gooey");
 const ui = gooey.ui;
 const ShadowConfig = ui.ShadowConfig;
 
-const custom_shader = gooey.platform.mac.metal.custom_shader;
-
 // =============================================================================
 // Theme
 // =============================================================================
@@ -138,7 +136,6 @@ pub fn main() !void {
         .height = 600,
         .render = render,
         .on_event = onEvent,
-        .custom_shaders = &.{ custom_shader.blur_shader, custom_shader.crt_shader },
     });
 }
 

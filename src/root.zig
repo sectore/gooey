@@ -139,6 +139,12 @@ pub const Padding = layout.Padding;
 pub const LayoutConfig = layout.LayoutConfig;
 pub const BoundingBox = layout.BoundingBox;
 
+// Focus system
+pub const FocusId = core.FocusId;
+pub const FocusHandle = core.FocusHandle;
+pub const FocusManager = core.FocusManager;
+pub const FocusEvent = core.FocusEvent;
+
 // Text system
 pub const TextSystem = text.TextSystem;
 pub const FontFace = text.FontFace;

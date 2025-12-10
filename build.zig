@@ -136,6 +136,31 @@ pub fn build(b: *std.Build) void {
     run_shader_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Focus Demo Example
+    // =========================================================================
+
+    const focus_exe = b.addExecutable(.{
+        .name = "focus_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/focus_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(focus_exe);
+
+    // Run focus demo
+    const run_focus_step = b.step("run-focus", "Run the focus navigation demo");
+    const run_focus_cmd = b.addRunArtifact(focus_exe);
+    run_focus_step.dependOn(&run_focus_cmd.step);
+    run_focus_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Tests
     // =========================================================================
 

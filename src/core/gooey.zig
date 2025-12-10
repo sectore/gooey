@@ -52,6 +52,13 @@ const Window = @import("../platform/mac/window.zig").Window;
 const input_mod = @import("input.zig");
 const InputEvent = input_mod.InputEvent;
 
+// Focus
+const focus_mod = @import("focus.zig");
+const FocusManager = focus_mod.FocusManager;
+const FocusId = focus_mod.FocusId;
+const FocusHandle = focus_mod.FocusHandle;
+const FocusEvent = focus_mod.FocusEvent;
+
 /// Gooey - unified UI context
 pub const Gooey = struct {
     allocator: std.mem.Allocator,
@@ -70,6 +77,9 @@ pub const Gooey = struct {
 
     // Widgets (retained across frames)
     widgets: WidgetStore,
+
+    // Focus management
+    focus: FocusManager,
 
     // Platform
     window: *Window,
@@ -98,6 +108,7 @@ pub const Gooey = struct {
             .allocator = allocator,
             .layout = layout_engine,
             .scene = scene,
+            .focus = FocusManager.init(allocator),
             .text_system = text_system,
             .widgets = WidgetStore.init(allocator),
             .window = window,
@@ -145,6 +156,7 @@ pub const Gooey = struct {
             .layout_owned = true,
             .scene = scene,
             .scene_owned = true,
+            .focus = FocusManager.init(allocator),
             .text_system = text_system,
             .text_system_owned = true,
             .widgets = WidgetStore.init(allocator),
@@ -157,6 +169,7 @@ pub const Gooey = struct {
 
     pub fn deinit(self: *Self) void {
         self.widgets.deinit();
+        self.focus.deinit();
 
         if (self.text_system_owned) {
             self.text_system.deinit();
@@ -180,6 +193,7 @@ pub const Gooey = struct {
     pub fn beginFrame(self: *Self) void {
         self.frame_count += 1;
         self.widgets.beginFrame();
+        self.focus.beginFrame();
 
         // Update cached window dimensions
         self.width = @floatCast(self.window.size.width);
@@ -197,6 +211,7 @@ pub const Gooey = struct {
     /// Returns the render commands for the frame
     pub fn endFrame(self: *Self) ![]const RenderCommand {
         self.widgets.endFrame();
+        self.focus.endFrame();
 
         // End layout and get render commands
         return try self.layout.endFrame();
@@ -254,6 +269,66 @@ pub const Gooey = struct {
     /// Get bounding box by LayoutId
     pub fn getBounds(self: *Self, id: LayoutId) ?BoundingBox {
         return self.layout.getBoundingBox(id.id);
+    }
+
+    // =========================================================================
+    // Focus Management
+    // =========================================================================
+
+    /// Register a focusable element for tab navigation
+    pub fn registerFocusable(self: *Self, id: []const u8, tab_index: i32, tab_stop: bool) void {
+        self.focus.register(FocusHandle.init(id).tabIndex(tab_index).tabStop(tab_stop));
+    }
+
+    /// Focus a specific element by ID
+    pub fn focusElement(self: *Self, id: []const u8) void {
+        self.focus.focusByName(id);
+        // Also update widget focus state
+        self.syncWidgetFocus(id);
+        self.requestRender();
+    }
+
+    /// Move focus to next element in tab order
+    pub fn focusNext(self: *Self) void {
+        self.focus.focusNext();
+        // Sync widget focus
+        if (self.focus.getFocusedHandle()) |handle| {
+            self.syncWidgetFocus(handle.string_id);
+        }
+        self.requestRender();
+    }
+
+    /// Move focus to previous element in tab order
+    pub fn focusPrev(self: *Self) void {
+        self.focus.focusPrev();
+        if (self.focus.getFocusedHandle()) |handle| {
+            self.syncWidgetFocus(handle.string_id);
+        }
+        self.requestRender();
+    }
+
+    /// Clear all focus
+    pub fn blurAll(self: *Self) void {
+        self.focus.blur();
+        self.widgets.blurAll();
+        self.requestRender();
+    }
+
+    /// Check if element is focused
+    pub fn isElementFocused(self: *Self, id: []const u8) bool {
+        return self.focus.isFocusedByName(id);
+    }
+
+    /// Sync widget focus state with FocusManager
+    fn syncWidgetFocus(self: *Self, id: []const u8) void {
+        // Blur all widgets first
+        self.widgets.blurAll();
+        // Focus the specific widget if it exists
+        if (self.widgets.text_inputs.get(id)) |input| {
+            input.focus();
+        } else if (self.widgets.checkboxes.get(id)) |cb| {
+            cb.focus();
+        }
     }
 
     // =========================================================================

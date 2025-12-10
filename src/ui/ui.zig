@@ -144,6 +144,10 @@ pub const InputStyle = struct {
     height: f32 = 36,
     /// Two-way binding to a string slice pointer
     bind: ?*[]const u8 = null,
+    /// Tab order index (lower = earlier in tab order)
+    tab_index: i32 = 0,
+    /// Whether this input participates in tab navigation
+    tab_stop: bool = true,
 };
 
 /// Stack layout options
@@ -801,6 +805,8 @@ pub const Builder = struct {
 
         // Set up the actual TextInput widget if we have access to Gooey
         if (self.gooey) |g| {
+            // Register with focus system using style's tab settings
+            g.registerFocusable(inp.id, inp.style.tab_index, inp.style.tab_stop);
             if (g.textInput(inp.id)) |text_input| {
                 if (inp.style.placeholder.len > 0) {
                     text_input.setPlaceholder(inp.style.placeholder);

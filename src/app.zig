@@ -110,6 +110,26 @@ pub const UI = struct {
         self.gooey.focusTextInput(id);
     }
 
+    /// Focus next element in tab order
+    pub fn focusNext(self: *Self) void {
+        self.gooey.focusNext();
+    }
+
+    /// Focus previous element in tab order
+    pub fn focusPrev(self: *Self) void {
+        self.gooey.focusPrev();
+    }
+
+    /// Clear all focus
+    pub fn blurAll(self: *Self) void {
+        self.gooey.blurAll();
+    }
+
+    /// Check if an element is focused
+    pub fn isElementFocused(self: *Self, id: []const u8) bool {
+        return self.gooey.isElementFocused(id);
+    }
+
     // =========================================================================
     // Scrolling
     // =========================================================================
@@ -274,9 +294,17 @@ pub fn run(config: RunConfig) !void {
             // Route keyboard/text events to focused TextInput
             switch (event) {
                 .key_down => |k| {
+                    // Handle Tab/Shift-Tab for focus navigation
+                    if (k.key == .tab) {
+                        if (k.modifiers.shift) {
+                            g_ui.gooey.focusPrev();
+                        } else {
+                            g_ui.gooey.focusNext();
+                        }
+                        return true;
+                    }
+
                     if (g_ui.gooey.getFocusedTextInput()) |input| {
-                        // Only handle control keys here (arrows, backspace, etc.)
-                        // Printable characters come through text_input event
                         if (isControlKey(k.key, k.modifiers)) {
                             input.handleKey(k) catch {};
                             syncBoundVariables(g_ui);
@@ -284,8 +312,8 @@ pub fn run(config: RunConfig) !void {
                             return true;
                         }
                     }
-                    // Don't return true for printable keys - let IME handle them
                 },
+
                 .text_input => |t| {
                     if (g_ui.gooey.getFocusedTextInput()) |input| {
                         input.insertText(t.text) catch {};
