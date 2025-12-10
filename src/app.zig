@@ -40,6 +40,7 @@ const text_mod = @import("text/mod.zig");
 const input_mod = @import("core/input.zig");
 const geometry_mod = @import("core/geometry.zig");
 const ui_mod = @import("ui/ui.zig");
+const scroll_mod = @import("elements/scroll_container.zig");
 
 const MacPlatform = platform_mod.MacPlatform;
 const Window = window_mod.Window;
@@ -50,6 +51,7 @@ const Quad = scene_mod.Quad;
 const Shadow = scene_mod.Shadow;
 const LayoutEngine = layout_mod.LayoutEngine;
 const TextSystem = text_mod.TextSystem;
+const ScrollContainer = scroll_mod.ScrollContainer;
 const InputEvent = input_mod.InputEvent;
 const Builder = ui_mod.Builder;
 
@@ -106,6 +108,18 @@ pub const UI = struct {
 
     pub fn focusTextInput(self: *Self, id: []const u8) void {
         self.gooey.focusTextInput(id);
+    }
+
+    // =========================================================================
+    // Scrolling
+    // =========================================================================
+
+    pub fn scroll(self: *Self, id: []const u8, style: ui_mod.ScrollStyle, children: anytype) void {
+        self.builder.scroll(id, style, children);
+    }
+
+    pub fn scrollContainer(self: *Self, id: []const u8) ?*@import("elements/scroll_container.zig").ScrollContainer {
+        return self.gooey.widgets.scrollContainer(id);
     }
 
     // =========================================================================
@@ -195,6 +209,28 @@ pub fn run(config: RunConfig) !void {
 
         fn onInput(win: *Window, event: InputEvent) bool {
             _ = win;
+
+            // Handle scroll events
+            if (event == .scroll) {
+                const scroll_ev = event.scroll;
+                const x: f32 = @floatCast(scroll_ev.position.x);
+                const y: f32 = @floatCast(scroll_ev.position.y);
+
+                // Find scroll container under cursor
+                for (g_ui.builder.pending_scrolls.items) |pending| {
+                    const bounds = g_ui.gooey.layout.getBoundingBox(pending.layout_id.id);
+                    if (bounds) |b| {
+                        if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
+                            if (g_ui.gooey.widgets.getScrollContainer(pending.id)) |sc| {
+                                if (sc.handleScroll(scroll_ev.delta.x, scroll_ev.delta.y)) {
+                                    g_ui.requestRender();
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             // First, let UI handle click events for buttons and inputs
             if (event == .mouse_down) {
@@ -298,6 +334,7 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     ui.builder.pending_buttons.clearRetainingCapacity();
     ui.builder.input_regions.clearRetainingCapacity();
     ui.builder.pending_checkboxes.clearRetainingCapacity();
+    ui.builder.pending_scrolls.clearRetainingCapacity();
 
     // Call user's render function
     render_fn(ui);
@@ -309,6 +346,7 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     ui.builder.registerPendingHitRegions();
     ui.builder.registerPendingInputRegions();
     ui.builder.registerPendingCheckboxRegions();
+    ui.builder.registerPendingScrollRegions();
 
     // Clear scene
     ui.gooey.scene.clear();
@@ -358,6 +396,13 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
         }
     }
 
+    // Render scrollbars from pending list
+    for (ui.builder.pending_scrolls.items) |pending| {
+        if (ui.gooey.widgets.scrollContainer(pending.id)) |scroll_widget| {
+            try scroll_widget.renderScrollbars(ui.gooey.scene);
+        }
+    }
+
     ui.gooey.scene.finish();
 }
 
@@ -384,7 +429,7 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
         },
         .rectangle => {
             const rect = cmd.data.rectangle;
-            try gooey_ctx.scene.insertQuad(Quad{
+            const quad = Quad{
                 .bounds_origin_x = cmd.bounding_box.x,
                 .bounds_origin_y = cmd.bounding_box.y,
                 .bounds_size_width = cmd.bounding_box.width,
@@ -396,7 +441,12 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
                     .bottom_left = rect.corner_radius.bottom_left,
                     .bottom_right = rect.corner_radius.bottom_right,
                 },
-            });
+            };
+            if (gooey_ctx.scene.hasActiveClip()) {
+                try gooey_ctx.scene.insertQuadClipped(quad);
+            } else {
+                try gooey_ctx.scene.insertQuad(quad);
+            }
         },
         .text => {
             const text_data = cmd.data.text;
@@ -411,6 +461,18 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
                 render_bridge.colorToHsla(text_data.color),
             );
         },
+        .scissor_start => {
+            const scissor = cmd.data.scissor_start;
+            try gooey_ctx.scene.pushClip(.{
+                .x = scissor.clip_bounds.x,
+                .y = scissor.clip_bounds.y,
+                .width = scissor.clip_bounds.width,
+                .height = scissor.clip_bounds.height,
+            });
+        },
+        .scissor_end => {
+            gooey_ctx.scene.popClip();
+        },
         else => {},
     }
 }
@@ -419,18 +481,18 @@ fn renderText(scene: *Scene, text_system: *TextSystem, text_content: []const u8,
     var shaped = try text_system.shapeText(text_content);
     defer shaped.deinit(text_system.allocator);
 
+    const use_clip = scene.hasActiveClip();
+
     var pen_x = x;
     for (shaped.glyphs) |glyph_info| {
         const cached = try text_system.getGlyph(glyph_info.glyph_id);
         if (cached.region.width > 0 and cached.region.height > 0) {
-            // Pixel-aligned positioning at display time
-            // Bearings are already in logical pixels with padding adjustment
             const glyph_x = @floor(pen_x) + cached.bearing_x;
             const glyph_y = @floor(baseline_y) - cached.bearing_y;
 
             const atlas = text_system.getAtlas();
             const uv_coords = cached.region.uv(atlas.size);
-            try scene.insertGlyph(scene_mod.GlyphInstance.init(
+            const glyph = scene_mod.GlyphInstance.init(
                 glyph_x,
                 glyph_y,
                 @as(f32, @floatFromInt(cached.region.width)) / scale_factor,
@@ -440,7 +502,12 @@ fn renderText(scene: *Scene, text_system: *TextSystem, text_content: []const u8,
                 uv_coords.u1,
                 uv_coords.v1,
                 color,
-            ));
+            );
+            if (use_clip) {
+                try scene.insertGlyphClipped(glyph);
+            } else {
+                try scene.insertGlyph(glyph);
+            }
         }
         pen_x += glyph_info.x_advance;
     }

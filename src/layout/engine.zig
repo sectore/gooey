@@ -32,6 +32,12 @@ const RenderCommandType = render_commands.RenderCommandType;
 // Element Types (defined inline)
 // ============================================================================
 
+/// Scroll offset for positioning children
+pub const ScrollOffset = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+};
+
 pub const ElementDeclaration = struct {
     id: LayoutId = LayoutId.none,
     layout: LayoutConfig = .{},
@@ -497,16 +503,24 @@ pub const LayoutEngine = struct {
             .height = elem.computed.sized_height - padding.totalY(),
         };
 
-        // Position children
+        // Position children (pass scroll offset if this is a scroll container)
         if (elem.first_child_index) |first_child| {
-            self.positionChildren(first_child, layout, elem.computed.content_box);
+            const scroll_offset: ?ScrollOffset = if (elem.config.scroll) |s|
+                ScrollOffset{ .x = s.scroll_offset.x, .y = s.scroll_offset.y }
+            else
+                null;
+            self.positionChildren(first_child, layout, elem.computed.content_box, scroll_offset);
         }
     }
 
-    fn positionChildren(self: *Self, first_child: u32, layout: LayoutConfig, content_box: BoundingBox) void {
+    fn positionChildren(self: *Self, first_child: u32, layout: LayoutConfig, content_box: BoundingBox, scroll_offset: ?ScrollOffset) void {
         const is_horizontal = layout.layout_direction.isHorizontal();
         const gap: f32 = @floatFromInt(layout.child_gap);
         const alignment = layout.child_alignment;
+
+        // Apply scroll offset if present
+        const offset_x: f32 = if (scroll_offset) |s| -s.x else 0;
+        const offset_y: f32 = if (scroll_offset) |s| -s.y else 0;
 
         // Calculate total children size for alignment
         var total_main: f32 = 0;
@@ -525,8 +539,8 @@ pub const LayoutEngine = struct {
         }
 
         // Calculate starting position based on alignment
-        var cursor_x: f32 = content_box.x;
-        var cursor_y: f32 = content_box.y;
+        var cursor_x: f32 = content_box.x + offset_x;
+        var cursor_y: f32 = content_box.y + offset_y;
 
         if (is_horizontal) {
             cursor_x += switch (alignment.x) {

@@ -1,0 +1,700 @@
+diff --git a/src/app.zig b/src/app.zig
+index ef550d4..60d61bf 100644
+--- a/src/app.zig
++++ b/src/app.zig
+@@ -40,6 +40,7 @@ const text_mod = @import("text/mod.zig");
+ const input_mod = @import("core/input.zig");
+ const geometry_mod = @import("core/geometry.zig");
+ const ui_mod = @import("ui/ui.zig");
++const scroll_mod = @import("elements/scroll_container.zig");
+ 
+ const MacPlatform = platform_mod.MacPlatform;
+ const Window = window_mod.Window;
+@@ -50,6 +51,7 @@ const Quad = scene_mod.Quad;
+ const Shadow = scene_mod.Shadow;
+ const LayoutEngine = layout_mod.LayoutEngine;
+ const TextSystem = text_mod.TextSystem;
++const ScrollContainer = scroll_mod.ScrollContainer;
+ const InputEvent = input_mod.InputEvent;
+ const Builder = ui_mod.Builder;
+ 
+@@ -108,6 +110,18 @@ pub const UI = struct {
+         self.gooey.focusTextInput(id);
+     }
+ 
++    // =========================================================================
++    // Scrolling
++    // =========================================================================
++
++    pub fn scroll(self: *Self, id: []const u8, style: ui_mod.ScrollStyle, children: anytype) void {
++        self.builder.scroll(id, style, children);
++    }
++
++    pub fn scrollContainer(self: *Self, id: []const u8) ?*@import("elements/scroll_container.zig").ScrollContainer {
++        return self.gooey.widgets.scrollContainer(id);
++    }
++
+     // =========================================================================
+     // Render control
+     // =========================================================================
+@@ -196,6 +210,28 @@ pub fn run(config: RunConfig) !void {
+         fn onInput(win: *Window, event: InputEvent) bool {
+             _ = win;
+ 
++            // Handle scroll events
++            if (event == .scroll) {
++                const scroll_ev = event.scroll;
++                const x: f32 = @floatCast(scroll_ev.position.x);
++                const y: f32 = @floatCast(scroll_ev.position.y);
++
++                // Find scroll container under cursor
++                for (g_ui.builder.pending_scrolls.items) |pending| {
++                    const bounds = g_ui.gooey.layout.getBoundingBox(pending.layout_id.id);
++                    if (bounds) |b| {
++                        if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
++                            if (g_ui.gooey.widgets.scrollContainer(pending.id)) |sc| {
++                                if (sc.handleScroll(scroll_ev.delta.x, scroll_ev.delta.y)) {
++                                    g_ui.requestRender();
++                                    return true;
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++
+             // First, let UI handle click events for buttons and inputs
+             if (event == .mouse_down) {
+                 const pos = event.mouse_down.position;
+@@ -298,6 +334,7 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
+     ui.builder.pending_buttons.clearRetainingCapacity();
+     ui.builder.input_regions.clearRetainingCapacity();
+     ui.builder.pending_checkboxes.clearRetainingCapacity();
++    ui.builder.pending_scrolls.clearRetainingCapacity();
+ 
+     // Call user's render function
+     render_fn(ui);
+@@ -309,6 +346,7 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
+     ui.builder.registerPendingHitRegions();
+     ui.builder.registerPendingInputRegions();
+     ui.builder.registerPendingCheckboxRegions();
++    ui.builder.registerPendingScrollRegions();
+ 
+     // Clear scene
+     ui.gooey.scene.clear();
+@@ -358,6 +396,13 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
+         }
+     }
+ 
++    // Render scrollbars from pending list
++    for (ui.builder.pending_scrolls.items) |pending| {
++        if (ui.gooey.widgets.scrollContainer(pending.id)) |scroll_widget| {
++            try scroll_widget.renderScrollbars(ui.gooey.scene);
++        }
++    }
++
+     ui.gooey.scene.finish();
+ }
+ 
+@@ -411,6 +456,18 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
+                 render_bridge.colorToHsla(text_data.color),
+             );
+         },
++        .scissor_start => {
++            const scissor = cmd.data.scissor_start;
++            try gooey_ctx.scene.pushClip(.{
++                .x = scissor.clip_bounds.x,
++                .y = scissor.clip_bounds.y,
++                .width = scissor.clip_bounds.width,
++                .height = scissor.clip_bounds.height,
++            });
++        },
++        .scissor_end => {
++            gooey_ctx.scene.popClip();
++        },
+         else => {},
+     }
+ }
+diff --git a/src/core/widget_store.zig b/src/core/widget_store.zig
+index 8dee98b..1ec0170 100644
+--- a/src/core/widget_store.zig
++++ b/src/core/widget_store.zig
+@@ -4,11 +4,13 @@ const std = @import("std");
+ const TextInput = @import("../elements/text_input.zig").TextInput;
+ const Bounds = @import("../elements/text_input.zig").Bounds;
+ const Checkbox = @import("../elements/checkbox.zig").Checkbox;
++const ScrollContainer = @import("../elements/scroll_container.zig").ScrollContainer;
+ 
+ pub const WidgetStore = struct {
+     allocator: std.mem.Allocator,
+     text_inputs: std.StringHashMap(*TextInput),
+     checkboxes: std.StringHashMap(*Checkbox),
++    scroll_containers: std.StringHashMap(*ScrollContainer),
+     accessed_this_frame: std.StringHashMap(void),
+     default_text_input_bounds: Bounds = .{ .x = 0, .y = 0, .width = 200, .height = 36 },
+ 
+@@ -19,6 +21,7 @@ pub const WidgetStore = struct {
+             .allocator = allocator,
+             .text_inputs = std.StringHashMap(*TextInput).init(allocator),
+             .checkboxes = std.StringHashMap(*Checkbox).init(allocator),
++            .scroll_containers = std.StringHashMap(*ScrollContainer).init(allocator),
+             .accessed_this_frame = std.StringHashMap(void).init(allocator),
+         };
+     }
+@@ -42,6 +45,15 @@ pub const WidgetStore = struct {
+         }
+         self.checkboxes.deinit();
+ 
++        // Clean up ScrollContainers
++        var sc_it = self.scroll_containers.iterator();
++        while (sc_it.next()) |entry| {
++            entry.value_ptr.*.deinit();
++            self.allocator.destroy(entry.value_ptr.*);
++            self.allocator.free(entry.key_ptr.*);
++        }
++        self.scroll_containers.deinit();
++
+         self.accessed_this_frame.deinit();
+     }
+ 
+@@ -119,6 +131,43 @@ pub const WidgetStore = struct {
+         return self.checkboxes.get(id);
+     }
+ 
++    // =========================================================================
++    // ScrollContainer
++    // =========================================================================
++
++    pub fn scrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
++        if (self.scroll_containers.get(id)) |existing| {
++            self.accessed_this_frame.put(id, {}) catch {};
++            return existing;
++        }
++
++        const sc = self.allocator.create(ScrollContainer) catch return null;
++        errdefer self.allocator.destroy(sc);
++
++        sc.* = ScrollContainer.init(self.allocator, id);
++
++        const owned_key = self.allocator.dupe(u8, id) catch {
++            sc.deinit();
++            self.allocator.destroy(sc);
++            return null;
++        };
++        errdefer self.allocator.free(owned_key);
++
++        self.scroll_containers.put(owned_key, sc) catch {
++            sc.deinit();
++            self.allocator.destroy(sc);
++            self.allocator.free(owned_key);
++            return null;
++        };
++
++        self.accessed_this_frame.put(owned_key, {}) catch {};
++        return sc;
++    }
++
++    pub fn getScrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
++        return self.scroll_containers.get(id);
++    }
++
+     // =========================================================================
+     // Frame Lifecycle
+     // =========================================================================
+diff --git a/src/elements.zig b/src/elements.zig
+index 7b06257..13451aa 100644
+--- a/src/elements.zig
++++ b/src/elements.zig
+@@ -10,3 +10,8 @@ pub const checkbox_mod = @import("elements/checkbox.zig");
+ pub const Checkbox = checkbox_mod.Checkbox;
+ pub const CheckboxStyle = checkbox_mod.Style;
+ pub const CheckboxBounds = checkbox_mod.Bounds;
++
++pub const scroll_mod = @import("elements/scroll_container.zig");
++pub const ScrollContainer = scroll_mod.ScrollContainer;
++pub const ScrollStyle = scroll_mod.Style;
++pub const ScrollState = scroll_mod.ScrollState;
+diff --git a/src/examples/showcase.zig b/src/examples/showcase.zig
+index f21fdd4..218e499 100644
+--- a/src/examples/showcase.zig
++++ b/src/examples/showcase.zig
+@@ -47,9 +47,10 @@ const Theme = struct {
+ // Application State
+ // =============================================================================
+ 
++// Update state struct to add scroll demo data
+ var state = struct {
+     const Self = @This();
+-    const Page = enum { home, forms, about };
++    const Page = enum { home, forms, about, scroll_demo };
+     const FormField = enum { name, email, message };
+ 
+     // Navigation
+@@ -81,7 +82,8 @@ var state = struct {
+     pub fn nextPage(self: *Self) void {
+         self.page = switch (self.page) {
+             .home => .forms,
+-            .forms => .about,
++            .forms => .scroll_demo,
++            .scroll_demo => .about,
+             .about => .home,
+         };
+     }
+@@ -90,7 +92,8 @@ var state = struct {
+         self.page = switch (self.page) {
+             .home => .about,
+             .forms => .home,
+-            .about => .forms,
++            .scroll_demo => .forms,
++            .about => .scroll_demo,
+         };
+     }
+ 
+@@ -167,7 +170,8 @@ const NavBar = struct {
+         }, .{
+             NavTab{ .label = "Home", .page = .home, .key = "1" },
+             NavTab{ .label = "Forms", .page = .forms, .key = "2" },
+-            NavTab{ .label = "About", .page = .about, .key = "3" },
++            NavTab{ .label = "Scroll", .page = .scroll_demo, .key = "3" },
++            NavTab{ .label = "About", .page = .about, .key = "4" },
+             ui.spacer(),
+             ThemeToggle{},
+         });
+@@ -276,6 +280,147 @@ const StatCard = struct {
+     }
+ };
+ 
++/// Scroll Demo page
++const ScrollDemoPage = struct {
++    pub fn render(_: @This(), b: *ui.Builder) void {
++        const t = state.theme;
++
++        b.box(.{
++            .padding = .{ .all = 32 },
++            .gap = 24,
++            .fill_width = true,
++            .fill_height = true,
++            .alignment = .{ .main = .center, .cross = .center },
++        }, .{
++            ui.text("Scroll Container Demo", .{ .size = 24, .color = t.text }),
++            ui.text("Scroll with mousewheel or trackpad", .{ .size = 14, .color = t.muted }),
++
++            b.box(.{
++                .direction = .row,
++                .gap = 24,
++                .alignment = .{ .main = .center },
++            }, .{
++                ScrollableList{},
++                ScrollableCards{},
++            }),
++        });
++    }
++};
++
++const ScrollableList = struct {
++    pub fn render(_: @This(), b: *ui.Builder) void {
++        const t = state.theme;
++
++        b.box(.{
++            .gap = 8,
++            .alignment = .{ .cross = .start },
++        }, .{
++            ui.text("Item List", .{ .size = 14, .color = t.muted }),
++
++            b.scroll("list_scroll", .{
++                .width = 200,
++                .height = 250,
++                .background = t.card,
++                .corner_radius = 8,
++                .padding = .{ .all = 8 },
++                .gap = 6,
++                .content_height = 500, // Content is taller than viewport
++                .track_color = t.bg,
++                .thumb_color = t.muted,
++            }, .{
++                // Generate list items
++                ListItem{ .index = 1 },
++                ListItem{ .index = 2 },
++                ListItem{ .index = 3 },
++                ListItem{ .index = 4 },
++                ListItem{ .index = 5 },
++                ListItem{ .index = 6 },
++                ListItem{ .index = 7 },
++                ListItem{ .index = 8 },
++                ListItem{ .index = 9 },
++                ListItem{ .index = 10 },
++                ListItem{ .index = 11 },
++                ListItem{ .index = 12 },
++                ListItem{ .index = 13 },
++                ListItem{ .index = 14 },
++                ListItem{ .index = 15 },
++            }),
++        });
++    }
++};
++
++const ListItem = struct {
++    index: u32,
++
++    var buf: [32]u8 = undefined;
++
++    pub fn render(self: @This(), b: *ui.Builder) void {
++        const t = state.theme;
++        const label = std.fmt.bufPrint(&buf, "List Item {d}", .{self.index}) catch "Item";
++
++        b.box(.{
++            .padding = .{ .symmetric = .{ .x = 12, .y = 8 } },
++            .background = t.bg,
++            .corner_radius = 4,
++            .fill_width = true,
++        }, .{
++            ui.text(label, .{ .size = 13, .color = t.text }),
++        });
++    }
++};
++
++const ScrollableCards = struct {
++    pub fn render(_: @This(), b: *ui.Builder) void {
++        const t = state.theme;
++
++        b.box(.{
++            .gap = 8,
++            .alignment = .{ .cross = .start },
++        }, .{
++            ui.text("Card Stack", .{ .size = 14, .color = t.muted }),
++
++            b.scroll("cards_scroll", .{
++                .width = 220,
++                .height = 250,
++                .background = t.bg,
++                .corner_radius = 8,
++                .padding = .{ .all = 12 },
++                .gap = 12,
++                .content_height = 600,
++                .track_color = t.card,
++                .thumb_color = t.primary,
++            }, .{
++                InfoCard{ .title = "Performance", .desc = "GPU-accelerated rendering" },
++                InfoCard{ .title = "Layout", .desc = "Flexbox-style system" },
++                InfoCard{ .title = "Text", .desc = "CoreText shaping" },
++                InfoCard{ .title = "Widgets", .desc = "Retained state" },
++                InfoCard{ .title = "Clipping", .desc = "Nested scroll areas" },
++                InfoCard{ .title = "Themes", .desc = "Dark mode support" },
++            }),
++        });
++    }
++};
++
++const InfoCard = struct {
++    title: []const u8,
++    desc: []const u8,
++
++    pub fn render(self: @This(), b: *ui.Builder) void {
++        const t = state.theme;
++
++        b.box(.{
++            .padding = .{ .all = 12 },
++            .gap = 4,
++            .background = t.card,
++            .corner_radius = 6,
++            .fill_width = true,
++        }, .{
++            ui.text(self.title, .{ .size = 14, .color = t.primary }),
++            ui.text(self.desc, .{ .size = 12, .color = t.muted }),
++        });
++    }
++};
++
+ /// Forms page content
+ const FormsPage = struct {
+     pub fn render(_: @This(), b: *ui.Builder) void {
+@@ -477,6 +622,9 @@ const PageContent = struct {
+         if (state.page == .forms) {
+             b.box(.{ .grow = true }, .{FormsPage{}});
+         }
++        if (state.page == .scroll_demo) {
++            b.box(.{ .grow = true }, .{ScrollDemoPage{}});
++        }
+         if (state.page == .about) {
+             b.box(.{ .grow = true }, .{AboutPage{}});
+         }
+@@ -523,6 +671,10 @@ fn onEvent(g: *gooey.UI, event: gooey.InputEvent) bool {
+                 return true;
+             }
+             if (key.key == .@"3") {
++                state.goTo(.scroll_demo);
++                return true;
++            }
++            if (key.key == .@"4") {
+                 state.goTo(.about);
+                 return true;
+             }
+diff --git a/src/layout/engine.zig b/src/layout/engine.zig
+index 8f83783..ad323b3 100644
+--- a/src/layout/engine.zig
++++ b/src/layout/engine.zig
+@@ -32,6 +32,12 @@ const RenderCommandType = render_commands.RenderCommandType;
+ // Element Types (defined inline)
+ // ============================================================================
+ 
++/// Scroll offset for positioning children
++pub const ScrollOffset = struct {
++    x: f32 = 0,
++    y: f32 = 0,
++};
++
+ pub const ElementDeclaration = struct {
+     id: LayoutId = LayoutId.none,
+     layout: LayoutConfig = .{},
+@@ -497,17 +503,25 @@ pub const LayoutEngine = struct {
+             .height = elem.computed.sized_height - padding.totalY(),
+         };
+ 
+-        // Position children
++        // Position children (pass scroll offset if this is a scroll container)
+         if (elem.first_child_index) |first_child| {
+-            self.positionChildren(first_child, layout, elem.computed.content_box);
++            const scroll_offset: ?ScrollOffset = if (elem.config.scroll) |s|
++                ScrollOffset{ .x = s.scroll_offset.x, .y = s.scroll_offset.y }
++            else
++                null;
++            self.positionChildren(first_child, layout, elem.computed.content_box, scroll_offset);
+         }
+     }
+ 
+-    fn positionChildren(self: *Self, first_child: u32, layout: LayoutConfig, content_box: BoundingBox) void {
++    fn positionChildren(self: *Self, first_child: u32, layout: LayoutConfig, content_box: BoundingBox, scroll_offset: ?ScrollOffset) void {
+         const is_horizontal = layout.layout_direction.isHorizontal();
+         const gap: f32 = @floatFromInt(layout.child_gap);
+         const alignment = layout.child_alignment;
+ 
++        // Apply scroll offset if present
++        const offset_x: f32 = if (scroll_offset) |s| -s.x else 0;
++        const offset_y: f32 = if (scroll_offset) |s| -s.y else 0;
++
+         // Calculate total children size for alignment
+         var total_main: f32 = 0;
+         var child_count: u32 = 0;
+@@ -525,8 +539,8 @@ pub const LayoutEngine = struct {
+         }
+ 
+         // Calculate starting position based on alignment
+-        var cursor_x: f32 = content_box.x;
+-        var cursor_y: f32 = content_box.y;
++        var cursor_x: f32 = content_box.x + offset_x;
++        var cursor_y: f32 = content_box.y + offset_y;
+ 
+         if (is_horizontal) {
+             cursor_x += switch (alignment.x) {
+diff --git a/src/ui/mod.zig b/src/ui/mod.zig
+index 959f638..939ba2f 100644
+--- a/src/ui/mod.zig
++++ b/src/ui/mod.zig
+@@ -24,10 +24,10 @@ pub const text = ui_impl.text;
+ pub const textFmt = ui_impl.textFmt;
+ pub const input = ui_impl.input;
+ pub const spacer = ui_impl.spacer;
+-pub const checkbox = ui_impl.checkbox;
+ pub const spacerMin = ui_impl.spacerMin;
+ pub const button = ui_impl.button;
+ pub const buttonStyled = ui_impl.buttonStyled;
++pub const checkbox = ui_impl.checkbox;
+ pub const empty = ui_impl.empty;
+ 
+ // Primitive types
+@@ -36,6 +36,7 @@ pub const Input = ui_impl.Input;
+ pub const Spacer = ui_impl.Spacer;
+ pub const Button = ui_impl.Button;
+ pub const Empty = ui_impl.Empty;
++pub const CheckboxPrimitive = ui_impl.CheckboxPrimitive;
+ pub const PrimitiveType = ui_impl.PrimitiveType;
+ 
+ // Styles
+@@ -47,3 +48,5 @@ pub const CenterStyle = ui_impl.CenterStyle;
+ pub const ShadowConfig = ui_impl.ShadowConfig;
+ pub const ButtonStyle = ui_impl.ButtonStyle;
+ pub const InputStyle = ui_impl.InputStyle;
++pub const CheckboxStyle = ui_impl.CheckboxStyle;
++pub const ScrollStyle = ui_impl.ScrollStyle;
+diff --git a/src/ui/ui.zig b/src/ui/ui.zig
+index 9eba3cd..f78c140 100644
+--- a/src/ui/ui.zig
++++ b/src/ui/ui.zig
+@@ -209,6 +209,32 @@ pub const Input = struct {
+     pub const primitive_type: PrimitiveType = .input;
+ };
+ 
++pub const ScrollStyle = struct {
++    width: ?f32 = null,
++    height: ?f32 = null,
++    /// Content height (if known ahead of time)
++    content_height: ?f32 = null,
++    /// Padding inside the scroll area
++    padding: BoxStyle.PaddingValue = .{ .all = 0 },
++    gap: u16 = 0,
++    background: ?Color = null,
++    corner_radius: f32 = 0,
++    /// Scrollbar styling
++    scrollbar_size: f32 = 8,
++    track_color: ?Color = null,
++    thumb_color: ?Color = null,
++    /// Only vertical for now
++    vertical: bool = true,
++    horizontal: bool = false,
++};
++
++pub const PendingScroll = struct {
++    id: []const u8,
++    layout_id: LayoutId,
++    style: ScrollStyle,
++    content_layout_id: LayoutId,
++};
++
+ /// Spacer element descriptor
+ pub const Spacer = struct {
+     min_size: f32 = 0,
+@@ -309,6 +335,8 @@ pub const Builder = struct {
+ 
+     pending_checkboxes: std.ArrayListUnmanaged(PendingCheckbox),
+ 
++    pending_scrolls: std.ArrayListUnmanaged(PendingScroll),
++
+     const PendingInput = struct {
+         id: []const u8,
+         layout_id: LayoutId,
+@@ -337,6 +365,7 @@ pub const Builder = struct {
+             .pending_inputs = .{},
+             .pending_buttons = .{},
+             .pending_checkboxes = .{},
++            .pending_scrolls = .{},
+             .input_regions = .{},
+         };
+     }
+@@ -347,6 +376,7 @@ pub const Builder = struct {
+         self.pending_buttons.deinit(self.allocator);
+         self.pending_checkboxes.deinit(self.allocator);
+         self.input_regions.deinit(self.allocator);
++        self.pending_scrolls.deinit(self.allocator);
+     }
+ 
+     // =========================================================================
+@@ -555,6 +585,119 @@ pub const Builder = struct {
+         }
+     }
+ 
++    /// Create a scrollable container
++    /// Usage: b.scroll("my_scroll", .{ .height = 200 }, .{ ...children... });
++    pub fn scroll(self: *Self, id: []const u8, style: ScrollStyle, children: anytype) void {
++        const layout_id = LayoutId.fromString(id);
++
++        // Get scroll offset from retained widget
++        var scroll_offset_y: f32 = 0;
++        if (self.gooey) |g| {
++            if (g.widgets.scrollContainer(id)) |sc| {
++                scroll_offset_y = sc.state.offset_y;
++            }
++        }
++
++        // Convert padding
++        const padding: Padding = switch (style.padding) {
++            .all => |v| Padding.all(@intFromFloat(v)),
++            .symmetric => |s| Padding.symmetric(@intFromFloat(s.x), @intFromFloat(s.y)),
++            .each => |e| .{
++                .top = @intFromFloat(e.top),
++                .right = @intFromFloat(e.right),
++                .bottom = @intFromFloat(e.bottom),
++                .left = @intFromFloat(e.left),
++            },
++        };
++
++        // Outer container (the viewport)
++        const viewport_width = style.width orelse 300;
++        const viewport_height = style.height orelse 200;
++
++        self.layout.openElement(.{
++            .id = layout_id,
++            .layout = .{
++                .sizing = .{
++                    .width = SizingAxis.fixed(viewport_width),
++                    .height = SizingAxis.fixed(viewport_height),
++                },
++                .padding = padding,
++            },
++            .background_color = style.background,
++            .corner_radius = if (style.corner_radius > 0) CornerRadius.all(style.corner_radius) else .{},
++            .scroll = .{
++                .vertical = style.vertical,
++                .horizontal = style.horizontal,
++                .scroll_offset = .{ .x = 0, .y = scroll_offset_y },
++            },
++        }) catch return;
++
++        // Inner content container (can be taller than viewport)
++        const content_id = self.generateId();
++        self.layout.openElement(.{
++            .id = content_id,
++            .layout = .{
++                .sizing = .{
++                    .width = SizingAxis.grow(),
++                    .height = if (style.content_height) |h| SizingAxis.fixed(h) else SizingAxis.fit(),
++                },
++                .layout_direction = .top_to_bottom,
++                .child_gap = style.gap,
++            },
++        }) catch return;
++
++        // Process children
++        self.processChildren(children);
++
++        // Close content container
++        self.layout.closeElement();
++
++        // Close viewport
++        self.layout.closeElement();
++
++        // Store for later processing
++        self.pending_scrolls.append(self.allocator, .{
++            .id = id,
++            .layout_id = layout_id,
++            .style = style,
++            .content_layout_id = content_id,
++        }) catch {};
++    }
++
++    /// Register scroll container regions and update state
++    pub fn registerPendingScrollRegions(self: *Self) void {
++        for (self.pending_scrolls.items) |pending| {
++            const viewport_bounds = self.layout.getBoundingBox(pending.layout_id.id);
++            const content_bounds = self.layout.getBoundingBox(pending.content_layout_id.id);
++
++            if (viewport_bounds != null and content_bounds != null) {
++                const vp = viewport_bounds.?;
++                const ct = content_bounds.?;
++
++                if (self.gooey) |g| {
++                    if (g.widgets.scrollContainer(pending.id)) |sc| {
++                        // Update bounds
++                        sc.bounds = .{
++                            .x = vp.x,
++                            .y = vp.y,
++                            .width = vp.width,
++                            .height = vp.height,
++                        };
++
++                        // Update viewport and content sizes
++                        sc.setViewport(vp.width, vp.height);
++                        sc.setContentSize(ct.width, ct.height);
++
++                        // Apply theme colors if provided
++                        if (pending.style.track_color) |c| sc.style.track_color = c;
++                        if (pending.style.thumb_color) |c| sc.style.thumb_color = c;
++                        sc.style.scrollbar_size = pending.style.scrollbar_size;
++                    }
++                }
++            }
++        }
++    }
++
+     // =========================================================================
+     // Internal: Child Processing
+     // =========================================================================

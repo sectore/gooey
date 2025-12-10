@@ -183,6 +183,16 @@ pub const Quad = extern struct {
         q.border_widths = Edges.all(width);
         return q;
     }
+
+    /// Create a quad with explicit clip bounds
+    pub fn withClipBounds(self: Quad, clip: ContentMask.ClipBounds) Quad {
+        var q = self;
+        q.clip_origin_x = clip.x;
+        q.clip_origin_y = clip.y;
+        q.clip_size_width = clip.width;
+        q.clip_size_height = clip.height;
+        return q;
+    }
 };
 
 // ============================================================================
@@ -444,6 +454,20 @@ pub const Scene = struct {
     pub fn insertQuadWithShadow(self: *Self, quad: Quad, blur_radius: f32) !void {
         try self.insertShadow(Shadow.forQuad(quad, blur_radius));
         try self.insertQuad(quad);
+    }
+
+    /// Check if there's an active clip (clip stack is not empty)
+    pub fn hasActiveClip(self: *const Self) bool {
+        return self.clip_stack.items.len > 0;
+    }
+
+    /// Insert a quad with the current clip mask applied
+    pub fn insertQuadClipped(self: *Self, quad: Quad) !void {
+        const clip = self.currentClip();
+        var q = quad.withClipBounds(clip);
+        q.order = self.next_order;
+        self.next_order += 1;
+        try self.quads.append(self.allocator, q);
     }
 
     /// Finalize the scene for rendering.

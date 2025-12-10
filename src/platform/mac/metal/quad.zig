@@ -38,7 +38,8 @@ pub const quad_shader_source =
     \\    float2 quad_size;
     \\    float4 corner_radii;
     \\    float4 border_widths;
-    \\    float4 clip_rect;
+    \\    float4 clip_bounds;   // x, y, width, height
+    \\    float2 screen_pos;    // screen position for clip test
     \\};
     \\
     \\float4 hsla_to_rgba(float4 hsla) {
@@ -98,11 +99,20 @@ pub const quad_shader_source =
     \\    out.quad_size = size;
     \\    out.corner_radii = q.corner_radii;
     \\    out.border_widths = q.border_widths;
-    \\    out.clip_rect = float4(1.0);
+    \\    out.clip_bounds = float4(q.clip_origin_x, q.clip_origin_y, q.clip_size_width, q.clip_size_height);
+    \\    out.screen_pos = pos;
     \\    return out;
     \\}
     \\
     \\fragment float4 quad_fragment(QuadVertexOutput in [[stage_in]]) {
+    \\    // Discard pixels outside clip bounds
+    \\    float2 clip_min = in.clip_bounds.xy;
+    \\    float2 clip_max = clip_min + in.clip_bounds.zw;
+    \\    if (in.screen_pos.x < clip_min.x || in.screen_pos.x > clip_max.x ||
+    \\        in.screen_pos.y < clip_min.y || in.screen_pos.y > clip_max.y) {
+    \\        discard_fragment();
+    \\    }
+    \\
     \\    float2 size = in.quad_size;
     \\    float2 half_size = size / 2.0;
     \\    float2 pos = in.quad_coord * size;

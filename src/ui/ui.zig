@@ -209,6 +209,32 @@ pub const Input = struct {
     pub const primitive_type: PrimitiveType = .input;
 };
 
+pub const ScrollStyle = struct {
+    width: ?f32 = null,
+    height: ?f32 = null,
+    /// Content height (if known ahead of time)
+    content_height: ?f32 = null,
+    /// Padding inside the scroll area
+    padding: BoxStyle.PaddingValue = .{ .all = 0 },
+    gap: u16 = 0,
+    background: ?Color = null,
+    corner_radius: f32 = 0,
+    /// Scrollbar styling
+    scrollbar_size: f32 = 8,
+    track_color: ?Color = null,
+    thumb_color: ?Color = null,
+    /// Only vertical for now
+    vertical: bool = true,
+    horizontal: bool = false,
+};
+
+pub const PendingScroll = struct {
+    id: []const u8,
+    layout_id: LayoutId,
+    style: ScrollStyle,
+    content_layout_id: LayoutId,
+};
+
 /// Spacer element descriptor
 pub const Spacer = struct {
     min_size: f32 = 0,
@@ -309,6 +335,8 @@ pub const Builder = struct {
 
     pending_checkboxes: std.ArrayListUnmanaged(PendingCheckbox),
 
+    pending_scrolls: std.ArrayListUnmanaged(PendingScroll),
+
     const PendingInput = struct {
         id: []const u8,
         layout_id: LayoutId,
@@ -337,6 +365,7 @@ pub const Builder = struct {
             .pending_inputs = .{},
             .pending_buttons = .{},
             .pending_checkboxes = .{},
+            .pending_scrolls = .{},
             .input_regions = .{},
         };
     }
@@ -347,6 +376,7 @@ pub const Builder = struct {
         self.pending_buttons.deinit(self.allocator);
         self.pending_checkboxes.deinit(self.allocator);
         self.input_regions.deinit(self.allocator);
+        self.pending_scrolls.deinit(self.allocator);
     }
 
     // =========================================================================
@@ -552,6 +582,119 @@ pub const Builder = struct {
         for (items, 0..) |item, index| {
             const result = render_fn(item, index);
             self.processChild(result);
+        }
+    }
+
+    /// Create a scrollable container
+    /// Usage: b.scroll("my_scroll", .{ .height = 200 }, .{ ...children... });
+    pub fn scroll(self: *Self, id: []const u8, style: ScrollStyle, children: anytype) void {
+        const layout_id = LayoutId.fromString(id);
+
+        // Get scroll offset from retained widget
+        var scroll_offset_y: f32 = 0;
+        if (self.gooey) |g| {
+            if (g.widgets.scrollContainer(id)) |sc| {
+                scroll_offset_y = sc.state.offset_y;
+            }
+        }
+
+        // Convert padding
+        const padding: Padding = switch (style.padding) {
+            .all => |v| Padding.all(@intFromFloat(v)),
+            .symmetric => |s| Padding.symmetric(@intFromFloat(s.x), @intFromFloat(s.y)),
+            .each => |e| .{
+                .top = @intFromFloat(e.top),
+                .right = @intFromFloat(e.right),
+                .bottom = @intFromFloat(e.bottom),
+                .left = @intFromFloat(e.left),
+            },
+        };
+
+        // Outer container (the viewport)
+        const viewport_width = style.width orelse 300;
+        const viewport_height = style.height orelse 200;
+
+        self.layout.openElement(.{
+            .id = layout_id,
+            .layout = .{
+                .sizing = .{
+                    .width = SizingAxis.fixed(viewport_width),
+                    .height = SizingAxis.fixed(viewport_height),
+                },
+                .padding = padding,
+            },
+            .background_color = style.background,
+            .corner_radius = if (style.corner_radius > 0) CornerRadius.all(style.corner_radius) else .{},
+            .scroll = .{
+                .vertical = style.vertical,
+                .horizontal = style.horizontal,
+                .scroll_offset = .{ .x = 0, .y = scroll_offset_y },
+            },
+        }) catch return;
+
+        // Inner content container (can be taller than viewport)
+        const content_id = self.generateId();
+        self.layout.openElement(.{
+            .id = content_id,
+            .layout = .{
+                .sizing = .{
+                    .width = SizingAxis.grow(),
+                    .height = if (style.content_height) |h| SizingAxis.fixed(h) else SizingAxis.fit(),
+                },
+                .layout_direction = .top_to_bottom,
+                .child_gap = style.gap,
+            },
+        }) catch return;
+
+        // Process children
+        self.processChildren(children);
+
+        // Close content container
+        self.layout.closeElement();
+
+        // Close viewport
+        self.layout.closeElement();
+
+        // Store for later processing
+        self.pending_scrolls.append(self.allocator, .{
+            .id = id,
+            .layout_id = layout_id,
+            .style = style,
+            .content_layout_id = content_id,
+        }) catch {};
+    }
+
+    /// Register scroll container regions and update state
+    pub fn registerPendingScrollRegions(self: *Self) void {
+        for (self.pending_scrolls.items) |pending| {
+            const viewport_bounds = self.layout.getBoundingBox(pending.layout_id.id);
+            const content_bounds = self.layout.getBoundingBox(pending.content_layout_id.id);
+
+            if (viewport_bounds != null and content_bounds != null) {
+                const vp = viewport_bounds.?;
+                const ct = content_bounds.?;
+
+                if (self.gooey) |g| {
+                    if (g.widgets.scrollContainer(pending.id)) |sc| {
+                        // Update bounds
+                        sc.bounds = .{
+                            .x = vp.x,
+                            .y = vp.y,
+                            .width = vp.width,
+                            .height = vp.height,
+                        };
+
+                        // Update viewport and content sizes
+                        sc.setViewport(vp.width, vp.height);
+                        sc.setContentSize(ct.width, ct.height);
+
+                        // Apply theme colors if provided
+                        if (pending.style.track_color) |c| sc.style.track_color = c;
+                        if (pending.style.thumb_color) |c| sc.style.thumb_color = c;
+                        sc.style.scrollbar_size = pending.style.scrollbar_size;
+                    }
+                }
+            }
         }
     }
 

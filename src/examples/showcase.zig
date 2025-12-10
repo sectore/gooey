@@ -47,9 +47,10 @@ const Theme = struct {
 // Application State
 // =============================================================================
 
+// Update state struct to add scroll demo data
 var state = struct {
     const Self = @This();
-    const Page = enum { home, forms, about };
+    const Page = enum { home, forms, about, scroll_demo };
     const FormField = enum { name, email, message };
 
     // Navigation
@@ -81,7 +82,8 @@ var state = struct {
     pub fn nextPage(self: *Self) void {
         self.page = switch (self.page) {
             .home => .forms,
-            .forms => .about,
+            .forms => .scroll_demo,
+            .scroll_demo => .about,
             .about => .home,
         };
     }
@@ -90,7 +92,8 @@ var state = struct {
         self.page = switch (self.page) {
             .home => .about,
             .forms => .home,
-            .about => .forms,
+            .scroll_demo => .forms,
+            .about => .scroll_demo,
         };
     }
 
@@ -167,7 +170,8 @@ const NavBar = struct {
         }, .{
             NavTab{ .label = "Home", .page = .home, .key = "1" },
             NavTab{ .label = "Forms", .page = .forms, .key = "2" },
-            NavTab{ .label = "About", .page = .about, .key = "3" },
+            NavTab{ .label = "Scroll", .page = .scroll_demo, .key = "3" },
+            NavTab{ .label = "About", .page = .about, .key = "4" },
             ui.spacer(),
             ThemeToggle{},
         });
@@ -272,6 +276,147 @@ const StatCard = struct {
         }, .{
             ui.text(value_str, .{ .size = 28, .color = t.primary }),
             ui.text(self.label, .{ .size = 12, .color = t.muted }),
+        });
+    }
+};
+
+/// Scroll Demo page
+const ScrollDemoPage = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const t = state.theme;
+
+        b.box(.{
+            .padding = .{ .all = 32 },
+            .gap = 24,
+            .fill_width = true,
+            .fill_height = true,
+            .alignment = .{ .main = .center, .cross = .center },
+        }, .{
+            ui.text("Scroll Container Demo", .{ .size = 24, .color = t.text }),
+            ui.text("Scroll with mousewheel or trackpad", .{ .size = 14, .color = t.muted }),
+
+            b.box(.{
+                .direction = .row,
+                .gap = 24,
+                .alignment = .{ .main = .center },
+            }, .{
+                ScrollableList{},
+                ScrollableCards{},
+            }),
+        });
+    }
+};
+
+const ScrollableList = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const t = state.theme;
+
+        b.box(.{
+            .gap = 8,
+            .alignment = .{ .cross = .start },
+        }, .{
+            ui.text("Item List", .{ .size = 14, .color = t.muted }),
+
+            b.scroll("list_scroll", .{
+                .width = 200,
+                .height = 250,
+                .background = t.card,
+                .corner_radius = 8,
+                .padding = .{ .all = 8 },
+                .gap = 6,
+                .content_height = 500, // Content is taller than viewport
+                .track_color = t.bg,
+                .thumb_color = t.muted,
+            }, .{
+                // Generate list items
+                ListItem{ .index = 1 },
+                ListItem{ .index = 2 },
+                ListItem{ .index = 3 },
+                ListItem{ .index = 4 },
+                ListItem{ .index = 5 },
+                ListItem{ .index = 6 },
+                ListItem{ .index = 7 },
+                ListItem{ .index = 8 },
+                ListItem{ .index = 9 },
+                ListItem{ .index = 10 },
+                ListItem{ .index = 11 },
+                ListItem{ .index = 12 },
+                ListItem{ .index = 13 },
+                ListItem{ .index = 14 },
+                ListItem{ .index = 15 },
+            }),
+        });
+    }
+};
+
+const ListItem = struct {
+    index: u32,
+
+    var buf: [32]u8 = undefined;
+
+    pub fn render(self: @This(), b: *ui.Builder) void {
+        const t = state.theme;
+        const label = std.fmt.bufPrint(&buf, "List Item {d}", .{self.index}) catch "Item";
+
+        b.box(.{
+            .padding = .{ .symmetric = .{ .x = 12, .y = 8 } },
+            .background = t.bg,
+            .corner_radius = 4,
+            .fill_width = true,
+        }, .{
+            ui.text(label, .{ .size = 13, .color = t.text }),
+        });
+    }
+};
+
+const ScrollableCards = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const t = state.theme;
+
+        b.box(.{
+            .gap = 8,
+            .alignment = .{ .cross = .start },
+        }, .{
+            ui.text("Card Stack", .{ .size = 14, .color = t.muted }),
+
+            b.scroll("cards_scroll", .{
+                .width = 220,
+                .height = 250,
+                .background = t.bg,
+                .corner_radius = 8,
+                .padding = .{ .all = 12 },
+                .gap = 12,
+                .content_height = 600,
+                .track_color = t.card,
+                .thumb_color = t.primary,
+            }, .{
+                InfoCard{ .title = "Performance", .desc = "GPU-accelerated rendering" },
+                InfoCard{ .title = "Layout", .desc = "Flexbox-style system" },
+                InfoCard{ .title = "Text", .desc = "CoreText shaping" },
+                InfoCard{ .title = "Widgets", .desc = "Retained state" },
+                InfoCard{ .title = "Clipping", .desc = "Nested scroll areas" },
+                InfoCard{ .title = "Themes", .desc = "Dark mode support" },
+            }),
+        });
+    }
+};
+
+const InfoCard = struct {
+    title: []const u8,
+    desc: []const u8,
+
+    pub fn render(self: @This(), b: *ui.Builder) void {
+        const t = state.theme;
+
+        b.box(.{
+            .padding = .{ .all = 12 },
+            .gap = 4,
+            .background = t.card,
+            .corner_radius = 6,
+            .fill_width = true,
+        }, .{
+            ui.text(self.title, .{ .size = 14, .color = t.primary }),
+            ui.text(self.desc, .{ .size = 12, .color = t.muted }),
         });
     }
 };
@@ -477,6 +622,9 @@ const PageContent = struct {
         if (state.page == .forms) {
             b.box(.{ .grow = true }, .{FormsPage{}});
         }
+        if (state.page == .scroll_demo) {
+            b.box(.{ .grow = true }, .{ScrollDemoPage{}});
+        }
         if (state.page == .about) {
             b.box(.{ .grow = true }, .{AboutPage{}});
         }
@@ -523,6 +671,10 @@ fn onEvent(g: *gooey.UI, event: gooey.InputEvent) bool {
                 return true;
             }
             if (key.key == .@"3") {
+                state.goTo(.scroll_demo);
+                return true;
+            }
+            if (key.key == .@"4") {
                 state.goTo(.about);
                 return true;
             }

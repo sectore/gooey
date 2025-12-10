@@ -4,11 +4,13 @@ const std = @import("std");
 const TextInput = @import("../elements/text_input.zig").TextInput;
 const Bounds = @import("../elements/text_input.zig").Bounds;
 const Checkbox = @import("../elements/checkbox.zig").Checkbox;
+const ScrollContainer = @import("../elements/scroll_container.zig").ScrollContainer;
 
 pub const WidgetStore = struct {
     allocator: std.mem.Allocator,
     text_inputs: std.StringHashMap(*TextInput),
     checkboxes: std.StringHashMap(*Checkbox),
+    scroll_containers: std.StringHashMap(*ScrollContainer),
     accessed_this_frame: std.StringHashMap(void),
     default_text_input_bounds: Bounds = .{ .x = 0, .y = 0, .width = 200, .height = 36 },
 
@@ -19,6 +21,7 @@ pub const WidgetStore = struct {
             .allocator = allocator,
             .text_inputs = std.StringHashMap(*TextInput).init(allocator),
             .checkboxes = std.StringHashMap(*Checkbox).init(allocator),
+            .scroll_containers = std.StringHashMap(*ScrollContainer).init(allocator),
             .accessed_this_frame = std.StringHashMap(void).init(allocator),
         };
     }
@@ -41,6 +44,15 @@ pub const WidgetStore = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.checkboxes.deinit();
+
+        // Clean up ScrollContainers
+        var sc_it = self.scroll_containers.iterator();
+        while (sc_it.next()) |entry| {
+            entry.value_ptr.*.deinit();
+            self.allocator.destroy(entry.value_ptr.*);
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.scroll_containers.deinit();
 
         self.accessed_this_frame.deinit();
     }
@@ -117,6 +129,43 @@ pub const WidgetStore = struct {
 
     pub fn getCheckbox(self: *Self, id: []const u8) ?*Checkbox {
         return self.checkboxes.get(id);
+    }
+
+    // =========================================================================
+    // ScrollContainer
+    // =========================================================================
+
+    pub fn scrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
+        if (self.scroll_containers.get(id)) |existing| {
+            self.accessed_this_frame.put(id, {}) catch {};
+            return existing;
+        }
+
+        const sc = self.allocator.create(ScrollContainer) catch return null;
+        errdefer self.allocator.destroy(sc);
+
+        sc.* = ScrollContainer.init(self.allocator, id);
+
+        const owned_key = self.allocator.dupe(u8, id) catch {
+            sc.deinit();
+            self.allocator.destroy(sc);
+            return null;
+        };
+        errdefer self.allocator.free(owned_key);
+
+        self.scroll_containers.put(owned_key, sc) catch {
+            sc.deinit();
+            self.allocator.destroy(sc);
+            self.allocator.free(owned_key);
+            return null;
+        };
+
+        self.accessed_this_frame.put(owned_key, {}) catch {};
+        return sc;
+    }
+
+    pub fn getScrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
+        return self.scroll_containers.get(id);
     }
 
     // =========================================================================
