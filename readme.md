@@ -50,19 +50,13 @@ const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
 
-// =============================================================================
 // Application State - just a plain struct!
-// =============================================================================
-
 var state = struct {
     count: i32 = 0,
     message: []const u8 = "Click the buttons!",
 }{};
 
-// =============================================================================
 // Components
-// =============================================================================
-
 const Counter = struct {
     // Buffer for formatting the count (static so it persists)
     var count_buf: [32]u8 = undefined;
@@ -104,10 +98,7 @@ const Card = struct {
     }
 };
 
-// =============================================================================
 // Entry Point
-// =============================================================================
-
 pub fn main() !void {
     try gooey.run(.{
         .title = "Simple Counter",
@@ -118,10 +109,7 @@ pub fn main() !void {
     });
 }
 
-// =============================================================================
 // Render Function
-// =============================================================================
-
 fn render(g: *gooey.UI) void {
     const size = g.windowSize();
 
@@ -134,10 +122,7 @@ fn render(g: *gooey.UI) void {
     });
 }
 
-// =============================================================================
 // Event Handlers
-// =============================================================================
-
 fn increment() void {
     state.count += 1;
     state.message = "Incremented!";
@@ -164,79 +149,7 @@ fn onEvent(_: *gooey.UI, event: gooey.InputEvent) bool {
 }
 ```
 
-## API Reference
-
-### `gooey.run()` - Entry Point
-
-```zig
-try gooey.run(.{
-    .title = "My App",
-    .width = 800,
-    .height = 600,
-    .render = myRenderFn,        // fn(*gooey.UI) void
-    .on_event = myEventFn,       // Optional: fn(*gooey.UI, InputEvent) bool
-});
-```
-
-### Layout Containers
-
-```zig
-fn render(g: *gooey.UI) void {
-    g.box(style, children);      // Flexible container
-    g.vstack(style, children);   // Vertical stack
-    g.hstack(style, children);   // Horizontal stack
-    g.center(style, children);   // Centered container
-}
-```
-
-### Primitives
-
-```zig
-ui.text("Hello", .{ .size = 16, .color = ui.Color.black })
-ui.textFmt("Count: {d}", .{42}, .{})
-ui.button("Click", onClick)
-ui.input("id", .{ .placeholder = "...", .bind = &state.field })
-ui.spacer()
-```
-
-### Styles
-
-```zig
-// BoxStyle
-.{
-.width = 200, .height = 100,
-.padding = .{ .all = 16 },
-.gap = 8,
-.background = ui.Color.white,
-.corner_radius = 8,
-.shadow = ui.ShadowConfig.drop(6),
-.direction = .column,
-.alignment = .{ .main = .center, .cross = .center },
-}
-
-// Colors
-ui.Color.white
-ui.Color.rgb(0.2, 0.5, 1.0)
-ui.Color.rgba(0.2, 0.5, 1.0, 0.8)
-```
-
-## Project Structure
-
-```
-src/
-├── app.zig              # gooey.run() API
-├── root.zig             # Public exports
-├── core/                # Core types
-├── ui/                  # Builder & components
-├── elements/            # Widgets (TextInput)
-├── font/                # Text system
-├── layout/              # Layout engine
-├── platform/mac/        # macOS/Metal
-└── examples/
-    ├── simple.zig
-    ├── login.zig
-    └── showcase.zig
-```
+Check out the [showcase example](./src/examples/showcase.zig).
 
 ## Inspiration
 
