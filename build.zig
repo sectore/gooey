@@ -111,6 +111,31 @@ pub fn build(b: *std.Build) void {
     run_login_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Shader Demo Example
+    // =========================================================================
+
+    const shader_exe = b.addExecutable(.{
+        .name = "shader_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/shader_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(shader_exe);
+
+    // Run shader demo
+    const run_shader_step = b.step("run-shader", "Run the custom shader demo");
+    const run_shader_cmd = b.addRunArtifact(shader_exe);
+    run_shader_step.dependOn(&run_shader_cmd.step);
+    run_shader_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Tests
     // =========================================================================
 

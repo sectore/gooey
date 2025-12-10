@@ -11,6 +11,7 @@ const text_mod = @import("../../text/mod.zig");
 const Atlas = text_mod.Atlas;
 const platform = @import("platform.zig");
 const metal = @import("metal/metal.zig");
+const custom_shader = metal.custom_shader;
 const input_view = @import("input_view.zig");
 const input = @import("../../core/input.zig");
 const display_link = @import("display_link.zig");
@@ -35,6 +36,8 @@ pub const Window = struct {
     scene: ?*const scene_mod.Scene,
     text_atlas: ?*const Atlas = null,
     delegate: ?objc.Object = null,
+    // Custom shader animation flag
+    custom_shader_animation: bool,
 
     /// Mutex protecting all render-related state accessed from DisplayLink thread.
     /// This includes: scene, text_atlas, background_color, size, scale_factor, renderer.
@@ -113,6 +116,7 @@ pub const Window = struct {
         height: f64 = 600,
         background_color: geometry.Color = geometry.Color.init(0.2, 0.2, 0.25, 1.0),
         use_display_link: bool = true,
+        custom_shaders: []const []const u8 = &.{},
     };
 
     const Self = @This();
@@ -136,6 +140,7 @@ pub const Window = struct {
             .background_color = options.background_color,
             .needs_render = std.atomic.Value(bool).init(true),
             .scene = null,
+            .custom_shader_animation = false,
         };
 
         // Create NSWindow
@@ -184,7 +189,20 @@ pub const Window = struct {
         try self.setupMetalLayer();
 
         // Initialize renderer with logical size and scale factor
-        self.renderer = try metal.Renderer.init(self.metal_layer, self.size, self.scale_factor);
+        self.renderer = try metal.Renderer.init(allocator, self.metal_layer, self.size, self.scale_factor);
+
+        // Load custom shaders
+        if (options.custom_shaders.len > 0) {
+            for (options.custom_shaders, 0..) |shader_source, i| {
+                var name_buf: [32]u8 = undefined;
+                const name = std.fmt.bufPrint(&name_buf, "custom_{d}", .{i}) catch "custom";
+                self.renderer.addCustomShader(shader_source, name) catch |err| {
+                    std.debug.print("Failed to load custom shader {d}: {}\n", .{ i, err });
+                };
+            }
+            // Enable continuous animation for iTime
+            self.custom_shader_animation = true;
+        }
 
         // Setup display link for vsync
         if (options.use_display_link) {
@@ -663,14 +681,14 @@ fn displayLinkCallback(
 
     const window: *Window = @ptrCast(@alignCast(user_info orelse return .success));
 
-    // Skip rendering during live resize - main thread handles it synchronously
+    // Skip rendering during live resize
     if (window.in_live_resize.load(.acquire)) {
         return .success;
     }
 
-    // Only render if needed (dirty flag pattern)
+    // Always render if custom shader animation is enabled (for iTime)
     const explicit_render = window.needs_render.swap(false, .acq_rel);
-    const should_render = window.benchmark_mode or explicit_render;
+    const should_render = window.benchmark_mode or explicit_render or window.custom_shader_animation;
 
     if (!should_render) {
         return .success;
@@ -699,12 +717,22 @@ fn displayLinkCallback(
         window.renderer.updateTextAtlas(atlas) catch {};
     }
 
-    // Render the scene
+    // Use post-process rendering if shaders are active
     if (window.scene) |s| {
-        window.renderer.renderScene(s, window.background_color) catch |err| {
-            std.debug.print("renderScene error: {}\n", .{err});
-            window.renderer.clear(window.background_color);
-        };
+        if (window.renderer.hasCustomShaders()) {
+            window.renderer.renderSceneWithPostProcess(s, window.background_color) catch |err| {
+                std.debug.print("renderSceneWithPostProcess error: {}\n", .{err});
+                // Fall back to normal render
+                window.renderer.renderScene(s, window.background_color) catch {
+                    window.renderer.clear(window.background_color);
+                };
+            };
+        } else {
+            window.renderer.renderScene(s, window.background_color) catch |err| {
+                std.debug.print("renderScene error: {}\n", .{err});
+                window.renderer.clear(window.background_color);
+            };
+        }
     } else {
         window.renderer.clear(window.background_color);
     }

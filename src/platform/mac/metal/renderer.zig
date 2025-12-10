@@ -9,6 +9,7 @@ const mtl = @import("api.zig");
 const quad_shader = @import("quad.zig");
 const shadow_shader = @import("shadow.zig");
 const text_pipeline = @import("text.zig");
+const custom_shader = @import("custom_shader.zig");
 const Atlas = @import("../../../text/mod.zig").Atlas;
 
 /// Vertex data: position (x, y) + color (r, g, b, a)
@@ -43,10 +44,14 @@ pub const Renderer = struct {
     scale_factor: f64,
     sample_count: u32,
 
+    // Custom shader support
+    post_process: ?custom_shader.PostProcessState,
+    allocator: std.mem.Allocator,
+
     const Self = @This();
     const INITIAL_QUAD_CAPACITY = 256;
 
-    pub fn init(layer: objc.Object, size: geometry.Size(f64), scale_factor: f64) !Self {
+    pub fn init(allocator: std.mem.Allocator, layer: objc.Object, size: geometry.Size(f64), scale_factor: f64) !Self {
 
         // Get default Metal device
         const device_ptr = mtl.MTLCreateSystemDefaultDevice() orelse
@@ -87,6 +92,8 @@ pub const Renderer = struct {
             .scale_factor = scale_factor,
             .sample_count = 4, // MSAA 4x
             .unified_memory = unified_memory,
+            .post_process = null,
+            .allocator = allocator,
         };
 
         try self.createMSAATexture();
@@ -101,6 +108,285 @@ pub const Renderer = struct {
         ) catch null;
 
         return self;
+    }
+
+    // Initialize custom shader post-processing
+    pub fn initPostProcess(self: *Self) !void {
+        if (self.post_process != null) return;
+        self.post_process = custom_shader.PostProcessState.init(self.allocator, self.device);
+    }
+
+    // Add a custom shader
+    pub fn addCustomShader(self: *Self, shader_source: []const u8, name: []const u8) !void {
+        if (self.post_process == null) {
+            try self.initPostProcess();
+        }
+
+        try self.post_process.?.addShader(
+            shader_source,
+            name,
+            mtl.MTLPixelFormat.bgra8unorm,
+            1, // Post-process doesn't use MSAA
+        );
+    }
+
+    // Check if custom shaders are active
+    pub fn hasCustomShaders(self: *const Self) bool {
+        if (self.post_process) |pp| {
+            return pp.hasShaders();
+        }
+        return false;
+    }
+
+    // Get post-process state for uniform updates
+    pub fn getPostProcess(self: *Self) ?*custom_shader.PostProcessState {
+        return if (self.post_process) |*pp| pp else null;
+    }
+
+    /// Render scene with optional custom shader post-processing
+    pub fn renderSceneWithPostProcess(
+        self: *Self,
+        scene: *const scene_mod.Scene,
+        clear_color: geometry.Color,
+    ) !void {
+        const pp: *custom_shader.PostProcessState = if (self.post_process) |*p| p else {
+            return self.renderScene(scene, clear_color);
+        };
+
+        if (!pp.hasShaders()) {
+            return self.renderScene(scene, clear_color);
+        }
+
+        // Ensure post-process textures are correct size
+        const width: u32 = @intFromFloat(self.size.width * self.scale_factor);
+        const height: u32 = @intFromFloat(self.size.height * self.scale_factor);
+        try pp.ensureSize(width, height);
+
+        // Update timing for iTime uniform
+        pp.updateTiming();
+        pp.uploadUniforms();
+
+        // Step 1: Render scene to back_texture
+        try self.renderSceneToTexture(scene, clear_color, pp.back_texture.?);
+
+        // Step 2: Run custom shader passes (read from back, write to front, swap)
+        for (pp.pipelines.items) |pipeline| {
+            try self.runPostProcessPass(
+                pipeline,
+                pp.back_texture.?,
+                pp.front_texture.?,
+                pp.uniform_buffer.?,
+                pp.sampler.?,
+            );
+            pp.swapTextures();
+        }
+
+        // Step 3: Blit final result to screen (back_texture has result after swap)
+        try self.blitToScreen(pp.back_texture.?);
+    }
+
+    /// Render scene to an off-screen texture
+    fn renderSceneToTexture(
+        self: *Self,
+        scene: *const scene_mod.Scene,
+        clear_color: geometry.Color,
+        target_texture: objc.Object,
+    ) !void {
+        const shadows = scene.getShadows();
+        const quads = scene.getQuads();
+
+        // Create render pass for off-screen texture
+        const MTLRenderPassDescriptor = objc.getClass("MTLRenderPassDescriptor") orelse return;
+        const render_pass = MTLRenderPassDescriptor.msgSend(objc.Object, "renderPassDescriptor", .{});
+
+        const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(
+            objc.Object,
+            "objectAtIndexedSubscript:",
+            .{@as(c_ulong, 0)},
+        );
+
+        // For post-process, render to MSAA then resolve to target
+        const msaa_tex = self.msaa_texture orelse return;
+        color_attachment_0.msgSend(void, "setTexture:", .{msaa_tex.value});
+        color_attachment_0.msgSend(void, "setResolveTexture:", .{target_texture.value});
+        color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.clear)});
+        color_attachment_0.msgSend(void, "setStoreAction:", .{@intFromEnum(mtl.MTLStoreAction.multisample_resolve)});
+        color_attachment_0.msgSend(void, "setClearColor:", .{mtl.MTLClearColor.fromColor(clear_color)});
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+        const encoder_ptr = command_buffer.msgSend(
+            ?*anyopaque,
+            "renderCommandEncoderWithDescriptor:",
+            .{render_pass.value},
+        );
+        if (encoder_ptr == null) return;
+        const encoder = objc.Object.fromId(encoder_ptr);
+
+        // Setup viewport
+        const viewport = mtl.MTLViewport{
+            .x = 0,
+            .y = 0,
+            .width = self.size.width * self.scale_factor,
+            .height = self.size.height * self.scale_factor,
+            .znear = 0,
+            .zfar = 1,
+        };
+        encoder.msgSend(void, "setViewport:", .{viewport});
+
+        const viewport_size: [2]f32 = .{
+            @floatCast(self.size.width),
+            @floatCast(self.size.height),
+        };
+
+        const unit_verts = self.quad_unit_vertex_buffer orelse {
+            encoder.msgSend(void, "endEncoding", .{});
+            return;
+        };
+
+        // Draw shadows and quads
+        var shadow_idx: usize = 0;
+        var quad_idx: usize = 0;
+
+        while (shadow_idx < shadows.len or quad_idx < quads.len) {
+            const draw_shadow = if (shadow_idx < shadows.len) blk: {
+                if (quad_idx >= quads.len) break :blk true;
+                break :blk shadows[shadow_idx].order < quads[quad_idx].order;
+            } else false;
+
+            if (draw_shadow) {
+                var batch_end = shadow_idx + 1;
+                while (batch_end < shadows.len) : (batch_end += 1) {
+                    if (quad_idx < quads.len and quads[quad_idx].order < shadows[batch_end].order) break;
+                }
+                const batch_count = batch_end - shadow_idx;
+
+                if (self.shadow_pipeline_state) |pipeline| {
+                    encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.value});
+                    encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ unit_verts.value, @as(c_ulong, 0), @as(c_ulong, 0) });
+                    encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{ @as(*const anyopaque, @ptrCast(&shadows[shadow_idx])), @as(c_ulong, batch_count * @sizeOf(scene_mod.Shadow)), @as(c_ulong, 1) });
+                    encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{ @as(*const anyopaque, @ptrCast(&viewport_size)), @as(c_ulong, @sizeOf([2]f32)), @as(c_ulong, 2) });
+                    encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{ @intFromEnum(mtl.MTLPrimitiveType.triangle), @as(c_ulong, 0), @as(c_ulong, 6), @as(c_ulong, batch_count) });
+                }
+                shadow_idx = batch_end;
+            } else {
+                var batch_end = quad_idx + 1;
+                while (batch_end < quads.len) : (batch_end += 1) {
+                    if (shadow_idx < shadows.len and shadows[shadow_idx].order < quads[batch_end].order) break;
+                }
+                const batch_count = batch_end - quad_idx;
+
+                if (self.quad_pipeline_state) |pipeline| {
+                    encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.value});
+                    encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ unit_verts.value, @as(c_ulong, 0), @as(c_ulong, 0) });
+                    encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{ @as(*const anyopaque, @ptrCast(&quads[quad_idx])), @as(c_ulong, batch_count * @sizeOf(scene_mod.Quad)), @as(c_ulong, 1) });
+                    encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{ @as(*const anyopaque, @ptrCast(&viewport_size)), @as(c_ulong, @sizeOf([2]f32)), @as(c_ulong, 2) });
+                    encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{ @intFromEnum(mtl.MTLPrimitiveType.triangle), @as(c_ulong, 0), @as(c_ulong, 6), @as(c_ulong, batch_count) });
+                }
+                quad_idx = batch_end;
+            }
+        }
+
+        // Draw text
+        if (self.text_pipeline_state) |*tp| {
+            const glyphs = scene.getGlyphs();
+            if (glyphs.len > 0) {
+                tp.render(encoder, glyphs, .{ @floatCast(self.size.width), @floatCast(self.size.height) }) catch {};
+            }
+        }
+
+        encoder.msgSend(void, "endEncoding", .{});
+        command_buffer.msgSend(void, "commit", .{});
+        command_buffer.msgSend(void, "waitUntilCompleted", .{});
+    }
+
+    /// Run a single post-process shader pass
+    fn runPostProcessPass(
+        self: *Self,
+        pipeline: custom_shader.CustomShaderPipeline,
+        input_texture: objc.Object,
+        output_texture: objc.Object,
+        uniform_buffer: objc.Object,
+        sampler_state: objc.Object,
+    ) !void {
+        const MTLRenderPassDescriptor = objc.getClass("MTLRenderPassDescriptor") orelse return;
+        const render_pass = MTLRenderPassDescriptor.msgSend(objc.Object, "renderPassDescriptor", .{});
+
+        const color_attachments = render_pass.msgSend(objc.Object, "colorAttachments", .{});
+        const color_attachment_0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+
+        color_attachment_0.msgSend(void, "setTexture:", .{output_texture.value});
+        color_attachment_0.msgSend(void, "setLoadAction:", .{@intFromEnum(mtl.MTLLoadAction.dont_care)});
+        color_attachment_0.msgSend(void, "setStoreAction:", .{@intFromEnum(mtl.MTLStoreAction.store)});
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+        const encoder_ptr = command_buffer.msgSend(?*anyopaque, "renderCommandEncoderWithDescriptor:", .{render_pass.value});
+        if (encoder_ptr == null) return;
+        const encoder = objc.Object.fromId(encoder_ptr);
+
+        // Set viewport for the post-process pass
+        const viewport = mtl.MTLViewport{
+            .x = 0,
+            .y = 0,
+            .width = self.size.width * self.scale_factor,
+            .height = self.size.height * self.scale_factor,
+            .znear = 0,
+            .zfar = 1,
+        };
+        encoder.msgSend(void, "setViewport:", .{viewport});
+
+        // Set pipeline and resources
+        encoder.msgSend(void, "setRenderPipelineState:", .{pipeline.pipeline_state.value});
+        encoder.msgSend(void, "setFragmentBuffer:offset:atIndex:", .{ uniform_buffer.value, @as(c_ulong, 0), @as(c_ulong, 0) });
+        encoder.msgSend(void, "setFragmentTexture:atIndex:", .{ input_texture.value, @as(c_ulong, 0) });
+        encoder.msgSend(void, "setFragmentSamplerState:atIndex:", .{ sampler_state.value, @as(c_ulong, 0) });
+
+        // Draw fullscreen triangle (3 vertices, no vertex buffer needed)
+        encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:", .{
+            @intFromEnum(mtl.MTLPrimitiveType.triangle),
+            @as(c_ulong, 0),
+            @as(c_ulong, 3),
+        });
+
+        encoder.msgSend(void, "endEncoding", .{});
+        command_buffer.msgSend(void, "commit", .{});
+        command_buffer.msgSend(void, "waitUntilCompleted", .{});
+    }
+
+    /// Blit texture to screen
+    fn blitToScreen(self: *Self, source_texture: objc.Object) !void {
+        const drawable_ptr = self.layer.msgSend(?*anyopaque, "nextDrawable", .{});
+        if (drawable_ptr == null) return;
+        const drawable = objc.Object.fromId(drawable_ptr);
+
+        const dest_texture_ptr = drawable.msgSend(?*anyopaque, "texture", .{});
+        if (dest_texture_ptr == null) return;
+        const dest_texture = objc.Object.fromId(dest_texture_ptr);
+
+        const command_buffer = self.command_queue.msgSend(objc.Object, "commandBuffer", .{});
+
+        const blit_encoder_ptr = command_buffer.msgSend(?*anyopaque, "blitCommandEncoder", .{});
+        if (blit_encoder_ptr == null) return;
+        const blit_encoder = objc.Object.fromId(blit_encoder_ptr);
+
+        const width: u32 = @intFromFloat(self.size.width * self.scale_factor);
+        const height: u32 = @intFromFloat(self.size.height * self.scale_factor);
+
+        blit_encoder.msgSend(void, "copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:destinationLevel:destinationOrigin:", .{
+            source_texture.value,
+            @as(c_ulong, 0),
+            @as(c_ulong, 0),
+            mtl.MTLOrigin{ .x = 0, .y = 0, .z = 0 },
+            mtl.MTLSize{ .width = width, .height = height, .depth = 1 },
+            dest_texture.value,
+            @as(c_ulong, 0),
+            @as(c_ulong, 0),
+            mtl.MTLOrigin{ .x = 0, .y = 0, .z = 0 },
+        });
+
+        blit_encoder.msgSend(void, "endEncoding", .{});
+        command_buffer.msgSend(void, "presentDrawable:", .{drawable.value});
+        command_buffer.msgSend(void, "commit", .{});
     }
 
     fn createMSAATexture(self: *Self) !void {
@@ -362,6 +648,7 @@ pub const Renderer = struct {
         if (self.quad_unit_vertex_buffer) |vb| vb.msgSend(void, "release", .{});
         if (self.quad_instance_buffer) |ib| ib.msgSend(void, "release", .{});
         if (self.text_pipeline_state) |*tp| tp.deinit();
+        if (self.post_process) |*pp| pp.deinit();
         self.command_queue.msgSend(void, "release", .{});
         self.device.msgSend(void, "release", .{});
     }

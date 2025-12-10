@@ -151,6 +151,9 @@ pub const RunConfig = struct {
 
     /// Called for input events (optional). Return true if handled.
     on_event: ?*const fn (*UI, InputEvent) bool = null,
+
+    // Custom shader sources (Shadertoy-compatible MSL)
+    custom_shaders: []const []const u8 = &.{},
 };
 
 /// Run a Gooey application with minimal boilerplate
@@ -172,6 +175,7 @@ pub fn run(config: RunConfig) !void {
         .width = config.width,
         .height = config.height,
         .background_color = bg_color,
+        .custom_shaders = config.custom_shaders,
     });
     defer window.deinit();
 
@@ -354,14 +358,6 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     // Render all commands (shadows come before rectangles in the command list)
     for (commands) |cmd| {
         try renderCommand(ui.gooey, cmd);
-    }
-
-    // DEBUG: Print scene counts
-    if (ui.gooey.frame_count % 60 == 1) {
-        std.debug.print("Scene: {} shadows, {} quads\n", .{
-            ui.gooey.scene.shadowCount(),
-            ui.gooey.scene.quadCount(),
-        });
     }
 
     // Render text inputs from pending list
