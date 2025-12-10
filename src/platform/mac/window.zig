@@ -34,9 +34,24 @@ pub const Window = struct {
     scene: ?*const scene_mod.Scene,
     text_atlas: ?*const Atlas = null,
     delegate: ?objc.Object = null,
-    resize_mutex: std.Thread.Mutex = .{},
-    benchmark_mode: bool = false,
+
+    /// Mutex protecting all render-related state accessed from DisplayLink thread.
+    /// This includes: scene, text_atlas, background_color, size, scale_factor, renderer.
+    /// Must be held when:
+    /// - DisplayLink callback reads scene/atlas for rendering
+    /// - Main thread modifies scene/atlas/size
+    render_mutex: std.Thread.Mutex = .{},
+
+    /// Flag indicating we're in a live resize operation.
+    /// During live resize, the main thread handles rendering synchronously,
+    /// and the DisplayLink callback should skip rendering entirely.
     in_live_resize: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    /// Flag indicating the DisplayLink callback is currently rendering.
+    /// Used to prevent the main thread from modifying state mid-render.
+    render_in_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    benchmark_mode: bool = false,
 
     /// Current mouse position (updated on every mouse event)
     mouse_position: geometry.Point(f64) = .{ .x = 0, .y = 0 },
@@ -229,12 +244,23 @@ pub const Window = struct {
         return null;
     }
 
-    /// Set the text atlas for automatic GPU sync
+    /// Set the text atlas for automatic GPU sync (thread-safe)
     pub fn setTextAtlas(self: *Self, atlas: *const Atlas) void {
+        // Only lock if we're not already in a render (which holds the lock)
+        if (!self.render_in_progress.load(.acquire)) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+        }
         self.text_atlas = atlas;
     }
 
+    /// Set the scene (thread-safe)
     pub fn setScene(self: *Self, s: *const scene_mod.Scene) void {
+        // Only lock if we're not already in a render (which holds the lock)
+        if (!self.render_in_progress.load(.acquire)) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+        }
         self.scene = s;
         self.requestRender();
     }
@@ -343,6 +369,7 @@ pub const Window = struct {
     }
 
     /// Called by delegate when window is resized
+    /// Called by delegate when window is resized
     pub fn handleResize(self: *Self) void {
         const bounds: NSRect = self.ns_view.msgSend(NSRect, "bounds", .{});
 
@@ -362,8 +389,9 @@ pub const Window = struct {
             return;
         }
 
-        self.resize_mutex.lock();
-        defer self.resize_mutex.unlock();
+        // Acquire render mutex to safely modify size/scale while DisplayLink might be reading
+        self.render_mutex.lock();
+        defer self.render_mutex.unlock();
 
         self.size.width = new_width;
         self.size.height = new_height;
@@ -510,6 +538,12 @@ pub const Window = struct {
 // =============================================================================
 
 /// CVDisplayLink callback - runs on high-priority background thread
+///
+/// THREAD SAFETY: This callback runs on a CVDisplayLink thread, NOT the main thread.
+/// All access to shared Window state must be synchronized via render_mutex.
+///
+/// The render_mutex protects: scene, text_atlas, size, scale_factor, background_color, renderer.
+/// The on_render callback is called WITH the lock held to prevent race conditions.
 fn displayLinkCallback(
     dl: display_link.CVDisplayLinkRef,
     in_now: *const display_link.CVTimeStamp,
@@ -524,45 +558,52 @@ fn displayLinkCallback(
     _ = flags_in;
     _ = flags_out;
 
-    if (user_info) |ptr| {
-        const window: *Window = @ptrCast(@alignCast(ptr));
+    const window: *Window = @ptrCast(@alignCast(user_info orelse return .success));
 
-        // Skip rendering during live resize - main thread handles it synchronously
-        if (window.in_live_resize.load(.acquire)) {
-            return .success;
-        }
+    // Skip rendering during live resize - main thread handles it synchronously
+    if (window.in_live_resize.load(.acquire)) {
+        return .success;
+    }
 
-        // Only render if needed (dirty flag pattern)
-        const explicit_render = window.needs_render.swap(false, .acq_rel);
-        const should_render = window.benchmark_mode or explicit_render;
+    // Only render if needed (dirty flag pattern)
+    const explicit_render = window.needs_render.swap(false, .acq_rel);
+    const should_render = window.benchmark_mode or explicit_render;
 
-        if (should_render) {
-            const pool = createAutoreleasePool() orelse return .success;
-            defer drainAutoreleasePool(pool);
+    if (!should_render) {
+        return .success;
+    }
 
-            window.resize_mutex.lock();
-            defer window.resize_mutex.unlock();
+    const pool = createAutoreleasePool() orelse return .success;
+    defer drainAutoreleasePool(pool);
 
-            // Call render callback to let user rebuild scene
-            if (window.on_render) |callback| {
-                callback(window);
-            }
+    // Acquire render mutex for thread-safe access to all render state
+    window.render_mutex.lock();
+    defer window.render_mutex.unlock();
 
-            // Update text atlas if set
-            if (window.text_atlas) |atlas| {
-                window.renderer.updateTextAtlas(atlas) catch {};
-            }
+    // Mark that rendering is in progress
+    window.render_in_progress.store(true, .release);
+    defer window.render_in_progress.store(false, .release);
 
-            // Render the scene
-            if (window.scene) |s| {
-                window.renderer.renderScene(s, window.background_color) catch |err| {
-                    std.debug.print("renderScene error: {}\n", .{err});
-                    window.renderer.clear(window.background_color);
-                };
-            } else {
-                window.renderer.clear(window.background_color);
-            }
-        }
+    // Call render callback to let user rebuild scene
+    // NOTE: This is called with the lock held, so the callback must not
+    // call any Window methods that also try to acquire the lock.
+    if (window.on_render) |callback| {
+        callback(window);
+    }
+
+    // Update text atlas if set
+    if (window.text_atlas) |atlas| {
+        window.renderer.updateTextAtlas(atlas) catch {};
+    }
+
+    // Render the scene
+    if (window.scene) |s| {
+        window.renderer.renderScene(s, window.background_color) catch |err| {
+            std.debug.print("renderScene error: {}\n", .{err});
+            window.renderer.clear(window.background_color);
+        };
+    } else {
+        window.renderer.clear(window.background_color);
     }
 
     return .success;

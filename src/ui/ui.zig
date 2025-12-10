@@ -619,22 +619,23 @@ pub const Builder = struct {
 
         // Set up the actual TextInput widget if we have access to Gooey
         if (self.gooey) |g| {
-            const text_input = g.textInput(inp.id);
-            if (inp.style.placeholder.len > 0) {
-                text_input.setPlaceholder(inp.style.placeholder);
-            }
+            if (g.textInput(inp.id)) |text_input| {
+                if (inp.style.placeholder.len > 0) {
+                    text_input.setPlaceholder(inp.style.placeholder);
+                }
 
-            // Two-way binding: sync TextInput content with bound variable
-            if (inp.style.bind) |bind_ptr| {
-                const current_text = text_input.getText();
-                const bound_value = bind_ptr.*;
+                // Two-way binding: sync TextInput content with bound variable
+                if (inp.style.bind) |bind_ptr| {
+                    const current_text = text_input.getText();
+                    const bound_value = bind_ptr.*;
 
-                // Skip if bound_value points to TextInput's own buffer (aliasing)
-                // or if content is already the same
-                if (bound_value.ptr != current_text.ptr and
-                    !std.mem.eql(u8, current_text, bound_value))
-                {
-                    text_input.setText(bound_value) catch {};
+                    // Skip if they're the same pointer (would alias)
+                    if (current_text.ptr == bound_value.ptr and current_text.len == bound_value.len) {
+                        // Already in sync, nothing to do
+                    } else if (!std.mem.eql(u8, current_text, bound_value)) {
+                        // If bound variable changed externally, update TextInput
+                        text_input.setText(bound_value) catch {};
+                    }
                 }
             }
         }

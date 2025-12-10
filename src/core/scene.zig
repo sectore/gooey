@@ -366,6 +366,8 @@ pub const Scene = struct {
     next_order: DrawOrder,
     // Clip mask stack for nested clipping regions
     clip_stack: std.ArrayList(ContentMask.ClipBounds),
+    // Track if out-of-order inserts occurred (requiring sort)
+    needs_sort: bool,
 
     const Self = @This();
 
@@ -377,6 +379,7 @@ pub const Scene = struct {
             .glyphs = .{},
             .next_order = 0,
             .clip_stack = .{},
+            .needs_sort = false,
         };
     }
 
@@ -393,6 +396,7 @@ pub const Scene = struct {
         self.glyphs.clearRetainingCapacity();
         self.clip_stack.clearRetainingCapacity();
         self.next_order = 0;
+        self.needs_sort = false;
     }
 
     // ========================================================================
@@ -465,7 +469,13 @@ pub const Scene = struct {
         try self.insertQuad(quad);
     }
 
+    /// Finalize the scene for rendering.
+    /// Sorts primitives by draw order only if out-of-order inserts occurred.
     pub fn finish(self: *Self) void {
+        // Fast path: elements are inserted in order via next_order, no sort needed
+        if (!self.needs_sort) return;
+
+        // Slow path: sort by draw order (future: if insertWithOrder is added)
         std.sort.pdq(Shadow, self.shadows.items, {}, struct {
             fn lessThan(_: void, a: Shadow, b: Shadow) bool {
                 return a.order < b.order;
@@ -514,3 +524,25 @@ pub const Scene = struct {
         return null;
     }
 };
+
+test "Scene finish skips sort when elements are in order" {
+    const testing = std.testing;
+    var scene = Scene.init(testing.allocator);
+    defer scene.deinit();
+
+    // Insert elements in order (normal case)
+    try scene.insertQuad(.{ .bounds_origin_x = 0, .bounds_origin_y = 0, .bounds_size_width = 10, .bounds_size_height = 10 });
+    try scene.insertQuad(.{ .bounds_origin_x = 10, .bounds_origin_y = 10, .bounds_size_width = 10, .bounds_size_height = 10 });
+    try scene.insertQuad(.{ .bounds_origin_x = 20, .bounds_origin_y = 20, .bounds_size_width = 10, .bounds_size_height = 10 });
+
+    // needs_sort should be false
+    try testing.expect(!scene.needs_sort);
+
+    // finish() should be a no-op (fast path)
+    scene.finish();
+
+    // Verify order is preserved
+    try testing.expectEqual(@as(DrawOrder, 0), scene.quads.items[0].order);
+    try testing.expectEqual(@as(DrawOrder, 1), scene.quads.items[1].order);
+    try testing.expectEqual(@as(DrawOrder, 2), scene.quads.items[2].order);
+}

@@ -9,7 +9,7 @@ A minimal GPU-accelerated UI framework for Zig, targeting macOS with Metal rende
 ## Features
 
 - **Metal Rendering** - Hardware-accelerated with MSAA anti-aliasing
-- **CVDisplayLink VSync** - Smooth 60Hz+ frame-paced rendering
+- **CVDisplayLink VSync** - Smooth 60Hz - 240Hz frame-paced rendering
 - **Immediate-Mode Layout** - Clay-inspired declarative layout system
 - **Retained Widgets** - TextInput with full IME/composition support
 - **Text Rendering** - CoreText font loading, HarfBuzz shaping, glyph atlas caching

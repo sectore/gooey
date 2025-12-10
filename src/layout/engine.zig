@@ -154,7 +154,9 @@ pub const LayoutEngine = struct {
     measure_text_fn: ?MeasureTextFn = null,
     measure_text_user_data: ?*anyopaque = null,
     /// Debug: maps ID hash -> string for collision detection
-    debug_seen_ids: std.AutoHashMap(u32, ?[]const u8),
+    seen_ids: std.AutoHashMap(u32, ?[]const u8),
+    /// Maps element ID -> element index for O(1) lookups
+    id_to_index: std.AutoHashMap(u32, u32),
 
     const Self = @This();
 
@@ -165,12 +167,14 @@ pub const LayoutEngine = struct {
             .elements = ElementList.init(allocator),
             .commands = RenderCommandList.init(allocator),
             .open_element_stack = .{},
-            .debug_seen_ids = std.AutoHashMap(u32, ?[]const u8).init(allocator),
+            .seen_ids = std.AutoHashMap(u32, ?[]const u8).init(allocator),
+            .id_to_index = std.AutoHashMap(u32, u32).init(allocator),
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.debug_seen_ids.deinit();
+        self.id_to_index.deinit();
+        self.seen_ids.deinit();
         self.open_element_stack.deinit(self.allocator);
         self.commands.deinit();
         self.elements.deinit();
@@ -187,7 +191,8 @@ pub const LayoutEngine = struct {
         self.elements.clear();
         self.commands.clear();
         self.open_element_stack.clearRetainingCapacity();
-        self.debug_seen_ids.clearRetainingCapacity();
+        self.seen_ids.clearRetainingCapacity();
+        self.id_to_index.clearRetainingCapacity();
         self.root_index = null;
         self.viewport_width = width;
         self.viewport_height = height;
@@ -240,9 +245,10 @@ pub const LayoutEngine = struct {
 
     /// Create an element and link it into the tree
     fn createElement(self: *Self, decl: ElementDeclaration, elem_type: ElementType) !u32 {
-        // Debug: check for ID collisions (skip if ID is none/0)
-        if (std.debug.runtime_safety and decl.id.id != 0) {
-            const result = self.debug_seen_ids.getOrPut(decl.id.id) catch unreachable;
+        // Check for ID collisions (skip if ID is none/0)
+        // NOTE: Runs in all build modes - ID collisions cause subtle bugs
+        if (decl.id.id != 0) {
+            const result = self.seen_ids.getOrPut(decl.id.id) catch unreachable;
             if (result.found_existing) {
                 std.log.warn("Layout ID collision detected! ID hash {d} used by both \"{?s}\" and \"{?s}\"", .{
                     decl.id.id,
@@ -265,6 +271,11 @@ pub const LayoutEngine = struct {
             .parent_index = parent_index,
             .element_type = elem_type,
         });
+
+        // Index non-zero IDs for O(1) lookup
+        if (decl.id.id != 0) {
+            self.id_to_index.put(decl.id.id, index) catch {};
+        }
 
         // Link to parent
         if (parent_index) |pi| {
@@ -306,14 +317,10 @@ pub const LayoutEngine = struct {
         return self.commands.items();
     }
 
-    /// Get computed bounding box for an element by ID
+    /// Get computed bounding box for an element by ID (O(1) lookup)
     pub fn getBoundingBox(self: *const Self, id: u32) ?BoundingBox {
-        for (self.elements.items()) |elem| {
-            if (elem.id == id) {
-                return elem.computed.bounding_box;
-            }
-        }
-        return null;
+        const index = self.id_to_index.get(id) orelse return null;
+        return self.elements.getConst(index).computed.bounding_box;
     }
 
     // =========================================================================

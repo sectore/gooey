@@ -20,6 +20,7 @@ const Bounds = @import("../elements/text_input.zig").Bounds;
 pub const WidgetStore = struct {
     allocator: std.mem.Allocator,
     text_inputs: std.StringHashMap(*TextInput),
+    /// Track which widgets were accessed this frame (uses same keys as text_inputs, no separate allocation)
     accessed_this_frame: std.StringHashMap(void),
     default_text_input_bounds: Bounds = .{ .x = 0, .y = 0, .width = 200, .height = 36 },
 
@@ -34,6 +35,7 @@ pub const WidgetStore = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Clean up all TextInput instances and their keys
         var it = self.text_inputs.iterator();
         while (it.next()) |entry| {
             entry.value_ptr.*.deinit();
@@ -42,41 +44,56 @@ pub const WidgetStore = struct {
         }
         self.text_inputs.deinit();
 
-        var acc_it = self.accessed_this_frame.keyIterator();
-        while (acc_it.next()) |key| {
-            self.allocator.free(key.*);
-        }
+        // accessed_this_frame shares keys with text_inputs, so just deinit the map
         self.accessed_this_frame.deinit();
     }
 
     /// Get or create a TextInput by ID - persists across frames
-    pub fn textInput(self: *Self, id: []const u8) *TextInput {
-        if (!self.accessed_this_frame.contains(id)) {
-            const owned_access_key = self.allocator.dupe(u8, id) catch return self.getOrCreateTextInput(id);
-            self.accessed_this_frame.put(owned_access_key, {}) catch {};
-        }
-        return self.getOrCreateTextInput(id);
-    }
-
-    fn getOrCreateTextInput(self: *Self, id: []const u8) *TextInput {
+    /// Returns null on allocation failure instead of panicking
+    pub fn textInput(self: *Self, id: []const u8) ?*TextInput {
+        // Check if already exists
         if (self.text_inputs.get(id)) |existing| {
+            // Mark as accessed this frame (reuse existing key, no allocation needed)
+            self.accessed_this_frame.put(id, {}) catch {};
             return existing;
         }
 
-        const input = self.allocator.create(TextInput) catch @panic("Failed to allocate TextInput");
+        // Create new TextInput
+        const input = self.allocator.create(TextInput) catch return null;
+        errdefer self.allocator.destroy(input);
+
         input.* = TextInput.initWithId(self.allocator, self.default_text_input_bounds, id);
 
-        const owned_key = self.allocator.dupe(u8, id) catch @panic("Failed to allocate key");
-        self.text_inputs.put(owned_key, input) catch @panic("Failed to store TextInput");
+        // Allocate owned key for the hashmap
+        const owned_key = self.allocator.dupe(u8, id) catch {
+            input.deinit();
+            self.allocator.destroy(input);
+            return null;
+        };
+        errdefer self.allocator.free(owned_key);
+
+        // Store in text_inputs map
+        self.text_inputs.put(owned_key, input) catch {
+            input.deinit();
+            self.allocator.destroy(input);
+            self.allocator.free(owned_key);
+            return null;
+        };
+
+        // Mark as accessed (use owned_key which is now in text_inputs)
+        self.accessed_this_frame.put(owned_key, {}) catch {};
 
         return input;
     }
 
+    /// Get or create a TextInput, panicking on allocation failure
+    /// Use this when you're confident memory is available
+    pub fn textInputOrPanic(self: *Self, id: []const u8) *TextInput {
+        return self.textInput(id) orelse @panic("Failed to allocate TextInput");
+    }
+
     pub fn beginFrame(self: *Self) void {
-        var it = self.accessed_this_frame.keyIterator();
-        while (it.next()) |key| {
-            self.allocator.free(key.*);
-        }
+        // Clear accessed set - keys are borrowed from text_inputs, no freeing needed
         self.accessed_this_frame.clearRetainingCapacity();
     }
 
@@ -86,6 +103,8 @@ pub const WidgetStore = struct {
 
     pub fn removeTextInput(self: *Self, id: []const u8) void {
         if (self.text_inputs.fetchRemove(id)) |kv| {
+            // Also remove from accessed set if present
+            _ = self.accessed_this_frame.remove(kv.key);
             kv.value.deinit();
             self.allocator.destroy(kv.value);
             self.allocator.free(kv.key);

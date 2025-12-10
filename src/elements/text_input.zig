@@ -172,10 +172,29 @@ pub const TextInput = struct {
     }
 
     /// Set the text content
+    /// Safety: Handles the case where `text` might alias with the internal buffer
     pub fn setText(self: *Self, text: []const u8) !void {
-        self.buffer.clearRetainingCapacity();
-        try self.buffer.appendSlice(self.allocator, text);
-        self.cursor_byte = text.len;
+        // Check if input slice aliases with our buffer (would cause @memcpy panic)
+        const buf_start = @intFromPtr(self.buffer.items.ptr);
+        const buf_end = buf_start + self.buffer.items.len;
+        const text_start = @intFromPtr(text.ptr);
+        const text_end = text_start + text.len;
+
+        const aliases = text_start < buf_end and text_end > buf_start;
+
+        if (aliases) {
+            // Text overlaps with buffer - need to copy to temp first
+            const temp = try self.allocator.dupe(u8, text);
+            defer self.allocator.free(temp);
+            self.buffer.clearRetainingCapacity();
+            try self.buffer.appendSlice(self.allocator, temp);
+        } else {
+            // Safe - no overlap
+            self.buffer.clearRetainingCapacity();
+            try self.buffer.appendSlice(self.allocator, text);
+        }
+
+        self.cursor_byte = self.buffer.items.len;
         self.selection_anchor = null;
         self.notifyChange();
     }
@@ -464,6 +483,42 @@ pub const TextInput = struct {
     // UTF-8 Navigation Helpers
     // =========================================================================
 
+    /// Check if a byte position is on a valid UTF-8 character boundary.
+    /// A position is valid if it's at the start/end or doesn't point to a continuation byte.
+    fn isCharBoundary(self: *const Self, pos: usize) bool {
+        if (pos == 0) return true;
+        if (pos >= self.buffer.items.len) return true;
+        // Continuation bytes have the pattern 10xxxxxx (0x80-0xBF)
+        return (self.buffer.items[pos] & 0xC0) != 0x80;
+    }
+
+    /// Snap a byte position to a valid UTF-8 character boundary.
+    /// If already valid, returns the same position. Otherwise moves backward
+    /// to the start of the current character.
+    fn snapToCharBoundary(self: *const Self, pos: usize) usize {
+        if (pos == 0) return 0;
+        if (pos >= self.buffer.items.len) return self.buffer.items.len;
+        // If already on a boundary, return as-is
+        if ((self.buffer.items[pos] & 0xC0) != 0x80) return pos;
+        // Otherwise, find the start of this character
+        return self.prevCharBoundary(pos);
+    }
+
+    /// Snap a byte position to a valid UTF-8 character boundary for a given slice.
+    /// Static version that doesn't rely on self.buffer (for thread safety).
+    fn snapToCharBoundaryFor(_: *const Self, text: []const u8, pos: usize) usize {
+        if (pos == 0) return 0;
+        if (pos >= text.len) return text.len;
+        // If already on a boundary, return as-is
+        if ((text[pos] & 0xC0) != 0x80) return pos;
+        // Otherwise, find the start of this character
+        var i = pos - 1;
+        while (i > 0 and (text[i] & 0xC0) == 0x80) {
+            i -= 1;
+        }
+        return i;
+    }
+
     /// Find the previous character boundary
     fn prevCharBoundary(self: *const Self, pos: usize) usize {
         if (pos == 0) return 0;
@@ -562,9 +617,15 @@ pub const TextInput = struct {
         const text = self.buffer.items;
         const preedit = self.preedit_buffer.items;
 
-        // Safety: ensure cursor is within valid range
-        if (self.cursor_byte > text.len) {
-            self.cursor_byte = text.len;
+        // Safety: capture cursor position and ensure it's within valid range
+        // AND on a valid UTF-8 boundary. We use a local copy because another
+        // thread could modify self.cursor_byte during rendering.
+        var cursor_byte = self.cursor_byte;
+        if (cursor_byte > text.len) {
+            cursor_byte = text.len;
+        } else if (text.len > 0 and cursor_byte > 0) {
+            // Ensure cursor is on a valid UTF-8 character boundary
+            cursor_byte = self.snapToCharBoundaryFor(text, cursor_byte);
         }
 
         // Calculate text area dimensions early (needed for scroll calculation)
@@ -618,8 +679,8 @@ pub const TextInput = struct {
 
             // Render text before cursor
             var pen_x = text_x - self.scroll_offset;
-            if (self.cursor_byte > 0) {
-                const before = text[0..self.cursor_byte];
+            if (cursor_byte > 0) {
+                const before = text[0..cursor_byte];
                 const width = try self.renderText(scene, text_system, before, pen_x, baseline_y, scale_factor, self.style.text_color);
                 pen_x += width;
             }
@@ -644,8 +705,8 @@ pub const TextInput = struct {
             }
 
             // Render text after cursor
-            if (self.cursor_byte < text.len) {
-                const after = text[self.cursor_byte..];
+            if (cursor_byte < text.len) {
+                const after = text[cursor_byte..];
                 _ = try self.renderText(scene, text_system, after, pen_x, baseline_y, scale_factor, self.style.text_color);
             }
         }
@@ -654,8 +715,8 @@ pub const TextInput = struct {
         if (self.focused and self.cursor_visible and preedit.len == 0) {
             // Calculate cursor x position (scroll already adjusted above)
             var cursor_x = text_x - self.scroll_offset;
-            if (self.cursor_byte > 0 and text.len > 0) {
-                cursor_x += try self.measureText(text_system, text[0..self.cursor_byte]);
+            if (cursor_byte > 0 and text.len > 0) {
+                cursor_x += try self.measureText(text_system, text[0..cursor_byte]);
             }
 
             const cursor_height = metrics.line_height;
@@ -694,10 +755,11 @@ pub const TextInput = struct {
         var shaped = try text_system.shapeText(text);
         defer shaped.deinit(text_system.allocator);
 
-        std.debug.print("renderText: baseline_y={d:.1}, scale={d:.1}\n", .{ baseline_y, scale_factor });
+        //std.debug.print("renderText: baseline_y={d:.1}, scale={d:.1}\n", .{ baseline_y, scale_factor });
 
         var pen_x = x;
         for (shaped.glyphs, 0..) |glyph, i| {
+            _ = i;
             const cached = try text_system.getGlyph(glyph.glyph_id);
 
             if (cached.region.width > 0 and cached.region.height > 0) {
@@ -711,11 +773,11 @@ pub const TextInput = struct {
                 const glyph_x = @floor(pen_x + glyph.x_offset) + cached.bearing_x;
                 const glyph_y = @floor(baseline_y + glyph.y_offset) - cached.bearing_y;
 
-                const bottom = glyph_y + glyph_h;
+                // const bottom = glyph_y + glyph_h;
 
-                if (i < 5) {
-                    std.debug.print("  glyph[{}]: glyph_h={d:.1}, glyph_y={d:.1}, bottom={d:.1}\n", .{ i, glyph_h, glyph_y, bottom });
-                }
+                // if (i < 5) {
+                //     std.debug.print("  glyph[{}]: glyph_h={d:.1}, glyph_y={d:.1}, bottom={d:.1}\n", .{ i, glyph_h, glyph_y, bottom });
+                // }
 
                 try scene.insertGlyphClipped(GlyphInstance.init(
                     glyph_x,
@@ -757,6 +819,14 @@ pub const TextInput = struct {
     ) !void {
         _ = scale_factor;
         const text = self.buffer.items;
+
+        // Ensure selection bounds are on valid UTF-8 boundaries
+        if (self.selection_anchor) |anchor| {
+            if (anchor > text.len or !self.isCharBoundary(anchor)) {
+                self.selection_anchor = self.snapToCharBoundary(@min(anchor, text.len));
+            }
+        }
+
         const start = self.selectionStart();
         const end = self.selectionEnd();
 

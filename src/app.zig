@@ -99,7 +99,7 @@ pub const UI = struct {
     // Widget access
     // =========================================================================
 
-    pub fn textInput(self: *Self, id: []const u8) *@import("elements/text_input.zig").TextInput {
+    pub fn textInput(self: *Self, id: []const u8) ?*@import("elements/text_input.zig").TextInput {
         return self.gooey.textInput(id);
     }
 
@@ -289,39 +289,32 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     // Clear scene
     ui.gooey.scene.clear();
 
-    // Render shadows for cards (heuristic: large rounded rects)
-    for (commands) |cmd| {
-        if (cmd.command_type == .rectangle) {
-            const rect = cmd.data.rectangle;
-            if (rect.corner_radius.top_left >= 8 and cmd.bounding_box.width >= 200) {
-                try ui.gooey.scene.insertShadow(Shadow.drop(
-                    cmd.bounding_box.x,
-                    cmd.bounding_box.y,
-                    cmd.bounding_box.width,
-                    cmd.bounding_box.height,
-                    12,
-                ).withCornerRadius(rect.corner_radius.top_left).withColor(Hsla.init(0, 0, 0, 0.1)));
-            }
-        }
-    }
-
-    // Render all commands
+    // Render all commands (shadows come before rectangles in the command list)
     for (commands) |cmd| {
         try renderCommand(ui.gooey, cmd);
+    }
+
+    // DEBUG: Print scene counts
+    if (ui.gooey.frame_count % 60 == 1) {
+        std.debug.print("Scene: {} shadows, {} quads\n", .{
+            ui.gooey.scene.shadowCount(),
+            ui.gooey.scene.quadCount(),
+        });
     }
 
     // Render text inputs from pending list
     for (ui.builder.pending_inputs.items) |pending| {
         const bounds = ui.gooey.layout.getBoundingBox(pending.layout_id.id);
         if (bounds) |b| {
-            const input_widget = ui.gooey.textInput(pending.id);
-            input_widget.bounds = .{
-                .x = b.x,
-                .y = b.y,
-                .width = b.width,
-                .height = b.height,
-            };
-            try input_widget.render(ui.gooey.scene, ui.gooey.text_system, ui.gooey.scale_factor);
+            if (ui.gooey.textInput(pending.id)) |input_widget| {
+                input_widget.bounds = .{
+                    .x = b.x,
+                    .y = b.y,
+                    .width = b.width,
+                    .height = b.height,
+                };
+                try input_widget.render(ui.gooey.scene, ui.gooey.text_system, ui.gooey.scale_factor);
+            }
         }
     }
 
@@ -395,13 +388,22 @@ fn renderText(scene: *Scene, text_system: *TextSystem, text_content: []const u8,
 }
 
 /// Sync TextInput content back to bound variables
+///
+/// NOTE: This sets bind_ptr to point into TextInput's internal buffer.
+/// This is a borrowed reference - if TextInput's buffer reallocates,
+/// the bound variable becomes invalid. The setText() function handles
+/// the aliasing case when syncing back.
 fn syncBoundVariables(ui: *UI) void {
     for (ui.builder.pending_inputs.items) |pending| {
         if (pending.style.bind) |bind_ptr| {
-            const text_input = ui.gooey.textInput(pending.id);
-            const current_text = text_input.getText();
-            // Update bound variable with current TextInput content
-            bind_ptr.* = current_text;
+            if (ui.gooey.textInput(pending.id)) |text_input| {
+                const current_text = text_input.getText();
+                // Only update if the pointer is different
+                // (avoids unnecessary work and documents the borrowing)
+                if (bind_ptr.*.ptr != current_text.ptr or bind_ptr.*.len != current_text.len) {
+                    bind_ptr.* = current_text;
+                }
+            }
         }
     }
 }

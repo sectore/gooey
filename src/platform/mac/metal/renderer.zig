@@ -389,9 +389,9 @@ pub const Renderer = struct {
         command_buffer.msgSend(void, "commit", .{});
     }
 
-    pub fn renderScene(self: *Self, s: *const scene_mod.Scene, clear_color: geometry.Color) !void {
-        const shadows = s.getShadows();
-        const quads = s.getQuads();
+    pub fn renderScene(self: *Self, scene: *const scene_mod.Scene, clear_color: geometry.Color) !void {
+        const shadows = scene.getShadows();
+        const quads = scene.getQuads();
 
         if (shadows.len == 0 and quads.len == 0) {
             self.render(clear_color);
@@ -528,7 +528,7 @@ pub const Renderer = struct {
         }
 
         if (self.text_pipeline_state) |*tp| {
-            const glyphs = s.getGlyphs();
+            const glyphs = scene.getGlyphs();
             if (glyphs.len > 0) {
                 tp.render(encoder, glyphs, .{ @as(f32, @floatCast(self.size.width)), @as(f32, @floatCast(self.size.height)) }) catch {};
             }
@@ -609,9 +609,9 @@ pub const Renderer = struct {
     }
 
     /// Synchronous scene render - for live resize
-    pub fn renderSceneSynchronous(self: *Self, s: *const scene_mod.Scene, clear_color: geometry.Color) !void {
-        const shadows = s.getShadows();
-        const quads = s.getQuads();
+    pub fn renderSceneSynchronous(self: *Self, scene: *const scene_mod.Scene, clear_color: geometry.Color) !void {
+        const shadows = scene.getShadows();
+        const quads = scene.getQuads();
 
         if (shadows.len == 0 and quads.len == 0) {
             self.renderSynchronous(clear_color);
@@ -759,7 +759,7 @@ pub const Renderer = struct {
         }
 
         if (self.text_pipeline_state) |*tp| {
-            const glyphs = s.getGlyphs();
+            const glyphs = scene.getGlyphs();
             if (glyphs.len > 0) {
                 tp.render(encoder, glyphs, .{ @as(f32, @floatCast(self.size.width)), @as(f32, @floatCast(self.size.height)) }) catch {};
             }

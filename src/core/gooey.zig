@@ -226,7 +226,8 @@ pub const Gooey = struct {
     // =========================================================================
 
     /// Get or create a TextInput by ID
-    pub fn textInput(self: *Self, id: []const u8) *TextInput {
+    /// Returns null on allocation failure
+    pub fn textInput(self: *Self, id: []const u8) ?*TextInput {
         return self.widgets.textInput(id);
     }
 
