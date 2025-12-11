@@ -17,7 +17,6 @@ const ui_impl = @import("ui.zig");
 
 // Re-export types
 pub const Builder = ui_impl.Builder;
-pub const HitRegion = ui_impl.HitRegion;
 
 // Primitives
 pub const text = ui_impl.text;

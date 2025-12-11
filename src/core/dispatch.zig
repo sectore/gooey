@@ -90,6 +90,9 @@ pub const DispatchNode = struct {
     /// Simple click handlers (most common case)
     click_listeners: std.ArrayListUnmanaged(ClickListener) = .{},
 
+    /// Click handlers with context (for stateful widgets)
+    click_listeners_ctx: std.ArrayListUnmanaged(ClickListenerWithContext) = .{},
+
     /// Full mouse down listeners with phase control
     mouse_down_listeners: std.ArrayListUnmanaged(MouseListener) = .{},
 
@@ -115,6 +118,7 @@ pub const DispatchNode = struct {
     /// Clean up listener arrays
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         self.click_listeners.deinit(allocator);
+        self.click_listeners_ctx.deinit(allocator);
         self.key_down_listeners.deinit(allocator);
         self.simple_key_listeners.deinit(allocator);
         self.mouse_down_listeners.deinit(allocator);
@@ -124,6 +128,7 @@ pub const DispatchNode = struct {
     /// Reset listeners for reuse (keeps capacity)
     pub fn resetListeners(self: *Self) void {
         self.click_listeners.clearRetainingCapacity();
+        self.click_listeners_ctx.clearRetainingCapacity();
         self.key_down_listeners.clearRetainingCapacity();
         self.simple_key_listeners.clearRetainingCapacity();
         self.mouse_down_listeners.clearRetainingCapacity();
@@ -155,6 +160,12 @@ pub const MouseListener = struct {
 /// Simple click handler (no phase/event access needed)
 pub const ClickListener = struct {
     callback: *const fn () void,
+};
+
+/// Click handler with context (for stateful widgets like checkboxes)
+pub const ClickListenerWithContext = struct {
+    callback: *const fn (ctx: *anyopaque) void,
+    context: *anyopaque,
 };
 
 pub const KeyEvent = input_mod.KeyEvent;
@@ -493,6 +504,17 @@ pub const DispatchTree = struct {
         }
     }
 
+    /// Register a click handler with context on the current node
+    pub fn onClickWithContext(self: *Self, callback: *const fn (ctx: *anyopaque) void, context: *anyopaque) void {
+        const node_id = self.currentNode();
+        if (self.getNode(node_id)) |node| {
+            node.click_listeners_ctx.append(self.allocator, .{
+                .callback = callback,
+                .context = context,
+            }) catch {};
+        }
+    }
+
     /// Register a full mouse down listener with phase control
     pub fn onMouseDown(self: *Self, listener: MouseListener) void {
         const node_id = self.currentNode();
@@ -517,9 +539,15 @@ pub const DispatchTree = struct {
             i -= 1;
             const node = self.getNodeConst(path[i]) orelse continue;
 
-            // Call click listeners
+            // Call simple click listeners
             for (node.click_listeners.items) |listener| {
                 listener.callback();
+                return true; // Click handlers always consume
+            }
+
+            // Call context click listeners
+            for (node.click_listeners_ctx.items) |listener| {
+                listener.callback(listener.context);
                 return true; // Click handlers always consume
             }
         }

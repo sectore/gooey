@@ -55,13 +55,6 @@ pub const ShadowConfig = @import("../layout/types.zig").ShadowConfig;
 // =============================================================================
 // Hit Region for Click Handling
 // =============================================================================
-
-pub const HitRegion = struct {
-    bounds: BoundingBox,
-    on_click: ?*const fn () void,
-    id: u32,
-};
-
 /// Hit region for input focus handling
 pub const InputHitRegion = struct {
     bounds: BoundingBox,
@@ -361,14 +354,11 @@ pub const Builder = struct {
     /// Dispatch tree for event routing (built alongside layout)
     dispatch: *DispatchTree,
 
-    /// Hit regions for click detection (populated after layout)
-    hit_regions: std.ArrayList(HitRegion),
-
     /// Pending input IDs to be rendered (collected during layout, rendered after)
     pending_inputs: std.ArrayList(PendingInput),
 
     /// Input hit regions for focus handling (populated after layout)
-    input_regions: std.ArrayList(InputHitRegion),
+    // input_regions: std.ArrayList(InputHitRegion),
 
     pending_checkboxes: std.ArrayListUnmanaged(PendingCheckbox),
 
@@ -399,66 +389,18 @@ pub const Builder = struct {
             .layout = layout_engine,
             .scene = scene_ptr,
             .dispatch = dispatch_tree,
-            .hit_regions = .{},
             .pending_inputs = .{},
             .pending_checkboxes = .{},
             .pending_scrolls = .{},
-            .input_regions = .{},
+            // .input_regions = .{},
         };
     }
 
     pub fn deinit(self: *Self) void {
-        self.hit_regions.deinit(self.allocator);
         self.pending_inputs.deinit(self.allocator);
         self.pending_checkboxes.deinit(self.allocator);
-        self.input_regions.deinit(self.allocator);
+        // self.input_regions.deinit(self.allocator);
         self.pending_scrolls.deinit(self.allocator);
-    }
-
-    // =========================================================================
-    // Click Handling
-    // =========================================================================
-
-    /// Register a clickable region
-    pub fn registerClickRegion(self: *Self, bounds: BoundingBox, on_click: ?*const fn () void) void {
-        self.hit_regions.append(self.allocator, .{
-            .bounds = bounds,
-            .on_click = on_click,
-            .id = self.id_counter,
-        }) catch {};
-    }
-
-    /// Check if a point hits any registered region and call its callback
-    /// Returns true if a click was handled
-    pub fn handleClick(self: *Self, x: f32, y: f32) bool {
-        // First check buttons (iterate in reverse order - last rendered = on top)
-        var i = self.hit_regions.items.len;
-        while (i > 0) {
-            i -= 1;
-            const region = self.hit_regions.items[i];
-            if (x >= region.bounds.x and x <= region.bounds.x + region.bounds.width and
-                y >= region.bounds.y and y <= region.bounds.y + region.bounds.height)
-            {
-                if (region.on_click) |callback| {
-                    callback();
-                    return true;
-                }
-            }
-        }
-
-        // Then check input fields for focus
-        for (self.input_regions.items) |region| {
-            if (x >= region.bounds.x and x <= region.bounds.x + region.bounds.width and
-                y >= region.bounds.y and y <= region.bounds.y + region.bounds.height)
-            {
-                if (self.gooey) |g| {
-                    g.focusTextInput(region.id);
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     // =========================================================================
@@ -940,6 +882,10 @@ pub const Builder = struct {
         else
             0;
 
+        // Push dispatch node
+        _ = self.dispatch.pushNode();
+        self.dispatch.setLayoutId(layout_id.id);
+
         // Create layout element for the checkbox + label
         self.layout.openElement(.{
             .id = layout_id,
@@ -949,10 +895,13 @@ pub const Builder = struct {
                     .height = SizingAxis.fixed(box_size),
                 },
             },
-        }) catch return;
+        }) catch {
+            self.dispatch.popNode();
+            return;
+        };
         self.layout.closeElement();
 
-        // Store for later rendering
+        // Store for later rendering (still needed for visual rendering)
         self.pending_checkboxes.append(self.allocator, .{
             .id = cb.id,
             .layout_id = layout_id,
@@ -987,7 +936,23 @@ pub const Builder = struct {
                 if (cb.style.on_change) |callback| {
                     checkbox_widget.on_change = callback;
                 }
+
+                // Register click handler with dispatch tree
+                // Store bind pointer in the checkbox widget for the callback to access
+                checkbox_widget.bind_ptr = cb.style.bind;
+                self.dispatch.onClickWithContext(checkboxClickHandler, checkbox_widget);
             }
+        }
+
+        self.dispatch.popNode();
+    }
+
+    fn checkboxClickHandler(ctx: *anyopaque) void {
+        const checkbox_widget: *@import("../elements/checkbox.zig").Checkbox = @ptrCast(@alignCast(ctx));
+        checkbox_widget.toggle();
+        // Sync back to bound variable
+        if (checkbox_widget.bind_ptr) |bind_ptr| {
+            bind_ptr.* = checkbox_widget.isChecked();
         }
     }
 
@@ -1006,38 +971,17 @@ pub const Builder = struct {
     }
 
     /// Register input regions for focus handling (call after endFrame)
-    pub fn registerPendingInputRegions(self: *Self) void {
-        for (self.pending_inputs.items) |pending| {
-            const bounds = self.layout.getBoundingBox(pending.layout_id.id);
-            if (bounds) |b| {
-                self.input_regions.append(self.allocator, .{
-                    .bounds = b,
-                    .id = pending.id,
-                }) catch {};
-            }
-        }
-    }
-
-    pub fn registerPendingCheckboxRegions(self: *Self) void {
-        for (self.pending_checkboxes.items) |pending| {
-            const bounds = self.layout.getBoundingBox(pending.layout_id.id);
-            if (bounds) |b| {
-                // Register as clickable region
-                self.hit_regions.append(self.allocator, .{
-                    .bounds = b,
-                    .on_click = makeCheckboxToggle(pending.id, self.gooey),
-                    .id = pending.layout_id.id,
-                }) catch {};
-            }
-        }
-    }
-
-    fn makeCheckboxToggle(id: []const u8, gooey: ?*Gooey) ?*const fn () void {
-        // For now, we handle checkbox clicks in handleClick directly
-        _ = id;
-        _ = gooey;
-        return null;
-    }
+    // pub fn registerPendingInputRegions(self: *Self) void {
+    //     for (self.pending_inputs.items) |pending| {
+    //         const bounds = self.layout.getBoundingBox(pending.layout_id.id);
+    //         if (bounds) |b| {
+    //             self.input_regions.append(self.allocator, .{
+    //                 .bounds = b,
+    //                 .id = pending.id,
+    //             }) catch {};
+    //         }
+    //     }
+    // }
 
     // =========================================================================
     // Internal: ID Generation

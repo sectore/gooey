@@ -269,36 +269,23 @@ pub fn run(config: RunConfig) !void {
                 const x: f32 = @floatCast(pos.x);
                 const y: f32 = @floatCast(pos.y);
 
-                // First try dispatch tree (new system)
+                // Hit test to find the clicked element
                 if (g_ui.gooey.dispatch.hitTest(x, y)) |target| {
+                    // Auto-focus clicked focusable elements (TextInputs, etc.)
+                    if (g_ui.gooey.dispatch.getNodeConst(target)) |node| {
+                        if (node.focus_id) |focus_id| {
+                            // Look up the string ID from FocusManager
+                            if (g_ui.gooey.focus.getHandleById(focus_id)) |handle| {
+                                g_ui.gooey.focusTextInput(handle.string_id);
+                            }
+                        }
+                    }
+
+                    // Dispatch click handlers (buttons, checkboxes, etc.)
                     if (g_ui.gooey.dispatch.dispatchClick(target)) {
                         g_ui.requestRender();
                         return true;
                     }
-                }
-
-                // Fall back to old system for widgets not yet migrated
-                // (checkboxes, scroll containers, input focus)
-                for (g_ui.builder.pending_checkboxes.items) |pending| {
-                    const bounds = g_ui.gooey.layout.getBoundingBox(pending.layout_id.id);
-                    if (bounds) |b| {
-                        if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
-                            if (g_ui.gooey.widgets.checkbox(pending.id)) |cb| {
-                                cb.toggle();
-                                if (pending.style.bind) |bind_ptr| {
-                                    bind_ptr.* = cb.isChecked();
-                                }
-                                g_ui.requestRender();
-                                return true;
-                            }
-                        }
-                    }
-                }
-
-                // Legacy: handleClick for hit_regions (can remove once all migrated)
-                if (g_ui.builder.handleClick(x, y)) {
-                    g_ui.requestRender();
-                    return true;
                 }
             }
 
@@ -416,9 +403,8 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
 
     // Reset builder state
     ui.builder.id_counter = 0;
-    ui.builder.hit_regions.clearRetainingCapacity();
     ui.builder.pending_inputs.clearRetainingCapacity();
-    ui.builder.input_regions.clearRetainingCapacity();
+    // ui.builder.input_regions.clearRetainingCapacity();
     ui.builder.pending_checkboxes.clearRetainingCapacity();
     ui.builder.pending_scrolls.clearRetainingCapacity();
 
@@ -436,8 +422,8 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     }
 
     // Register hit regions (after layout computed bounds)
-    ui.builder.registerPendingInputRegions();
-    ui.builder.registerPendingCheckboxRegions();
+    // ui.builder.registerPendingInputRegions();
+    // ui.builder.registerPendingCheckboxRegions();
     ui.builder.registerPendingScrollRegions();
 
     // Clear scene

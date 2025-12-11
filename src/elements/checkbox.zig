@@ -88,6 +88,9 @@ pub const Checkbox = struct {
     /// Callback when value changes
     on_change: ?*const fn (bool) void,
 
+    /// Bound variable pointer (for two-way binding via dispatch)
+    bind_ptr: ?*bool = null,
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator, id: []const u8) Self {
@@ -100,6 +103,7 @@ pub const Checkbox = struct {
             .focused = false,
             .label = null,
             .on_change = null,
+            .bind_ptr = null,
         };
     }
 

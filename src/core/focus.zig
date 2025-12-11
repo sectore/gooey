@@ -356,6 +356,17 @@ pub const FocusManager = struct {
         return self.focus_order.items[@intCast(self.focus_index)];
     }
 
+    /// Look up a FocusHandle by its FocusId
+    /// Returns the handle if found in the current frame's focus order
+    pub fn getHandleById(self: *const Self, id: FocusId) ?FocusHandle {
+        for (self.focus_order.items) |handle| {
+            if (handle.id.eql(id)) {
+                return handle;
+            }
+        }
+        return null;
+    }
+
     /// Check if anything is focused
     pub fn hasFocus(self: *const Self) bool {
         return self.focused != null and self.window_focused;

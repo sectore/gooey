@@ -317,15 +317,35 @@ fn parseKeyEvent(event_id: objc.c.id) ?input.KeyEvent {
 }
 
 fn getCharacters(event: objc.Object) ?[]const u8 {
-    const ns_string = event.msgSend(?objc.Object, "characters", .{}) orelse return null;
-    const cstr = ns_string.msgSend(?[*:0]const u8, "UTF8String", .{}) orelse return null;
-    return std.mem.span(cstr);
+    // Get raw id and check for nil explicitly - ?objc.Object doesn't handle nil correctly
+    const ns_string_id: objc.c.id = event.msgSend(objc.c.id, "characters", .{});
+    if (ns_string_id == null) return null;
+
+    const ns_string = objc.Object{ .value = ns_string_id };
+    // Check length first - UTF8String on empty/special strings can be problematic
+    const length: c_ulong = ns_string.msgSend(c_ulong, "length", .{});
+    if (length == 0) return null;
+
+    const cstr: ?[*:0]const u8 = ns_string.msgSend(?[*:0]const u8, "UTF8String", .{});
+    if (cstr == null) return null;
+
+    return std.mem.span(cstr.?);
 }
 
 fn getCharactersIgnoringModifiers(event: objc.Object) ?[]const u8 {
-    const ns_string = event.msgSend(?objc.Object, "charactersIgnoringModifiers", .{}) orelse return null;
-    const cstr = ns_string.msgSend(?[*:0]const u8, "UTF8String", .{}) orelse return null;
-    return std.mem.span(cstr);
+    // Get raw id and check for nil explicitly - ?objc.Object doesn't handle nil correctly
+    const ns_string_id: objc.c.id = event.msgSend(objc.c.id, "charactersIgnoringModifiers", .{});
+    if (ns_string_id == null) return null;
+
+    const ns_string = objc.Object{ .value = ns_string_id };
+    // Check length first - UTF8String on empty/special strings can be problematic
+    const length: c_ulong = ns_string.msgSend(c_ulong, "length", .{});
+    if (length == 0) return null;
+
+    const cstr: ?[*:0]const u8 = ns_string.msgSend(?[*:0]const u8, "UTF8String", .{});
+    if (cstr == null) return null;
+
+    return std.mem.span(cstr.?);
 }
 
 // =============================================================================
