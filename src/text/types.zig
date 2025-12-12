@@ -4,6 +4,11 @@
 
 const std = @import("std");
 
+/// Subpixel variants for sharper text rendering at fractional pixel positions.
+/// Each glyph can be cached at up to VARIANTS_X * VARIANTS_Y different sub-pixel offsets.
+pub const SUBPIXEL_VARIANTS_X: u8 = 4;
+pub const SUBPIXEL_VARIANTS_Y: u8 = 1; // Only horizontal variants needed for text
+
 /// System font styles
 pub const SystemFont = enum {
     monospace,
@@ -38,6 +43,14 @@ pub const Metrics = struct {
     is_monospace: bool,
     /// Cell width for monospace fonts (advance of 'M')
     cell_width: f32,
+
+    /// Calculate baseline Y for vertically centering text in a box.
+    /// Returns the Y coordinate of the baseline in logical pixels.
+    pub inline fn calcBaseline(self: Metrics, box_y: f32, box_height: f32) f32 {
+        const text_height = self.ascender + self.descender;
+        const padding_top = (box_height - text_height) * 0.5;
+        return box_y + padding_top + self.ascender;
+    }
 };
 
 /// Glyph metrics for a single glyph
@@ -90,22 +103,19 @@ pub const ShapedRun = struct {
 
 /// Result of rasterizing a glyph
 pub const RasterizedGlyph = struct {
-    /// Width of the rasterized bitmap in pixels
+    /// Width of the rasterized bitmap in physical pixels
     width: u32,
-    /// Height of the rasterized bitmap in pixels
+    /// Height of the rasterized bitmap in physical pixels
     height: u32,
-    /// Horizontal bearing (offset from pen to left edge) in logical pixels
-    bearing_x: f32,
-    /// Vertical bearing (offset from baseline to top edge) in logical pixels
-    bearing_y: f32,
-    /// Logical height including padding
-    logical_height: f32,
-    /// Horizontal advance to next glyph
+    /// Horizontal offset from pen position to glyph left edge (physical pixels)
+    offset_x: i32,
+    /// Vertical offset from baseline to glyph top edge (physical pixels)
+    /// Positive means the glyph top is above the baseline.
+    offset_y: i32,
+    /// Horizontal advance to next glyph (logical pixels)
     advance_x: f32,
     /// Whether this is a color glyph (emoji)
     is_color: bool,
-    /// The scale factor used for rasterization
-    scale: f32,
 };
 
 /// Text measurement result

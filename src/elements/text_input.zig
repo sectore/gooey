@@ -659,8 +659,7 @@ pub const TextInput = struct {
 
         // Get font metrics for baseline positioning
         const metrics = text_system.getMetrics() orelse return;
-        const line_height = metrics.ascender + metrics.descender;
-        const baseline_y = self.bounds.y + (self.bounds.height + line_height) / 2 - metrics.descender;
+        const baseline_y = metrics.calcBaseline(self.bounds.y, self.bounds.height);
 
         // Push clip for text content area - all glyphs will be clipped to this region
         try scene.pushClip(.{

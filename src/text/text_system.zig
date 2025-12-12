@@ -24,6 +24,7 @@ pub const ShapedRun = types.ShapedRun;
 pub const TextMeasurement = types.TextMeasurement;
 pub const SystemFont = types.SystemFont;
 pub const CachedGlyph = cache_mod.CachedGlyph;
+pub const SUBPIXEL_VARIANTS_X = types.SUBPIXEL_VARIANTS_X;
 
 /// High-level text system
 pub const TextSystem = struct {
@@ -78,13 +79,13 @@ pub const TextSystem = struct {
     }
 
     /// Get current font metrics
-    pub fn getMetrics(self: *const Self) ?Metrics {
+    pub inline fn getMetrics(self: *const Self) ?Metrics {
         if (self.current_face) |f| return f.metrics;
         return null;
     }
 
     /// Get the FontFace interface for the current font
-    pub fn getFontFace(self: *Self) !FontFace {
+    pub inline fn getFontFace(self: *Self) !FontFace {
         if (self.current_face) |*f| {
             return f.asFontFace();
         }
@@ -92,8 +93,7 @@ pub const TextSystem = struct {
     }
 
     /// Shape text with proper kerning and ligature support
-    pub fn shapeText(self: *Self, text: []const u8) !ShapedRun {
-        // Use complex shaper for proper kerning
+    pub inline fn shapeText(self: *Self, text: []const u8) !ShapedRun {
         return self.shapeTextComplex(text);
     }
 
@@ -109,8 +109,14 @@ pub const TextSystem = struct {
         return self.shaper.?.shape(&face, text, self.allocator);
     }
 
-    /// Get cached glyph (renders if needed)
-    pub fn getGlyph(self: *Self, glyph_id: u16) !CachedGlyph {
+    /// Get cached glyph with subpixel variant (renders if needed)
+    pub inline fn getGlyphSubpixel(self: *Self, glyph_id: u16, subpixel_x: u8, subpixel_y: u8) !CachedGlyph {
+        const face = try self.getFontFace();
+        return self.cache.getOrRenderSubpixel(face, glyph_id, subpixel_x, subpixel_y);
+    }
+
+    /// Get cached glyph (renders if needed) - legacy, no subpixel
+    pub inline fn getGlyph(self: *Self, glyph_id: u16) !CachedGlyph {
         const face = try self.getFontFace();
         return self.cache.getOrRender(face, glyph_id);
     }
@@ -179,12 +185,12 @@ pub const TextSystem = struct {
     }
 
     /// Get the glyph atlas for GPU upload
-    pub fn getAtlas(self: *const Self) *const Atlas {
+    pub inline fn getAtlas(self: *const Self) *const Atlas {
         return self.cache.getAtlas();
     }
 
     /// Check if atlas needs re-upload
-    pub fn atlasGeneration(self: *const Self) u32 {
+    pub inline fn atlasGeneration(self: *const Self) u32 {
         return self.cache.getGeneration();
     }
 };

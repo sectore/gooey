@@ -22,7 +22,7 @@ pub const CoreTextFace = struct {
 
     const Self = @This();
 
-    /// Load a font by name (e.g., "Menlo", "SF Pro", "Helvetica Neue")
+    /// Load a font by name (e.g., "SF Mono", "SF Pro", "Helvetica Neue")
     pub fn init(name: []const u8, size: f32) !Self {
         const cf_name = ct.createCFStringRuntime(name) orelse return error.InvalidFontName;
         defer ct.release(cf_name);
@@ -38,13 +38,34 @@ pub const CoreTextFace = struct {
 
     /// Load a system font
     pub fn initSystem(style: SystemFont, size: f32) !Self {
-        const name = switch (style) {
-            .monospace => "SF Mono",
-            .sans_serif => "SF Pro",
-            .serif => "New York",
-            .system => ".AppleSystemUIFont",
+        const font = switch (style) {
+            .monospace => blk: {
+                // Use system API for monospace - SF Mono needs this to work correctly
+                const f = ct.CTFontCreateUIFontForLanguage(
+                    ct.kCTFontUIFontUserFixedPitch,
+                    @floatCast(size),
+                    null,
+                ) orelse return error.FontNotFound;
+                break :blk f;
+            },
+            else => blk: {
+                const name = switch (style) {
+                    .monospace => unreachable,
+                    .sans_serif => "SF Pro",
+                    .serif => "New York",
+                    .system => ".AppleSystemUIFont",
+                };
+                const cf_name = ct.createCFStringRuntime(name) orelse return error.InvalidFontName;
+                defer ct.release(cf_name);
+                break :blk ct.CTFontCreateWithName(cf_name, @floatCast(size), null) orelse
+                    return error.FontNotFound;
+            },
         };
-        return init(name, size);
+
+        return Self{
+            .ct_font = font,
+            .metrics = computeMetrics(font, size),
+        };
     }
 
     pub fn deinit(self: *Self) void {
@@ -115,11 +136,25 @@ pub const CoreTextFace = struct {
         };
     }
 
-    /// Render a glyph to a bitmap buffer
-    pub fn renderGlyph(
+    /// Render a glyph to a bitmap buffer (legacy, calls subpixel with 0,0)
+    pub inline fn renderGlyph(
         self: *const Self,
         glyph_id: u16,
         scale: f32,
+        buffer: []u8,
+        buffer_size: u32,
+    ) !RasterizedGlyph {
+        return self.renderGlyphSubpixel(glyph_id, scale, 0.0, 0.0, buffer, buffer_size);
+    }
+
+    /// Render a glyph with subpixel positioning
+    /// subpixel_x and subpixel_y are in range [0.0, 1.0)
+    pub fn renderGlyphSubpixel(
+        self: *const Self,
+        glyph_id: u16,
+        scale: f32,
+        subpixel_x: f32,
+        subpixel_y: f32,
         buffer: []u8,
         buffer_size: u32,
     ) !RasterizedGlyph {
@@ -132,26 +167,27 @@ pub const CoreTextFace = struct {
             return RasterizedGlyph{
                 .width = 0,
                 .height = 0,
-                .bearing_x = glyph_metrics.bearing_x,
-                .bearing_y = glyph_metrics.bearing_y,
-                .logical_height = glyph_metrics.height,
+                .offset_x = 0,
+                .offset_y = 0,
                 .advance_x = glyph_metrics.advance_x,
                 .is_color = false,
-                .scale = scale,
             };
         }
 
-        // Calculate pixel bounds with subpixel offsets
-        const x = glyph_metrics.bearing_x * scale;
-        const y = glyph_metrics.bearing_y * scale;
-        const int_x = @floor(x);
-        const int_y = @floor(y);
-        const frac_x = x - int_x;
-        const frac_y = y - int_y;
+        // Raster bounds in physical pixels (like GPUI's raster_bounds)
+        // bearing_x/bearing_y are the glyph origin relative to pen position
+        const raster_left = @floor(glyph_metrics.bearing_x * scale);
+        const raster_top = @floor(glyph_metrics.bearing_y * scale);
+        const raster_right = @ceil((glyph_metrics.bearing_x + glyph_metrics.width) * scale);
+        const raster_bottom = @ceil((glyph_metrics.bearing_y - glyph_metrics.height) * scale);
 
-        // Bitmap size in physical pixels
-        const width: u32 = @as(u32, @intFromFloat(@ceil(glyph_metrics.width * scale))) + padding * 2;
-        const height: u32 = @as(u32, @intFromFloat(@ceil(glyph_metrics.height * scale))) + padding * 2;
+        // Bitmap size with padding for antialiasing
+        var width: u32 = @intFromFloat(raster_right - raster_left + padding_f * 2);
+        var height: u32 = @intFromFloat(raster_top - raster_bottom + padding_f * 2);
+
+        // Add extra pixel when subpixel variant is non-zero
+        if (subpixel_x > 0) width += 1;
+        if (subpixel_y > 0) height += 1;
 
         const clamped_w = @min(width, buffer_size);
         const clamped_h = @min(height, buffer_size);
@@ -171,7 +207,7 @@ pub const CoreTextFace = struct {
         ) orelse return error.GraphicsError;
         defer ct.CGContextRelease(context);
 
-        // Configure rendering
+        // Configure rendering for quality
         ct.CGContextSetAllowsAntialiasing(context, true);
         ct.CGContextSetShouldAntialias(context, true);
         ct.CGContextSetAllowsFontSmoothing(context, true);
@@ -182,15 +218,14 @@ pub const CoreTextFace = struct {
         ct.CGContextSetAllowsFontSubpixelQuantization(context, false);
         ct.CGContextSetShouldSubpixelQuantizeFonts(context, false);
 
-        ct.CGContextTranslateCTM(context, frac_x, frac_y);
+        // Move origin to account for glyph bounds (like GPUI does)
+        // The context origin is bottom-left, Y increases upward
+        ct.CGContextTranslateCTM(
+            context,
+            -raster_left + padding_f + subpixel_x,
+            -raster_bottom + padding_f + subpixel_y,
+        );
         ct.CGContextSetTextMatrix(context, ct.CGAffineTransform.identity);
-
-        // Position for drawing
-        const pos_x: ct.CGFloat = @as(ct.CGFloat, @floatFromInt(padding)) - glyph_metrics.bearing_x * scale;
-        const pos_y: ct.CGFloat = @as(ct.CGFloat, @floatFromInt(padding)) + (glyph_metrics.height - glyph_metrics.bearing_y) * scale;
-
-        var glyph = glyph_id;
-        const position = ct.CGPoint{ .x = pos_x, .y = pos_y };
 
         // Create scaled font for rasterization
         const scaled_font = ct.CTFontCreateCopyWithAttributes(
@@ -201,17 +236,21 @@ pub const CoreTextFace = struct {
         ) orelse return error.FontError;
         defer ct.release(scaled_font);
 
+        // Draw glyph at origin - the context translation positions it correctly
+        var glyph = glyph_id;
+        const position = ct.CGPoint{ .x = 0, .y = 0 };
         ct.CTFontDrawGlyphs(scaled_font, @ptrCast(&glyph), @ptrCast(&position), 1, context);
 
+        // Return offsets directly from font metrics - no bitmap scanning needed
+        // offset_x: where to place bitmap left edge relative to pen (physical pixels)
+        // offset_y: where to place bitmap top edge relative to baseline (physical pixels, positive = above)
         return RasterizedGlyph{
             .width = clamped_w,
             .height = clamped_h,
-            .bearing_x = int_x / scale - padding_f / scale,
-            .bearing_y = int_y / scale + padding_f / scale,
-            .logical_height = glyph_metrics.height + 2.0 * padding_f / scale,
+            .offset_x = @intFromFloat(raster_left - padding_f),
+            .offset_y = @intFromFloat(raster_top + padding_f),
             .advance_x = glyph_metrics.advance_x,
             .is_color = false,
-            .scale = scale,
         };
     }
 

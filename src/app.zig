@@ -902,14 +902,11 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
         },
         .text => {
             const text_data = cmd.data.text;
-            // Use proper font metrics for vertical centering
-            const baseline_y = if (gooey_ctx.text_system.getMetrics()) |metrics| blk: {
-                const line_height = metrics.ascender + metrics.descender;
-                break :blk cmd.bounding_box.y + (cmd.bounding_box.height + line_height) / 2 - metrics.descender;
-            } else blk: {
-                // Fallback to approximate positioning if no metrics available
-                break :blk cmd.bounding_box.y + cmd.bounding_box.height * 0.75;
-            };
+            const baseline_y = if (gooey_ctx.text_system.getMetrics()) |metrics|
+                metrics.calcBaseline(cmd.bounding_box.y, cmd.bounding_box.height)
+            else
+                cmd.bounding_box.y + cmd.bounding_box.height * 0.75;
+
             const use_clip = gooey_ctx.scene.hasActiveClip();
             _ = try text_mod.renderText(
                 gooey_ctx.scene,

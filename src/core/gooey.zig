@@ -169,8 +169,8 @@ pub const Gooey = struct {
             allocator.destroy(text_system);
         }
 
-        // Load default font
-        try text_system.loadFont("SF Mono", 16.0); // Changed from "Menlo"
+        // Load default font - use system monospace for proper SF Mono behavior
+        try text_system.loadSystemFont(.sans_serif, 16.0);
 
         // Set up text measurement callback
         layout_engine.setMeasureTextFn(measureTextCallback, text_system);

@@ -100,6 +100,12 @@ pub const kCTFontTraitItalic: CTFontSymbolicTraits = 1 << 0;
 pub const kCTFontTraitBold: CTFontSymbolicTraits = 1 << 1;
 pub const kCTFontTraitMonoSpace: CTFontSymbolicTraits = 1 << 10;
 
+// System UI font types
+pub const CTFontUIFontType = u32;
+pub const kCTFontUIFontUserFixedPitch: CTFontUIFontType = 1; // System monospace
+
+pub extern "c" fn CTFontCreateUIFontForLanguage(uiType: CTFontUIFontType, size: CGFloat, language: ?CFStringRef) ?CTFontRef;
+
 // ============================================================================
 // CoreFoundation Functions
 // ============================================================================

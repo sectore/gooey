@@ -25,13 +25,22 @@ pub const FontFace = struct {
         /// Get metrics for a specific glyph
         glyphMetrics: *const fn (ptr: *anyopaque, glyph_id: u16) GlyphMetrics,
 
-        /// Render a glyph to a bitmap buffer
-        /// Returns info about the rasterized glyph
-        /// Buffer must be at least buffer_size * buffer_size bytes
+        /// Render a glyph to a bitmap buffer (legacy, no subpixel)
         renderGlyph: *const fn (
             ptr: *anyopaque,
             glyph_id: u16,
             scale: f32,
+            buffer: []u8,
+            buffer_size: u32,
+        ) anyerror!RasterizedGlyph,
+
+        /// Render a glyph with subpixel positioning
+        renderGlyphSubpixel: *const fn (
+            ptr: *anyopaque,
+            glyph_id: u16,
+            scale: f32,
+            subpixel_x: f32,
+            subpixel_y: f32,
             buffer: []u8,
             buffer_size: u32,
         ) anyerror!RasterizedGlyph,
@@ -42,22 +51,22 @@ pub const FontFace = struct {
 
     /// Get glyph ID for a Unicode codepoint
     /// Returns 0 for missing glyphs (.notdef)
-    pub fn glyphIndex(self: FontFace, codepoint: u21) u16 {
+    pub inline fn glyphIndex(self: FontFace, codepoint: u21) u16 {
         return self.vtable.glyphIndex(self.ptr, codepoint);
     }
 
     /// Get metrics for a specific glyph
-    pub fn glyphMetrics(self: FontFace, glyph_id: u16) GlyphMetrics {
+    pub inline fn glyphMetrics(self: FontFace, glyph_id: u16) GlyphMetrics {
         return self.vtable.glyphMetrics(self.ptr, glyph_id);
     }
 
     /// Get glyph metrics for a codepoint (convenience)
-    pub fn codepointMetrics(self: FontFace, codepoint: u21) GlyphMetrics {
+    pub inline fn codepointMetrics(self: FontFace, codepoint: u21) GlyphMetrics {
         return self.glyphMetrics(self.glyphIndex(codepoint));
     }
 
-    /// Render a glyph to a bitmap buffer
-    pub fn renderGlyph(
+    /// Render a glyph to a bitmap buffer (legacy)
+    pub inline fn renderGlyph(
         self: FontFace,
         glyph_id: u16,
         scale: f32,
@@ -65,6 +74,19 @@ pub const FontFace = struct {
         buffer_size: u32,
     ) !RasterizedGlyph {
         return self.vtable.renderGlyph(self.ptr, glyph_id, scale, buffer, buffer_size);
+    }
+
+    /// Render a glyph with subpixel positioning
+    pub inline fn renderGlyphSubpixel(
+        self: FontFace,
+        glyph_id: u16,
+        scale: f32,
+        subpixel_x: f32,
+        subpixel_y: f32,
+        buffer: []u8,
+        buffer_size: u32,
+    ) !RasterizedGlyph {
+        return self.vtable.renderGlyphSubpixel(self.ptr, glyph_id, scale, subpixel_x, subpixel_y, buffer, buffer_size);
     }
 
     /// Release resources
@@ -98,6 +120,19 @@ pub fn createFontFace(comptime T: type, impl: *T) FontFace {
             return self.renderGlyph(glyph_id, scale, buffer, buffer_size);
         }
 
+        fn renderGlyphSubpixel(
+            ptr: *anyopaque,
+            glyph_id: u16,
+            scale: f32,
+            subpixel_x: f32,
+            subpixel_y: f32,
+            buffer: []u8,
+            buffer_size: u32,
+        ) anyerror!RasterizedGlyph {
+            const self: *T = @ptrCast(@alignCast(ptr));
+            return self.renderGlyphSubpixel(glyph_id, scale, subpixel_x, subpixel_y, buffer, buffer_size);
+        }
+
         fn deinit(ptr: *anyopaque) void {
             const self: *T = @ptrCast(@alignCast(ptr));
             self.deinit();
@@ -107,6 +142,7 @@ pub fn createFontFace(comptime T: type, impl: *T) FontFace {
             .glyphIndex = glyphIndex,
             .glyphMetrics = glyphMetrics,
             .renderGlyph = renderGlyph,
+            .renderGlyphSubpixel = renderGlyphSubpixel,
             .deinit = deinit,
         };
     };
