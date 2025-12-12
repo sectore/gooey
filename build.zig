@@ -86,6 +86,81 @@ pub fn build(b: *std.Build) void {
     run_simple_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Todo Example
+    // =========================================================================
+
+    const todo_exe = b.addExecutable(.{
+        .name = "todo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/todo_app.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(todo_exe);
+
+    // Run todo example
+    const run_todo_step = b.step("run-todo", "Run the todo app example");
+    const run_todo_cmd = b.addRunArtifact(todo_exe);
+    run_todo_step.dependOn(&run_todo_cmd.step);
+    run_todo_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
+    // Theme Example
+    // =========================================================================
+
+    const theme_exe = b.addExecutable(.{
+        .name = "theme",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/theme.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(theme_exe);
+
+    // Run theme example
+    const run_theme_step = b.step("run-theme", "Run the theme example");
+    const run_theme_cmd = b.addRunArtifact(theme_exe);
+    run_theme_step.dependOn(&run_theme_cmd.step);
+    run_theme_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
+    // Dynamic Counters Example
+    // =========================================================================
+
+    const dynamic_counters_exe = b.addExecutable(.{
+        .name = "dynamic_counters",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/dynamic_counters.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(dynamic_counters_exe);
+
+    // Run dynamic_counters example
+    const run_dynamic_counters_step = b.step("run-dynamic-counters", "Run the dynamic_counters example");
+    const run_dynamic_counters_cmd = b.addRunArtifact(dynamic_counters_exe);
+    run_dynamic_counters_step.dependOn(&run_dynamic_counters_cmd.step);
+    run_dynamic_counters_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Login Form Example
     // =========================================================================
 

@@ -46,9 +46,6 @@ const AppState = struct {
     initialized: bool = false,
 };
 
-var g_state: *AppState = undefined;
-var g_gooey: *gooey.Gooey = undefined;
-
 // =============================================================================
 // Components
 // =============================================================================
@@ -59,8 +56,8 @@ const CounterCard = struct {
     color: ui.Color,
 
     pub fn render(self: @This(), b: *ui.Builder) void {
-        // Read the counter data from the entity map
-        const data = g_gooey.readEntity(Counter, self.counter) orelse return;
+        // Read the counter data using builder helper
+        const data = b.readEntity(Counter, self.counter) orelse return;
 
         b.box(.{
             .padding = .{ .all = 20 },
@@ -84,12 +81,8 @@ const CounterButtons = struct {
     counter: gooey.Entity(Counter),
 
     pub fn render(self: @This(), b: *ui.Builder) void {
-        // Create an EntityContext to get handlers
-        var cx = gooey.EntityContext(Counter){
-            .gooey = g_gooey,
-            .entities = g_gooey.getEntities(),
-            .entity_id = self.counter.id,
-        };
+        // Use the new builder helper - no globals needed!
+        var cx = b.entityContext(Counter, self.counter) orelse return;
 
         b.hstack(.{ .gap = 8 }, .{
             ui.buttonHandler("-", cx.handler(Counter.decrement)),
@@ -101,9 +94,12 @@ const CounterButtons = struct {
 
 /// Shows the sum of all counters
 const TotalDisplay = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        const c1 = g_gooey.readEntity(Counter, g_state.counter1);
-        const c2 = g_gooey.readEntity(Counter, g_state.counter2);
+    counter1: gooey.Entity(Counter),
+    counter2: gooey.Entity(Counter),
+
+    pub fn render(self: @This(), b: *ui.Builder) void {
+        const c1 = b.readEntity(Counter, self.counter1);
+        const c2 = b.readEntity(Counter, self.counter2);
 
         const total = (if (c1) |c| c.count else 0) + (if (c2) |c| c.count else 0);
 
@@ -119,7 +115,10 @@ const TotalDisplay = struct {
 
 /// Main layout
 const MainCard = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
+    counter1: gooey.Entity(Counter),
+    counter2: gooey.Entity(Counter),
+
+    pub fn render(self: @This(), b: *ui.Builder) void {
         b.box(.{
             .padding = .{ .all = 32 },
             .gap = 24,
@@ -136,12 +135,12 @@ const MainCard = struct {
 
             // Two counter cards showing independent counters
             b.hstack(.{ .gap = 16 }, .{
-                CounterCard{ .counter = g_state.counter1, .color = ui.Color.rgb(0.95, 0.95, 1.0) },
-                CounterCard{ .counter = g_state.counter2, .color = ui.Color.rgb(1.0, 0.95, 0.95) },
+                CounterCard{ .counter = self.counter1, .color = ui.Color.rgb(0.95, 0.95, 1.0) },
+                CounterCard{ .counter = self.counter2, .color = ui.Color.rgb(1.0, 0.95, 0.95) },
             }),
 
             // Total display observing both counters
-            TotalDisplay{},
+            TotalDisplay{ .counter1 = self.counter1, .counter2 = self.counter2 },
         });
     }
 };
@@ -150,13 +149,14 @@ const MainCard = struct {
 // Entry Point
 // =============================================================================
 
-pub fn main() !void {
-    var app_state = AppState{
-        .counter1 = gooey.Entity(Counter).nil(),
-        .counter2 = gooey.Entity(Counter).nil(),
-    };
-    g_state = &app_state;
+// App state stored at file scope (still needed for initialization tracking)
+// but NOT accessed via global from components
+var app_state = AppState{
+    .counter1 = gooey.Entity(Counter).nil(),
+    .counter2 = gooey.Entity(Counter).nil(),
+};
 
+pub fn main() !void {
     try gooey.run(.{
         .title = "Entity System Demo",
         .width = 500,
@@ -166,19 +166,19 @@ pub fn main() !void {
 }
 
 fn render(g: *gooey.UI) void {
-    g_gooey = g.gooey;
+    const gooey_ctx = g.gooey;
 
     // Initialize entities on first frame
-    if (!g_state.initialized) {
-        g_state.initialized = true;
+    if (!app_state.initialized) {
+        app_state.initialized = true;
 
         // Create counter entities
-        g_state.counter1 = g_gooey.createEntity(Counter, .{
+        app_state.counter1 = gooey_ctx.createEntity(Counter, .{
             .count = 0,
             .label = "Counter A",
         }) catch gooey.Entity(Counter).nil();
 
-        g_state.counter2 = g_gooey.createEntity(Counter, .{
+        app_state.counter2 = gooey_ctx.createEntity(Counter, .{
             .count = 10,
             .label = "Counter B",
         }) catch gooey.Entity(Counter).nil();
@@ -192,6 +192,7 @@ fn render(g: *gooey.UI) void {
         .background = ui.Color.rgb(0.95, 0.95, 0.95),
         .alignment = .{ .main = .center, .cross = .center },
     }, .{
-        MainCard{},
+        // Pass entity handles down through props - no globals!
+        MainCard{ .counter1 = app_state.counter1, .counter2 = app_state.counter2 },
     });
 }

@@ -279,6 +279,9 @@ pub fn runWithState(comptime State: type, config: RunWithStateConfig(State)) !vo
         .user_state = config.state,
     };
 
+    // Set context on builder so components can access it
+    builder.setContext(ContextType, &ctx);
+
     // Set root state for handler callbacks
     const handler_mod = @import("core/handler.zig");
     handler_mod.setRootState(State, config.state);

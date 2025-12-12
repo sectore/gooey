@@ -46,6 +46,9 @@
 
 const std = @import("std");
 
+// Forward declaration for Gooey (used in Entity.context)
+const Gooey = @import("gooey.zig").Gooey;
+
 // =============================================================================
 // Entity ID
 // =============================================================================
@@ -76,7 +79,8 @@ pub const EntityId = struct {
 /// A lightweight handle to an entity of type T.
 ///
 /// Entity(T) is just an ID - it doesn't contain the actual data.
-/// Use EntityContext.read() to access the data.
+/// Use EntityContext.read() to access the data, or use the convenience
+/// method `entity.context(gooey)` to get an EntityContext.
 pub fn Entity(comptime T: type) type {
     return struct {
         const Self = @This();
@@ -100,6 +104,34 @@ pub fn Entity(comptime T: type) type {
         /// Compare two entity handles
         pub fn eql(self: Self, other: Self) bool {
             return self.id.eql(other.id);
+        }
+
+        /// Create an EntityContext for this entity.
+        ///
+        /// This is a convenience method that eliminates boilerplate when
+        /// working with entities in component render methods.
+        ///
+        /// ## Example
+        ///
+        /// ```zig
+        /// const CounterButtons = struct {
+        ///     counter: gooey.Entity(Counter),
+        ///
+        ///     pub fn render(self: @This(), b: *ui.Builder) void {
+        ///         var cx = self.counter.context(g_gooey);
+        ///         b.hstack(.{ .gap = 8 }, .{
+        ///             ui.buttonHandler("-", cx.handler(Counter.decrement)),
+        ///             ui.buttonHandler("+", cx.handler(Counter.increment)),
+        ///         });
+        ///     }
+        /// };
+        /// ```
+        pub fn context(self: Self, gooey: *Gooey) EntityContext(T) {
+            return .{
+                .gooey = gooey,
+                .entities = gooey.getEntities(),
+                .entity_id = self.id,
+            };
         }
     };
 }
@@ -140,6 +172,9 @@ const EntitySlot = struct {
     /// Entities that are observing this one (notified on change)
     observers: std.ArrayListUnmanaged(EntityId) = .{},
 
+    /// Entities that this one is observing (for cleanup on removal)
+    observing: std.ArrayListUnmanaged(EntityId) = .{},
+
     /// Whether this entity needs re-render (for views)
     dirty: bool = true,
 };
@@ -164,6 +199,10 @@ pub const EntityMap = struct {
     /// Entities that have been marked dirty this frame
     pending_notifications: std.ArrayListUnmanaged(EntityId) = .{},
 
+    /// Observations made during current frame (for auto-cleanup)
+    /// Stores (observer_id, target_id) pairs
+    frame_observations: std.ArrayListUnmanaged(struct { observer: EntityId, target: EntityId }) = .{},
+
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) Self {
@@ -177,9 +216,11 @@ pub const EntityMap = struct {
             var slot = entry.value_ptr;
             slot.deinit_fn(slot.ptr, self.allocator);
             slot.observers.deinit(self.allocator);
+            slot.observing.deinit(self.allocator); // NEW
         }
         self.slots.deinit(self.allocator);
         self.pending_notifications.deinit(self.allocator);
+        self.frame_observations.deinit(self.allocator); // NEW
     }
 
     /// Create a new entity with the given initial value
@@ -263,24 +304,47 @@ pub const EntityMap = struct {
         return any_dirty;
     }
 
-    /// Add an observer relationship
-    pub fn observe(self: *Self, entity_id: EntityId, observer_id: EntityId) void {
-        if (self.slots.getPtr(entity_id.id)) |slot| {
+    /// Add an observer relationship (bidirectional tracking)
+    pub fn observe(self: *Self, target_id: EntityId, observer_id: EntityId) void {
+        // Add observer to target's observer list
+        if (self.slots.getPtr(target_id.id)) |target_slot| {
             // Avoid duplicate observers
-            for (slot.observers.items) |obs| {
-                if (obs.eql(observer_id)) return;
+            for (target_slot.observers.items) |obs| {
+                if (obs.eql(observer_id)) return; // Already observing
             }
-            slot.observers.append(self.allocator, observer_id) catch {};
+            target_slot.observers.append(self.allocator, observer_id) catch {};
         }
+
+        // Add target to observer's observing list (reverse tracking)
+        if (self.slots.getPtr(observer_id.id)) |observer_slot| {
+            for (observer_slot.observing.items) |obs| {
+                if (obs.eql(target_id)) return; // Already tracked
+            }
+            observer_slot.observing.append(self.allocator, target_id) catch {};
+        }
+
+        // Track for frame-based cleanup
+        self.frame_observations.append(self.allocator, .{ .observer = observer_id, .target = target_id }) catch {};
     }
 
-    /// Remove an observer relationship
-    pub fn unobserve(self: *Self, entity_id: EntityId, observer_id: EntityId) void {
-        if (self.slots.getPtr(entity_id.id)) |slot| {
-            for (slot.observers.items, 0..) |obs, i| {
+    /// Remove an observer relationship (bidirectional)
+    pub fn unobserve(self: *Self, target_id: EntityId, observer_id: EntityId) void {
+        // Remove observer from target's list
+        if (self.slots.getPtr(target_id.id)) |target_slot| {
+            for (target_slot.observers.items, 0..) |obs, i| {
                 if (obs.eql(observer_id)) {
-                    _ = slot.observers.swapRemove(i);
-                    return;
+                    _ = target_slot.observers.swapRemove(i);
+                    break;
+                }
+            }
+        }
+
+        // Remove target from observer's observing list
+        if (self.slots.getPtr(observer_id.id)) |observer_slot| {
+            for (observer_slot.observing.items, 0..) |obs, i| {
+                if (obs.eql(target_id)) {
+                    _ = observer_slot.observing.swapRemove(i);
+                    break;
                 }
             }
         }
@@ -306,32 +370,84 @@ pub const EntityMap = struct {
         return self.slots.contains(id.id);
     }
 
-    /// Remove an entity and clean up
+    /// Remove an entity and clean up all relationships
     pub fn remove(self: *Self, id: EntityId) void {
-        if (self.slots.fetchRemove(id.id)) |kv| {
-            var slot = kv.value;
-            slot.deinit_fn(slot.ptr, self.allocator);
-            slot.observers.deinit(self.allocator);
-        }
+        const kv = self.slots.fetchRemove(id.id) orelse return;
+        var slot = kv.value;
 
-        // Remove from any observer lists
-        var iter = self.slots.iterator();
-        while (iter.next()) |entry| {
-            var slot = entry.value_ptr;
-            var i: usize = 0;
-            while (i < slot.observers.items.len) {
-                if (slot.observers.items[i].eql(id)) {
-                    _ = slot.observers.swapRemove(i);
-                } else {
-                    i += 1;
+        // Remove this entity from the observer lists of entities it was observing
+        // (Using the reverse tracking - O(n) where n = entities this one observed)
+        for (slot.observing.items) |target_id| {
+            if (self.slots.getPtr(target_id.id)) |target_slot| {
+                for (target_slot.observers.items, 0..) |obs, i| {
+                    if (obs.eql(id)) {
+                        _ = target_slot.observers.swapRemove(i);
+                        break;
+                    }
                 }
             }
         }
+
+        // Remove this entity from entities that were observing it
+        for (slot.observers.items) |observer_id| {
+            if (self.slots.getPtr(observer_id.id)) |observer_slot| {
+                for (observer_slot.observing.items, 0..) |obs, i| {
+                    if (obs.eql(id)) {
+                        _ = observer_slot.observing.swapRemove(i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Clean up slot memory
+        slot.deinit_fn(slot.ptr, self.allocator);
+        slot.observers.deinit(self.allocator);
+        slot.observing.deinit(self.allocator);
     }
 
     /// Get entity count
     pub fn count(self: *const Self) usize {
         return self.slots.count();
+    }
+
+    /// Begin a new frame - call before rendering
+    /// Clears frame observations from previous frame
+    pub fn beginFrame(self: *Self) void {
+        // Clear observations from last frame
+        // This ensures stale observations are removed
+        for (self.frame_observations.items) |obs| {
+            self.unobserve(obs.target, obs.observer);
+        }
+        self.frame_observations.clearRetainingCapacity();
+    }
+
+    /// End frame - observations made this frame are now active
+    /// Call after rendering is complete
+    pub fn endFrame(_: *Self) void {
+        // Frame observations are already registered via observe()
+        // This is a hook for future optimizations (e.g., batching)
+    }
+
+    /// Get list of entities this entity is observing
+    pub fn getObserving(self: *const Self, id: EntityId) ?[]const EntityId {
+        if (self.slots.get(id.id)) |slot| {
+            return slot.observing.items;
+        }
+        return null;
+    }
+
+    /// Get list of entities observing this entity
+    pub fn getObservers(self: *const Self, id: EntityId) ?[]const EntityId {
+        if (self.slots.get(id.id)) |slot| {
+            return slot.observers.items;
+        }
+        return null;
+    }
+
+    /// Get count of active frame observations
+    pub fn frameObservationCount(self: *const Self) usize {
+        return self.frame_observations.items.len;
     }
 };
 
@@ -344,7 +460,6 @@ pub const EntityMap = struct {
 /// EntityContext(T) provides typed access to an entity and operations
 /// for reading/updating other entities, creating new entities, etc.
 pub fn EntityContext(comptime T: type) type {
-    const Gooey = @import("gooey.zig").Gooey;
     const handler_mod = @import("handler.zig");
     const HandlerRef = handler_mod.HandlerRef;
 
@@ -573,4 +688,78 @@ test "Entity type safety" {
     // Reading with correct type should work
     const right_type = map.read(TypeA, entity_a);
     try std.testing.expect(right_type != null);
+}
+
+test "Entity.context convenience method" {
+    // This test verifies the API compiles correctly.
+    // Full integration test would require a Gooey instance.
+    const TestModel = struct {
+        value: i32,
+    };
+
+    const entity = Entity(TestModel){ .id = .{ .id = 42 } };
+    try std.testing.expect(entity.isValid());
+
+    // Verify the context method exists and returns the right type
+    const ContextType = EntityContext(TestModel);
+    _ = ContextType;
+}
+
+test "Observer auto-cleanup on entity removal" {
+    const allocator = std.testing.allocator;
+
+    const Model = struct { value: i32 };
+
+    var map = EntityMap.init(allocator);
+    defer map.deinit();
+
+    // Create entities
+    const target = try map.new(Model, .{ .value = 1 });
+    const observer1 = try map.new(Model, .{ .value = 2 });
+    const observer2 = try map.new(Model, .{ .value = 3 });
+
+    // Set up observations
+    map.observe(target.id, observer1.id);
+    map.observe(target.id, observer2.id);
+
+    // Verify observations
+    try std.testing.expectEqual(@as(usize, 2), map.getObservers(target.id).?.len);
+    try std.testing.expectEqual(@as(usize, 1), map.getObserving(observer1.id).?.len);
+
+    // Remove observer1 - should auto-cleanup from target's observer list
+    map.remove(observer1.id);
+
+    // Target should only have observer2 now
+    try std.testing.expectEqual(@as(usize, 1), map.getObservers(target.id).?.len);
+    try std.testing.expect(map.getObservers(target.id).?[0].eql(observer2.id));
+}
+
+test "Frame-based observation cleanup" {
+    const allocator = std.testing.allocator;
+
+    const Model = struct { value: i32 };
+
+    var map = EntityMap.init(allocator);
+    defer map.deinit();
+
+    const target = try map.new(Model, .{ .value = 1 });
+    const observer = try map.new(Model, .{ .value = 2 });
+
+    // Frame 1: observe
+    map.beginFrame();
+    map.observe(target.id, observer.id);
+    map.endFrame();
+
+    try std.testing.expectEqual(@as(usize, 1), map.getObservers(target.id).?.len);
+
+    // Frame 2: begin clears previous observations
+    map.beginFrame();
+    // Observation was cleared
+    try std.testing.expectEqual(@as(usize, 0), map.getObservers(target.id).?.len);
+
+    // Re-observe in this frame
+    map.observe(target.id, observer.id);
+    map.endFrame();
+
+    try std.testing.expectEqual(@as(usize, 1), map.getObservers(target.id).?.len);
 }

@@ -64,16 +64,14 @@ const AppState = struct {
     }
 };
 
-// Store handler refs as globals (created once per frame in render)
-var g_cx: *gooey.Context(AppState) = undefined;
-
 // =============================================================================
 // Components
 // =============================================================================
 
 const Greeting = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
-        const s = g_cx.state();
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
         if (s.name.len > 0) {
             b.box(.{}, .{
                 ui.textFmt("Hello, {s}!", .{s.name}, .{ .size = 14, .color = s.theme.accent() }),
@@ -84,20 +82,22 @@ const Greeting = struct {
 
 const CounterRow = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
-        const s = g_cx.state();
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
         const t = s.theme;
 
         b.hstack(.{ .gap = 12, .alignment = .center }, .{
-            ui.buttonHandler("-", g_cx.handler(AppState.decrement)),
+            ui.buttonHandler("-", cx.handler(AppState.decrement)),
             ui.textFmt("Count: {}", .{s.count}, .{ .size = 16, .color = t.text() }),
-            ui.buttonHandler("+", g_cx.handler(AppState.increment)),
+            ui.buttonHandler("+", cx.handler(AppState.increment)),
         });
     }
 };
 
 const Card = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
-        const s = g_cx.state();
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
         const t = s.theme;
 
         b.box(.{
@@ -125,7 +125,7 @@ const Card = struct {
             // Theme toggle
             ui.buttonHandler(
                 if (s.theme == .light) "Dark Mode" else "Light Mode",
-                g_cx.handler(AppState.toggleTheme),
+                cx.handler(AppState.toggleTheme),
             ),
         });
     }
@@ -149,7 +149,7 @@ pub fn main() !void {
 }
 
 fn render(cx: *gooey.Context(AppState)) void {
-    g_cx = cx; // Store for components to access
+    // REMOVE: g_cx = cx;  <-- No longer needed!
     const s = cx.state();
     const t = s.theme;
 

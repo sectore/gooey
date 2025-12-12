@@ -62,22 +62,27 @@ pub const WidgetStore = struct {
     // =========================================================================
 
     pub fn textInput(self: *Self, id: []const u8) ?*TextInput {
-        if (self.text_inputs.get(id)) |existing| {
-            self.accessed_this_frame.put(id, {}) catch {};
-            return existing;
+        // Use getEntry to get the stable key stored in the hashmap
+        if (self.text_inputs.getEntry(id)) |entry| {
+            const stable_key = entry.key_ptr.*;
+            // Guard against duplicate tracking - use the stable key
+            if (!self.accessed_this_frame.contains(stable_key)) {
+                self.accessed_this_frame.put(stable_key, {}) catch {};
+            }
+            return entry.value_ptr.*;
         }
 
         const input = self.allocator.create(TextInput) catch return null;
         errdefer self.allocator.destroy(input);
 
-        input.* = TextInput.initWithId(self.allocator, self.default_text_input_bounds, id);
-
         const owned_key = self.allocator.dupe(u8, id) catch {
-            input.deinit();
             self.allocator.destroy(input);
             return null;
         };
         errdefer self.allocator.free(owned_key);
+
+        // Initialize with owned_key so the TextInput stores stable memory
+        input.* = TextInput.initWithId(self.allocator, self.default_text_input_bounds, owned_key);
 
         self.text_inputs.put(owned_key, input) catch {
             input.deinit();
@@ -99,22 +104,27 @@ pub const WidgetStore = struct {
     // =========================================================================
 
     pub fn checkbox(self: *Self, id: []const u8) ?*Checkbox {
-        if (self.checkboxes.get(id)) |existing| {
-            self.accessed_this_frame.put(id, {}) catch {};
-            return existing;
+        // Use getEntry to get the stable key stored in the hashmap
+        if (self.checkboxes.getEntry(id)) |entry| {
+            const stable_key = entry.key_ptr.*;
+            // Guard against duplicate tracking - use the stable key
+            if (!self.accessed_this_frame.contains(stable_key)) {
+                self.accessed_this_frame.put(stable_key, {}) catch {};
+            }
+            return entry.value_ptr.*;
         }
 
         const cb = self.allocator.create(Checkbox) catch return null;
         errdefer self.allocator.destroy(cb);
 
-        cb.* = Checkbox.init(self.allocator, id);
-
         const owned_key = self.allocator.dupe(u8, id) catch {
-            cb.deinit();
             self.allocator.destroy(cb);
             return null;
         };
         errdefer self.allocator.free(owned_key);
+
+        // Initialize with owned_key so the Checkbox stores stable memory
+        cb.* = Checkbox.init(self.allocator, owned_key);
 
         self.checkboxes.put(owned_key, cb) catch {
             cb.deinit();
@@ -136,15 +146,17 @@ pub const WidgetStore = struct {
     // =========================================================================
 
     pub fn scrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
-        if (self.scroll_containers.get(id)) |existing| {
-            self.accessed_this_frame.put(id, {}) catch {};
-            return existing;
+        if (self.scroll_containers.getEntry(id)) |entry| {
+            const stable_key = entry.key_ptr.*;
+            // Guard against duplicate tracking
+            if (!self.accessed_this_frame.contains(stable_key)) {
+                self.accessed_this_frame.put(stable_key, {}) catch {};
+            }
+            return entry.value_ptr.*;
         }
 
         const sc = self.allocator.create(ScrollContainer) catch return null;
         errdefer self.allocator.destroy(sc);
-
-        sc.* = ScrollContainer.init(self.allocator, id);
 
         const owned_key = self.allocator.dupe(u8, id) catch {
             sc.deinit();
@@ -152,6 +164,8 @@ pub const WidgetStore = struct {
             return null;
         };
         errdefer self.allocator.free(owned_key);
+
+        sc.* = ScrollContainer.init(self.allocator, owned_key);
 
         self.scroll_containers.put(owned_key, sc) catch {
             sc.deinit();

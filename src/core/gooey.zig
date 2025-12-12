@@ -234,6 +234,9 @@ pub const Gooey = struct {
         self.widgets.beginFrame();
         self.focus.beginFrame();
 
+        // Clear stale entity observations from last frame
+        self.entities.beginFrame();
+
         // Update cached window dimensions
         self.width = @floatCast(self.window.size.width);
         self.height = @floatCast(self.window.size.height);
@@ -251,6 +254,9 @@ pub const Gooey = struct {
     pub fn endFrame(self: *Self) ![]const RenderCommand {
         self.widgets.endFrame();
         self.focus.endFrame();
+
+        // Finalize frame observations
+        self.entities.endFrame();
 
         // End layout and get render commands
         return try self.layout.endFrame();

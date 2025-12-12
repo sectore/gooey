@@ -27,6 +27,7 @@ const FocusHandle = focus_mod.FocusHandle;
 const action_mod = @import("../core/action.zig");
 const actionTypeId = action_mod.actionTypeId;
 const handler_mod = @import("../core/handler.zig");
+const entity_mod = @import("../core/entity.zig");
 pub const HandlerRef = handler_mod.HandlerRef;
 const layout_mod = @import("../layout/layout.zig");
 const LayoutEngine = layout_mod.LayoutEngine;
@@ -374,6 +375,12 @@ pub fn textFmt(comptime fmt: []const u8, args: anytype, style: TextStyle) Text {
     return .{ .content = result, .style = style };
 }
 
+/// Get a unique type ID for context type checking
+fn contextTypeId(comptime T: type) usize {
+    const name_ptr: [*]const u8 = @typeName(T).ptr;
+    return @intFromPtr(name_ptr);
+}
+
 // =============================================================================
 // UI Builder
 // =============================================================================
@@ -388,6 +395,12 @@ pub const Builder = struct {
 
     /// Dispatch tree for event routing (built alongside layout)
     dispatch: *DispatchTree,
+
+    // Context storage for component access
+    /// Type-erased context pointer (set by runWithState)
+    context_ptr: ?*anyopaque = null,
+    /// Type ID for runtime type checking
+    context_type_id: usize = 0,
 
     /// Pending input IDs to be rendered (collected during layout, rendered after)
     pending_inputs: std.ArrayList(PendingInput),
@@ -436,6 +449,104 @@ pub const Builder = struct {
         self.pending_checkboxes.deinit(self.allocator);
         // self.input_regions.deinit(self.allocator);
         self.pending_scrolls.deinit(self.allocator);
+    }
+
+    // =========================================================================
+    // Context Access (for components to retrieve typed context)
+    // =========================================================================
+
+    /// Set the context for this builder.
+    /// Called by runWithState before rendering.
+    pub fn setContext(self: *Self, comptime ContextType: type, ctx: *ContextType) void {
+        self.context_ptr = @ptrCast(ctx);
+        self.context_type_id = contextTypeId(ContextType);
+    }
+
+    /// Clear the context (called after frame if needed)
+    pub fn clearContext(self: *Self) void {
+        self.context_ptr = null;
+        self.context_type_id = 0;
+    }
+
+    /// Get the typed context from within a component's render method.
+    ///
+    /// Returns null if no context is set or if the type doesn't match.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const CounterRow = struct {
+    ///     pub fn render(_: @This(), b: *ui.Builder) void {
+    ///         const cx = b.getContext(gooey.Context(AppState)) orelse return;
+    ///         const s = cx.state();
+    ///
+    ///         b.hstack(.{ .gap = 12 }, .{
+    ///             ui.buttonHandler("-", cx.handler(AppState.decrement)),
+    ///             ui.textFmt("Count: {}", .{s.count}, .{}),
+    ///             ui.buttonHandler("+", cx.handler(AppState.increment)),
+    ///         });
+    ///     }
+    /// };
+    /// ```
+    pub fn getContext(self: *Self, comptime ContextType: type) ?*ContextType {
+        if (self.context_ptr) |ptr| {
+            if (self.context_type_id == contextTypeId(ContextType)) {
+                return @ptrCast(@alignCast(ptr));
+            }
+        }
+        return null;
+    }
+
+    /// Get an EntityContext for an entity from within a component's render method.
+    ///
+    /// This is a convenience that combines `b.gooey` access with entity context creation,
+    /// eliminating the need for global Gooey references in entity-based components.
+    ///
+    /// ## Example
+    ///
+    /// ```zig
+    /// const CounterButtons = struct {
+    ///     counter: gooey.Entity(Counter),
+    ///
+    ///     pub fn render(self: @This(), b: *ui.Builder) void {
+    ///         var cx = b.entityContext(Counter, self.counter) orelse return;
+    ///
+    ///         b.hstack(.{ .gap = 8 }, .{
+    ///             ui.buttonHandler("-", cx.handler(Counter.decrement)),
+    ///             ui.buttonHandler("+", cx.handler(Counter.increment)),
+    ///         });
+    ///     }
+    /// };
+    /// ```
+    pub fn entityContext(
+        self: *Self,
+        comptime T: type,
+        entity: entity_mod.Entity(T),
+    ) ?entity_mod.EntityContext(T) {
+        const g = self.gooey orelse return null;
+        return entity.context(g);
+    }
+
+    /// Get the Gooey instance from within a component.
+    ///
+    /// Useful for reading entity data or other Gooey operations.
+    /// Returns null if Builder wasn't initialized with a Gooey reference.
+    pub fn getGooey(self: *Self) ?*Gooey {
+        return self.gooey;
+    }
+
+    /// Read an entity's data directly from Builder.
+    /// Convenience wrapper around gooey.readEntity().
+    pub fn readEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*const T {
+        const g = self.gooey orelse return null;
+        return g.readEntity(T, entity);
+    }
+
+    /// Write to an entity's data directly from Builder.
+    /// Convenience wrapper around gooey.writeEntity().
+    pub fn writeEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*T {
+        const g = self.gooey orelse return null;
+        return g.writeEntity(T, entity);
     }
 
     // =========================================================================

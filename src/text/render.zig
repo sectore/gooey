@@ -26,11 +26,10 @@ pub fn renderText(
 
     var shaped = try text_system.shapeText(text);
     defer shaped.deinit(text_system.allocator);
-    //std.debug.print("renderText: baseline_y={d:.1}, scale={d:.1}\n", .{ baseline_y, scale_factor });
+    std.debug.print("renderText: baseline_y={d:.1}, scale={d:.1}\n", .{ baseline_y, scale_factor });
 
     var pen_x = x;
     for (shaped.glyphs, 0..) |glyph, i| {
-        _ = i;
         const cached = try text_system.getGlyph(glyph.glyph_id);
 
         if (cached.region.width > 0 and cached.region.height > 0) {
@@ -44,10 +43,9 @@ pub fn renderText(
             const glyph_x = @floor(pen_x + glyph.x_offset) + cached.bearing_x;
             const glyph_y = @floor(baseline_y + glyph.y_offset) - cached.bearing_y;
 
-            // const bottom = glyph_y + glyph_h;
-            // if (i < 5) {
-            //     std.debug.print("  glyph[{}]: glyph_h={d:.1}, glyph_y={d:.1}, bottom={d:.1}\n", .{ i, glyph_h, glyph_y, bottom });
-            // }
+            if (i < 5) {
+                std.debug.print("glyph[{d}]: bearing_y={d:.2}, y_offset={d:.2}, baseline={d:.2}, final_y={d:.2}\n", .{ i, cached.bearing_y, glyph.y_offset, baseline_y, glyph_y });
+            }
 
             const instance = GlyphInstance.init(
                 glyph_x,
