@@ -111,6 +111,31 @@ pub fn build(b: *std.Build) void {
     run_layout_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Pomodoro Example
+    // =========================================================================
+
+    const pomodoro_exe = b.addExecutable(.{
+        .name = "pomodoro",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/pomodoro.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(pomodoro_exe);
+
+    // Run pomodoro example
+    const run_pomodoro_step = b.step("run-pomodoro", "Run the pomodoro example");
+    const run_pomodoro_cmd = b.addRunArtifact(pomodoro_exe);
+    run_pomodoro_step.dependOn(&run_pomodoro_cmd.step);
+    run_pomodoro_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Todo Example
     // =========================================================================
 

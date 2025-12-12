@@ -12,6 +12,8 @@ const gooey = @import("gooey");
 const ui = gooey.ui;
 const ShadowConfig = ui.ShadowConfig;
 
+const custom_shader = gooey.platform.mac.metal.custom_shader;
+
 // =============================================================================
 // Theme
 // =============================================================================
@@ -136,6 +138,7 @@ pub fn main() !void {
         .height = 600,
         .render = render,
         .on_event = onEvent,
+        .custom_shaders = &.{custom_shader.crt_shader},
     });
 }
 
@@ -286,19 +289,31 @@ const ScrollDemoPage = struct {
         const t = state.theme;
 
         b.box(.{
-            .padding = .{ .all = 32 },
-            .gap = 24,
+            .direction = .column,
             .fill_width = true,
-            .fill_height = true,
-            .alignment = .{ .main = .center, .cross = .center },
+            .grow = true,
         }, .{
-            ui.text("Scroll Container Demo", .{ .size = 24, .color = t.text }),
-            ui.text("Scroll with mousewheel or trackpad", .{ .size = 14, .color = t.muted }),
+            // Nav-like header
+            b.box(.{
+                .direction = .row,
+                .padding = .{ .symmetric = .{ .x = 24, .y = 16 } },
+                .gap = 16,
+                .background = t.card,
+                .fill_width = true,
+                .alignment = .{ .cross = .center },
+            }, .{
+                ui.text("Scroll Container Demo", .{ .size = 20, .color = t.text }),
+                ui.text("Scroll with mousewheel or trackpad", .{ .size = 14, .color = t.muted }),
+            }),
 
+            // Scroll containers below
             b.box(.{
                 .direction = .row,
                 .gap = 24,
-                .alignment = .{ .main = .center },
+                .padding = .{ .all = 32 },
+                .grow = true,
+                .fill_width = true,
+                .alignment = .{ .main = .center, .cross = .start },
             }, .{
                 ScrollableList{},
                 ScrollableCards{},

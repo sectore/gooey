@@ -448,6 +448,14 @@ pub const Gooey = struct {
     pub fn getWindow(self: *Self) *Window {
         return self.window;
     }
+
+    /// Set the accent color uniform for custom shaders
+    /// The alpha channel can be used as a mode selector
+    pub fn setAccentColor(self: *Gooey, r: f32, g: f32, b: f32, a: f32) void {
+        if (self.window.renderer.getPostProcess()) |pp| {
+            pp.uniforms.accent_color = .{ r, g, b, a };
+        }
+    }
 };
 
 /// Text measurement callback for layout engine

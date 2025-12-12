@@ -1,162 +1,102 @@
 # Gooey
 
-A minimal GPU-accelerated UI framework for Zig, targeting macOS with Metal rendering.
+A GPU-accelerated UI framework for Zig, targeting macOS with Metal rendering.
 
 > ⚠️ **Early Development**: macOS-only. API is evolving.
 
-<img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey.png" height="400px" />
+<table>
+  <tr>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-1.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-2.png" height="300px" /></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-3.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-dark.png" height="300px" /></td>
+  </tr>
+</table>
 
-Now with custom shaders!
+Now with custom shader support!
 
-<img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-shader.png" height="400px" />
+<img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-shader.png" height="300px" />
 
 ## Features
 
 - **Metal Rendering** - Hardware-accelerated with MSAA anti-aliasing
-- **CVDisplayLink VSync** - Smooth 60Hz - 240Hz frame-paced rendering
-- **Declarative UI** - Component-based with simple `render()` methods
-- **Retained Widgets** - TextInput with full IME/composition support
-- **Text Rendering** - CoreText font loading and shaping, glyph atlas caching
-- **Simple API** - Plain structs, simple callbacks, no complex reactive system (yet?).
+- **Declarative UI** - Component-based layout with flexbox-style system
+- **Retained Widgets** - TextInput, Checkbox, Scroll containers with state
+- **Text Rendering** - CoreText shaping with subpixel positioning
+- **Custom Shaders** - Drop in your own Metal shaders
+- **Theming** - Built-in light/dark mode support
 
 ## Quick Start
 
-### Prerequisites
-
-- Zig 0.15.2+
-- macOS 12.0+ (Metal required)
-- Xcode Command Line Tools
-
-### Build & Run
+**Requirements:** Zig 0.15.2+, macOS 12.0+
 
 ```bash
-zig build run          # Run the showcase demo
-zig build run-simple   # Run the simple counter example
-zig build run-login    # Run the login form example
-zig build test         # Run tests
+zig build run              # Showcase demo
+zig build run-simple       # Counter example
+zig build run-todo         # Todo app
+zig build run-shader       # Custom shaders
+zig build test             # Run tests
 ```
 
-## Examples
-
-### Simple Counter
-
-The simplest way to get started - just a render function and plain struct state:
+## Example
 
 ```zig
-//! Simple Counter Example
-//!
-//! Demonstrates the minimal gooey.run() API with:
-//! - Plain struct state
-//! - Button click handling
-//! - Components
-
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
 
-// Application State - just a plain struct!
-var state = struct {
-    count: i32 = 0,
-    message: []const u8 = "Click the buttons!",
-}{};
+var state = struct { count: i32 = 0 }{};
 
-// Components
 const Counter = struct {
-    // Buffer for formatting the count (static so it persists)
-    var count_buf: [32]u8 = undefined;
+    var buf: [32]u8 = undefined;
 
     pub fn render(_: @This(), b: *ui.Builder) void {
-        const count_str = std.fmt.bufPrint(&count_buf, "{d}", .{state.count}) catch "?";
-
-        b.vstack(.{ .gap = 8, .alignment = .center }, .{
-            ui.text("Count:", .{ .size = 16, .color = ui.Color.rgb(0.3, 0.3, 0.3) }),
-            ui.text(count_str, .{ .size = 48 }),
+        const str = std.fmt.bufPrint(&buf, "{d}", .{state.count}) catch "?";
+        b.vstack(.{ .gap = 12, .alignment = .center }, .{
+            ui.text(str, .{ .size = 48 }),
+            ui.button("+ Increment", increment),
         });
     }
 };
 
-const ButtonRow = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.hstack(.{ .gap = 12 }, .{
-            ui.button("- Decrease", decrement),
-            ui.button("+ Increase", increment),
-        });
-    }
-};
+fn increment() void {
+    state.count += 1;
+}
 
-const Card = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .padding = .{ .all = 32 },
-            .gap = 20,
-            .background = ui.Color.white,
-            .corner_radius = 12,
-            .alignment = .{ .main = .center, .cross = .center },
-            .direction = .column,
-        }, .{
-            ui.text(state.message, .{ .size = 14, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
-            Counter{},
-            ButtonRow{},
-            ui.button("Reset", reset),
-        });
-    }
-};
-
-// Entry Point
 pub fn main() !void {
     try gooey.run(.{
-        .title = "Simple Counter",
-        .width = 400,
-        .height = 300,
+        .title = "Counter",
+        .width = 300,
+        .height = 200,
         .render = render,
-        .on_event = onEvent,
     });
 }
 
-// Render Function
 fn render(g: *gooey.UI) void {
     const size = g.windowSize();
-
-    g.boxWithId("root", .{
+    g.box(.{
         .width = size.width,
         .height = size.height,
         .alignment = .{ .main = .center, .cross = .center },
-    }, .{
-        Card{},
-    });
-}
-
-// Event Handlers
-fn increment() void {
-    state.count += 1;
-    state.message = "Incremented!";
-}
-
-fn decrement() void {
-    state.count -= 1;
-    state.message = "Decremented!";
-}
-
-fn reset() void {
-    state.count = 0;
-    state.message = "Reset to zero!";
-}
-
-fn onEvent(_: *gooey.UI, event: gooey.InputEvent) bool {
-    if (event == .key_down) {
-        const key = event.key_down.key;
-        if (key == .escape) {
-            return true;
-        }
-    }
-    return false;
+    }, .{Counter{}});
 }
 ```
 
-Check out the [showcase example](./src/examples/showcase.zig).
+## More Examples
+
+| Example  | Command                  | Description                       |
+| -------- | ------------------------ | --------------------------------- |
+| Showcase | `zig build run`          | Full feature demo with navigation |
+| Todo App | `zig build run-todo`     | CRUD with entities and filters    |
+| Login    | `zig build run-login`    | Form inputs with validation       |
+| Layout   | `zig build run-layout`   | Flexbox, shrink, text wrapping    |
+| Pomodoro | `zig build run-pomodoro` | Timer with context/state          |
+| Shader   | `zig build run-shader`   | Custom Metal shaders              |
 
 ## Inspiration
 
 - [GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui) - Zed's GPU UI framework
-- [Clay](https://github.com/nicbarker/clay) - Immediate mode layout library
+- [Clay](https://github.com/nicbarker/clay) - Immediate mode layout
 - [Ghostty](https://github.com/ghostty-org/ghostty) - Zig + Metal terminal
