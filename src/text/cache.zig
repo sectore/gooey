@@ -39,6 +39,18 @@ pub const GlyphKey = struct {
             .subpixel_y = subpixel_y,
         };
     }
+
+    /// Create key for a fallback font (uses raw CTFontRef pointer)
+    pub inline fn initWithFontPtr(font_ptr: usize, glyph_id: u16, size: f32, scale: f32, subpixel_x: u8, subpixel_y: u8) GlyphKey {
+        return .{
+            .font_ptr = font_ptr,
+            .glyph_id = glyph_id,
+            .size_fixed = @intFromFloat(size * 64.0),
+            .scale_fixed = @intFromFloat(@max(1.0, @min(4.0, scale))),
+            .subpixel_x = subpixel_x,
+            .subpixel_y = subpixel_y,
+        };
+    }
 };
 
 /// Cached glyph information
@@ -169,6 +181,84 @@ pub const GlyphCache = struct {
         };
 
         // Copy rasterized data to atlas
+        self.grayscale_atlas.set(region, self.render_buffer[0 .. rasterized.width * rasterized.height]);
+
+        return CachedGlyph{
+            .region = region,
+            .offset_x = rasterized.offset_x,
+            .offset_y = rasterized.offset_y,
+            .advance_x = rasterized.advance_x,
+            .is_color = rasterized.is_color,
+        };
+    }
+
+    /// Get a cached glyph for a fallback font (specified by raw CTFontRef)
+    pub fn getOrRenderFallback(
+        self: *Self,
+        font_ptr: *anyopaque,
+        glyph_id: u16,
+        font_size: f32,
+        subpixel_x: u8,
+        subpixel_y: u8,
+    ) !CachedGlyph {
+        const key = GlyphKey.initWithFontPtr(
+            @intFromPtr(font_ptr),
+            glyph_id,
+            font_size,
+            self.scale_factor,
+            subpixel_x,
+            subpixel_y,
+        );
+
+        if (self.map.get(key)) |cached| {
+            return cached;
+        }
+
+        const glyph = try self.renderFallbackGlyph(font_ptr, glyph_id, subpixel_x, subpixel_y);
+        try self.map.put(key, glyph);
+        return glyph;
+    }
+
+    fn renderFallbackGlyph(
+        self: *Self,
+        font_ptr: *anyopaque,
+        glyph_id: u16,
+        subpixel_x: u8,
+        subpixel_y: u8,
+    ) !CachedGlyph {
+        @memset(self.render_buffer, 0);
+
+        const subpixel_shift_x = @as(f32, @floatFromInt(subpixel_x)) / @as(f32, @floatFromInt(SUBPIXEL_VARIANTS_X));
+        const subpixel_shift_y = @as(f32, @floatFromInt(subpixel_y)) / @as(f32, @floatFromInt(SUBPIXEL_VARIANTS_Y));
+
+        // Import and use the static rendering function
+        const CoreTextFace = @import("backends/coretext/face.zig").CoreTextFace;
+        const rasterized = try CoreTextFace.renderGlyphFromFont(
+            font_ptr,
+            glyph_id,
+            self.scale_factor,
+            subpixel_shift_x,
+            subpixel_shift_y,
+            self.render_buffer,
+            self.render_buffer_size,
+        );
+
+        if (rasterized.width == 0 or rasterized.height == 0) {
+            return CachedGlyph{
+                .region = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+                .offset_x = rasterized.offset_x,
+                .offset_y = rasterized.offset_y,
+                .advance_x = rasterized.advance_x,
+                .is_color = rasterized.is_color,
+            };
+        }
+
+        const region = try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse blk: {
+            try self.grayscale_atlas.grow();
+            break :blk try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse
+                return error.AtlasFull;
+        };
+
         self.grayscale_atlas.set(region, self.render_buffer[0 .. rasterized.width * rasterized.height]);
 
         return CachedGlyph{

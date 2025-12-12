@@ -85,6 +85,11 @@ pub const ShapedGlyph = struct {
     y_advance: f32,
     /// Index into original text (byte offset)
     cluster: u32,
+    /// Font reference for this glyph (for fallback fonts)
+    /// If null, use the primary font. Retained by shaper, released in ShapedRun.deinit
+    font_ref: ?*anyopaque = null,
+    /// Whether this glyph uses a color font (emoji)
+    is_color: bool = false,
 };
 
 /// Result of shaping a text run
@@ -93,8 +98,32 @@ pub const ShapedRun = struct {
     /// Total advance width
     width: f32,
 
+    // CoreFoundation release function (for fallback fonts)
+    extern "c" fn CFRelease(cf: *anyopaque) void;
+
     pub fn deinit(self: *ShapedRun, allocator: std.mem.Allocator) void {
         if (self.glyphs.len > 0) {
+            // Release any retained fallback fonts (avoid double-release)
+            var released: [16]usize = [_]usize{0} ** 16;
+            var released_count: usize = 0;
+
+            for (self.glyphs) |glyph| {
+                if (glyph.font_ref) |font_ptr| {
+                    const ptr_val = @intFromPtr(font_ptr);
+                    var already_released = false;
+                    for (released[0..released_count]) |r| {
+                        if (r == ptr_val) {
+                            already_released = true;
+                            break;
+                        }
+                    }
+                    if (!already_released and released_count < released.len) {
+                        CFRelease(font_ptr);
+                        released[released_count] = ptr_val;
+                        released_count += 1;
+                    }
+                }
+            }
             allocator.free(self.glyphs);
         }
         self.* = undefined;

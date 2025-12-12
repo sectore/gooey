@@ -285,6 +285,112 @@ pub const CoreTextFace = struct {
             .cell_width = cell_width,
         };
     }
+
+    /// Render a glyph from any CTFontRef (for fallback fonts)
+    /// This is a static method that can render glyphs from fonts not owned by this face
+    pub fn renderGlyphFromFont(
+        ct_font: ct.CTFontRef,
+        glyph_id: u16,
+        scale: f32,
+        subpixel_x: f32,
+        subpixel_y: f32,
+        buffer: []u8,
+        buffer_size: u32,
+    ) !RasterizedGlyph {
+        // Get glyph metrics from the provided font
+        var glyph = glyph_id;
+        var advance: ct.CGSize = undefined;
+        var bounds: ct.CGRect = undefined;
+
+        _ = ct.CTFontGetAdvancesForGlyphs(ct_font, .horizontal, @ptrCast(&glyph), @ptrCast(&advance), 1);
+        _ = ct.CTFontGetBoundingRectsForGlyphs(ct_font, .horizontal, @ptrCast(&glyph), @ptrCast(&bounds), 1);
+
+        const glyph_metrics = GlyphMetrics{
+            .glyph_id = glyph_id,
+            .advance_x = @floatCast(advance.width),
+            .advance_y = @floatCast(advance.height),
+            .bearing_x = @floatCast(bounds.origin.x),
+            .bearing_y = @floatCast(bounds.origin.y + bounds.size.height),
+            .width = @floatCast(bounds.size.width),
+            .height = @floatCast(bounds.size.height),
+        };
+
+        const padding: u32 = 2;
+        const padding_f: f32 = @floatFromInt(padding);
+
+        // Handle empty glyphs
+        if (glyph_metrics.width < 1 or glyph_metrics.height < 1) {
+            return RasterizedGlyph{
+                .width = 0,
+                .height = 0,
+                .offset_x = 0,
+                .offset_y = 0,
+                .advance_x = glyph_metrics.advance_x,
+                .is_color = false,
+            };
+        }
+
+        // Raster bounds
+        const raster_left = @floor(glyph_metrics.bearing_x * scale);
+        const raster_top = @floor(glyph_metrics.bearing_y * scale);
+        const raster_right = @ceil((glyph_metrics.bearing_x + glyph_metrics.width) * scale);
+        const raster_bottom = @ceil((glyph_metrics.bearing_y - glyph_metrics.height) * scale);
+
+        var width: u32 = @intFromFloat(raster_right - raster_left + padding_f * 2);
+        var height: u32 = @intFromFloat(raster_top - raster_bottom + padding_f * 2);
+
+        if (subpixel_x > 0) width += 1;
+        if (subpixel_y > 0) height += 1;
+
+        const clamped_w = @min(width, buffer_size);
+        const clamped_h = @min(height, buffer_size);
+
+        // Create context and render
+        const color_space = ct.CGColorSpaceCreateDeviceGray() orelse return error.GraphicsError;
+        defer ct.CGColorSpaceRelease(color_space);
+
+        const context = ct.CGBitmapContextCreate(
+            buffer.ptr,
+            clamped_w,
+            clamped_h,
+            8,
+            clamped_w,
+            color_space,
+            ct.kCGImageAlphaNone,
+        ) orelse return error.GraphicsError;
+        defer ct.CGContextRelease(context);
+
+        ct.CGContextSetAllowsAntialiasing(context, true);
+        ct.CGContextSetShouldAntialias(context, true);
+        ct.CGContextSetAllowsFontSmoothing(context, true);
+        ct.CGContextSetShouldSmoothFonts(context, true);
+        ct.CGContextSetGrayFillColor(context, 1.0, 1.0);
+        ct.CGContextSetAllowsFontSubpixelPositioning(context, true);
+        ct.CGContextSetShouldSubpixelPositionFonts(context, true);
+        ct.CGContextSetAllowsFontSubpixelQuantization(context, false);
+        ct.CGContextSetShouldSubpixelQuantizeFonts(context, false);
+
+        ct.CGContextTranslateCTM(context, -raster_left + padding_f + subpixel_x, -raster_bottom + padding_f + subpixel_y);
+        ct.CGContextSetTextMatrix(context, ct.CGAffineTransform.identity);
+
+        // Scale the font for rendering
+        const font_size: f32 = @floatCast(ct.CTFontGetSize(ct_font));
+        const scaled_font = ct.CTFontCreateCopyWithAttributes(ct_font, font_size * scale, null, null) orelse return error.FontError;
+        defer ct.release(scaled_font);
+
+        var glyph_to_draw = glyph_id;
+        const position = ct.CGPoint{ .x = 0, .y = 0 };
+        ct.CTFontDrawGlyphs(scaled_font, @ptrCast(&glyph_to_draw), @ptrCast(&position), 1, context);
+
+        return RasterizedGlyph{
+            .width = clamped_w,
+            .height = clamped_h,
+            .offset_x = @intFromFloat(raster_left - padding_f),
+            .offset_y = @intFromFloat(raster_top + padding_f),
+            .advance_x = glyph_metrics.advance_x,
+            .is_color = false,
+        };
+    }
 };
 
 test "load system font" {

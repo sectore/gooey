@@ -39,7 +39,11 @@ pub fn renderText(
         const frac_x = device_x - @floor(device_x);
         const subpixel_x: u8 = @intFromFloat(@floor(frac_x * SUBPIXEL_VARIANTS_F));
 
-        const cached = try text_system.getGlyphSubpixel(glyph.glyph_id, subpixel_x, 0);
+        // Get cached glyph - use fallback font if specified
+        const cached = if (glyph.font_ref) |fallback_font|
+            try text_system.getGlyphFallback(fallback_font, glyph.glyph_id, subpixel_x, 0)
+        else
+            try text_system.getGlyphSubpixel(glyph.glyph_id, subpixel_x, 0);
 
         if (cached.region.width > 0 and cached.region.height > 0) {
             const atlas = text_system.getAtlas();

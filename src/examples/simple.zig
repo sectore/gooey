@@ -19,7 +19,7 @@ const ui = gooey.ui;
 
 var state = struct {
     count: i32 = 0,
-    message: []const u8 = "Click the buttons!",
+    message: []const u8 = "Click the buttons! 🎉",
 }{};
 
 // =============================================================================
@@ -101,17 +101,17 @@ fn render(g: *gooey.UI) void {
 
 fn increment() void {
     state.count += 1;
-    state.message = "Incremented!";
+    state.message = "Incremented! 🚀";
 }
 
 fn decrement() void {
     state.count -= 1;
-    state.message = "Decremented!";
+    state.message = "Decremented! 📉";
 }
 
 fn reset() void {
     state.count = 0;
-    state.message = "Reset to zero!";
+    state.message = "Reset! 🔄";
 }
 
 fn onEvent(_: *gooey.UI, event: gooey.InputEvent) bool {

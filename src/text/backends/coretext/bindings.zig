@@ -99,6 +99,7 @@ pub const CTFontSymbolicTraits = u32;
 pub const kCTFontTraitItalic: CTFontSymbolicTraits = 1 << 0;
 pub const kCTFontTraitBold: CTFontSymbolicTraits = 1 << 1;
 pub const kCTFontTraitMonoSpace: CTFontSymbolicTraits = 1 << 10;
+pub const kCTFontTraitColorGlyphs: CTFontSymbolicTraits = 1 << 13;
 
 // System UI font types
 pub const CTFontUIFontType = u32;
@@ -151,6 +152,11 @@ pub extern "c" fn CFDictionarySetValue(
     key: *const anyopaque,
     value: *const anyopaque,
 ) void;
+
+pub extern "c" fn CFDictionaryGetValue(
+    theDict: CFDictionaryRef,
+    key: *const anyopaque,
+) ?*const anyopaque;
 
 // Array functions
 pub extern "c" fn CFArrayGetCount(theArray: CFArrayRef) CFIndex;
@@ -278,6 +284,7 @@ pub extern "c" fn CTRunGetGlyphs(run: CTRunRef, range: CFRange, buffer: [*]CGGly
 pub extern "c" fn CTRunGetPositions(run: CTRunRef, range: CFRange, buffer: [*]CGPoint) void;
 pub extern "c" fn CTRunGetAdvances(run: CTRunRef, range: CFRange, buffer: [*]CGSize) void;
 pub extern "c" fn CTRunGetStringIndices(run: CTRunRef, range: CFRange, buffer: [*]CFIndex) void;
+pub extern "c" fn CTRunGetAttributes(run: CTRunRef) CFDictionaryRef;
 
 // Attributed string keys
 pub extern "c" var kCTFontAttributeName: CFStringRef;

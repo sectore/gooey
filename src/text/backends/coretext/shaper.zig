@@ -148,6 +148,22 @@ pub const CoreTextShaper = struct {
 
             if (glyph_count == 0) continue;
 
+            // Get the font actually used for this run (may be a fallback font)
+            const run_attrs = ct.CTRunGetAttributes(run);
+            const run_font: ?ct.CTFontRef = if (ct.CFDictionaryGetValue(run_attrs, @ptrCast(ct.kCTFontAttributeName))) |f|
+                @ptrCast(@constCast(f))
+            else
+                null;
+
+            // Check if this run uses a fallback font
+            const is_fallback = if (run_font) |rf| @intFromPtr(rf) != @intFromPtr(face.ct_font) else false;
+
+            // Check if this is a color font (emoji)
+            const is_color = if (run_font) |rf| blk: {
+                const traits = ct.CTFontGetSymbolicTraits(rf);
+                break :blk (traits & ct.kCTFontTraitColorGlyphs) != 0;
+            } else false;
+
             const glyphs = try allocator.alloc(ct.CGGlyph, @intCast(glyph_count));
             defer allocator.free(glyphs);
 
@@ -172,12 +188,12 @@ pub const CoreTextShaper = struct {
                 else
                     0;
 
-                // Don't use positions[i].x as offset - advances already include kerning!
-                // Or calculate relative offset from previous position
+                // Calculate relative offset within the run
+                // positions[i] is absolute from line start, so we need relative offset
                 const x_offset: f32 = if (i == 0)
-                    @floatCast(positions[i].x) // First glyph: use as-is
+                    0 // First glyph of run: no offset, advances handle positioning
                 else
-                    0; // Subsequent glyphs: just use advance
+                    @floatCast(positions[i].x - positions[i - 1].x - advances[i - 1].width);
 
                 try glyph_buffer.append(allocator, .{
                     .glyph_id = glyphs[i],
@@ -186,6 +202,13 @@ pub const CoreTextShaper = struct {
                     .x_advance = @floatCast(advances[i].width),
                     .y_advance = @floatCast(advances[i].height),
                     .cluster = cluster,
+                    // Store font reference if this is a fallback font
+                    // We must retain it since CTLine will be released
+                    .font_ref = if (is_fallback and run_font != null) blk: {
+                        _ = ct.CFRetain(@ptrCast(run_font.?));
+                        break :blk run_font;
+                    } else null,
+                    .is_color = is_color,
                 });
 
                 total_width += @floatCast(advances[i].width);

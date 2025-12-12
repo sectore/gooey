@@ -193,4 +193,16 @@ pub const TextSystem = struct {
     pub inline fn atlasGeneration(self: *const Self) u32 {
         return self.cache.getGeneration();
     }
+
+    /// Get cached glyph from a fallback font
+    pub inline fn getGlyphFallback(
+        self: *Self,
+        font_ptr: *anyopaque,
+        glyph_id: u16,
+        subpixel_x: u8,
+        subpixel_y: u8,
+    ) !CachedGlyph {
+        const metrics = self.getMetrics() orelse return error.NoFontLoaded;
+        return self.cache.getOrRenderFallback(font_ptr, glyph_id, metrics.point_size, subpixel_x, subpixel_y);
+    }
 };
