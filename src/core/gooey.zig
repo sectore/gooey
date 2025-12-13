@@ -166,7 +166,6 @@ pub const Gooey = struct {
             @floatCast(window.size.width),
             @floatCast(window.size.height),
         );
-
         scene.enableCulling();
 
         // Create text system

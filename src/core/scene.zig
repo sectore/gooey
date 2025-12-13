@@ -592,11 +592,9 @@ pub const Scene = struct {
     }
 
     /// Set viewport for culling. Call this before inserting primitives.
-    /// Primitives fully outside the viewport will be skipped.
     pub fn setViewport(self: *Self, width: f32, height: f32) void {
         self.viewport_width = width;
         self.viewport_height = height;
-        self.culling_enabled = true;
     }
 
     /// Disable viewport culling
@@ -605,6 +603,7 @@ pub const Scene = struct {
     }
 
     /// Enabled viewport culling
+    /// Primitives fully outside the viewport will be skipped.
     pub fn enableCulling(self: *Self) void {
         self.culling_enabled = true;
     }
