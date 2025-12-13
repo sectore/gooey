@@ -1,7 +1,8 @@
 //! Gooey Showcase
 //!
 //! A feature-rich demo showing off gooey's capabilities:
-//! - Pure state pattern with cx.update()
+//! - Pure state pattern with cx.update() / cx.updateWith()
+//! - Command pattern with cx.command() for framework operations
 //! - Tab navigation between pages
 //! - Form inputs with validation
 //! - Component composition
@@ -11,9 +12,8 @@
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
+const Gooey = gooey.Gooey;
 const ShadowConfig = ui.ShadowConfig;
-
-// const custom_shader = gooey.platform.mac.metal.custom_shader;
 
 // =============================================================================
 // Theme
@@ -47,7 +47,7 @@ const Theme = struct {
 };
 
 // =============================================================================
-// Application State - PURE, fully testable!
+// Application State
 // =============================================================================
 
 const AppState = struct {
@@ -76,7 +76,9 @@ const AppState = struct {
     click_count: u32 = 0,
 
     // =========================================================================
-    // Pure methods - no cx, no notify!
+    // PURE methods - fn(*State) or fn(*State, Arg)
+    // Use with cx.update() / cx.updateWith()
+    // Fully testable without framework!
     // =========================================================================
 
     pub fn toggleTheme(self: *AppState) void {
@@ -102,21 +104,11 @@ const AppState = struct {
         };
     }
 
-    pub fn goToHome(self: *AppState) void {
-        self.page = .home;
-    }
-
-    pub fn goToForms(self: *AppState) void {
-        self.page = .forms;
-        self.form_initialized = false;
-    }
-
-    pub fn goToScrollDemo(self: *AppState) void {
-        self.page = .scroll_demo;
-    }
-
-    pub fn goToAbout(self: *AppState) void {
-        self.page = .about;
+    pub fn goToPage(self: *AppState, page: Page) void {
+        self.page = page;
+        if (page == .forms) {
+            self.form_initialized = false;
+        }
     }
 
     pub fn increment(self: *AppState) void {
@@ -146,6 +138,38 @@ const AppState = struct {
             self.form_status = "Form submitted successfully!";
         }
     }
+
+    // =========================================================================
+    // COMMAND methods - fn(*State, *Gooey) or fn(*State, *Gooey, Arg)
+    // Use with cx.command() / cx.commandWith()
+    // For operations that need framework access (focus, window, etc.)
+    // =========================================================================
+
+    /// Navigate to forms page and focus the first field
+    pub fn goToFormsWithFocus(self: *AppState, g: *Gooey) void {
+        self.page = .forms;
+        self.form_initialized = true;
+        self.focused_field = .name;
+        g.focusTextInput("form_name");
+    }
+
+    /// Focus a specific form field
+    pub fn focusField(self: *AppState, g: *Gooey, field: FormField) void {
+        self.focused_field = field;
+        switch (field) {
+            .name => g.focusTextInput("form_name"),
+            .email => g.focusTextInput("form_email"),
+            .message => g.focusTextInput("form_message"),
+        }
+    }
+
+    /// Submit form and blur all inputs on success
+    pub fn submitFormAndBlur(self: *AppState, g: *Gooey) void {
+        self.submitForm();
+        if (std.mem.indexOf(u8, self.form_status, "success") != null) {
+            g.blurAll();
+        }
+    }
 };
 
 // =============================================================================
@@ -162,7 +186,6 @@ pub fn main() !void {
         .state = &state,
         .render = render,
         .on_event = onEvent,
-        // .custom_shaders = &.{custom_shader.crt_shader},
     });
 }
 
@@ -223,6 +246,7 @@ const NavTab = struct {
             .corner_radius = 6,
             .background = if (is_active) t.primary else ui.Color.transparent,
         }, .{
+            // Just show the text label with keyboard hint
             ui.textFmt("[{s}] {s}", .{ self.key, self.label }, .{
                 .size = 14,
                 .color = if (is_active) ui.Color.white else t.text,
@@ -278,7 +302,7 @@ const ButtonRow = struct {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
 
         b.box(.{ .direction = .row, .gap = 12 }, .{
-            // Pure handlers with cx.update()!
+            // Pure handlers with cx.update() - state methods are testable!
             ui.buttonHandler("Click Me!", cx.update(AppState.increment)),
             ui.buttonHandler("Reset", cx.update(AppState.resetClicks)),
         });
@@ -564,8 +588,8 @@ const FormCard = struct {
                 .bind = &s.message,
             }),
             CheckboxSection{},
-            // Pure handler!
-            ui.buttonHandler("Submit", cx.update(AppState.submitForm)),
+            // Command handler - blurs inputs on successful submit
+            ui.buttonHandler("Submit", cx.command(AppState.submitFormAndBlur)),
         });
     }
 };
@@ -688,20 +712,26 @@ fn syncFormFocus(cx: *gooey.Context(AppState)) void {
     }
 }
 
-// =============================================================================
-// Event Handling
-// =============================================================================
-
 fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
     const s = cx.state();
 
     if (event == .key_down) {
         const key = event.key_down;
 
-        // Tab navigation (forms page)
+        // Tab navigation (forms page) - use command pattern
         if (key.key == .tab and s.page == .forms) {
-            s.focusNextField();
-            syncFormFocus(cx);
+            const next_field: AppState.FormField = switch (s.focused_field) {
+                .name => .email,
+                .email => .message,
+                .message => .name,
+            };
+            // Direct state + framework access in event handler
+            s.focused_field = next_field;
+            switch (next_field) {
+                .name => cx.focusTextInput("form_name"),
+                .email => cx.focusTextInput("form_email"),
+                .message => cx.focusTextInput("form_message"),
+            }
             cx.notify();
             return true;
         }
@@ -712,28 +742,32 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
         // Number keys for page navigation
         if (no_mods) {
             if (key.key == .@"1") {
-                s.goToHome();
+                s.goToPage(.home);
                 cx.notify();
                 return true;
             }
             if (key.key == .@"2") {
-                s.goToForms();
+                // Use the same logic as goToFormsWithFocus
+                s.page = .forms;
+                s.form_initialized = true;
+                s.focused_field = .name;
+                cx.focusTextInput("form_name");
                 cx.notify();
                 return true;
             }
             if (key.key == .@"3") {
-                s.goToScrollDemo();
+                s.goToPage(.scroll_demo);
                 cx.notify();
                 return true;
             }
             if (key.key == .@"4") {
-                s.goToAbout();
+                s.goToPage(.about);
                 cx.notify();
                 return true;
             }
         }
 
-        // Arrow keys
+        // Arrow keys - pure state
         if (key.key == .left) {
             s.prevPage();
             cx.notify();
@@ -745,16 +779,19 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
             return true;
         }
 
-        // Theme toggle
+        // Theme toggle - pure state
         if (key.key == .t and s.page != .forms) {
             s.toggleTheme();
             cx.notify();
             return true;
         }
 
-        // Enter to submit form
+        // Enter to submit form - command pattern
         if (key.key == .@"return" and s.page == .forms) {
             s.submitForm();
+            if (std.mem.indexOf(u8, s.form_status, "success") != null) {
+                cx.blurAll();
+            }
             cx.notify();
             return true;
         }
@@ -781,7 +818,7 @@ test "AppState navigation" {
     s.prevPage();
     try std.testing.expectEqual(AppState.Page.forms, s.page);
 
-    s.goToAbout();
+    s.goToPage(.about);
     try std.testing.expectEqual(AppState.Page.about, s.page);
 }
 
