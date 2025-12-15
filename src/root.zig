@@ -69,6 +69,12 @@ pub const platform = @import("platform/mod.zig");
 /// Reusable widgets
 pub const elements = @import("elements.zig");
 
+// Components (preferred)
+pub const components = @import("components/mod.zig");
+pub const Button = components.Button;
+pub const Checkbox = components.Checkbox;
+pub const TextInput = components.TextInput;
+
 // =============================================================================
 // App Entry Point (most common usage)
 // =============================================================================
@@ -167,9 +173,6 @@ pub const TextMeasurement = text.TextMeasurement;
 
 // UI builder
 pub const Builder = ui.Builder;
-
-// Widgets
-pub const TextInput = elements.TextInput;
 
 // Platform (for direct access)
 pub const MacPlatform = platform.Platform;

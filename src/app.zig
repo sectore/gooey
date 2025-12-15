@@ -41,7 +41,9 @@ const input_mod = @import("core/input.zig");
 const geometry_mod = @import("core/geometry.zig");
 const ui_mod = @import("ui/ui.zig");
 const dispatch_mod = @import("core/dispatch.zig");
-const scroll_mod = @import("elements/scroll_container.zig");
+const scroll_mod = @import("widgets/scroll_container.zig");
+const text_input_mod = @import("widgets/text_input.zig");
+const TextInput = text_input_mod.TextInput;
 
 const MacPlatform = platform_mod.MacPlatform;
 const DispatchNodeId = dispatch_mod.DispatchNodeId;
@@ -76,12 +78,12 @@ pub const UI = struct {
         self.builder.hstack(style, children);
     }
 
-    pub fn box(self: *Self, style: ui_mod.BoxStyle, children: anytype) void {
-        self.builder.box(style, children);
+    pub fn box(self: *Self, props: ui_mod.Box, children: anytype) void {
+        self.builder.box(props, children);
     }
 
-    pub fn boxWithId(self: *Self, id: []const u8, style: ui_mod.BoxStyle, children: anytype) void {
-        self.builder.boxWithId(id, style, children);
+    pub fn boxWithId(self: *Self, id: []const u8, props: ui_mod.Box, children: anytype) void {
+        self.builder.boxWithId(id, props, children);
     }
 
     pub fn center(self: *Self, style: ui_mod.CenterStyle, children: anytype) void {
@@ -104,7 +106,7 @@ pub const UI = struct {
     // Widget access
     // =========================================================================
 
-    pub fn textInput(self: *Self, id: []const u8) ?*@import("elements/text_input.zig").TextInput {
+    pub fn textInput(self: *Self, id: []const u8) ?*TextInput {
         return self.gooey.textInput(id);
     }
 
@@ -140,7 +142,7 @@ pub const UI = struct {
         self.builder.scroll(id, style, children);
     }
 
-    pub fn scrollContainer(self: *Self, id: []const u8) ?*@import("elements/scroll_container.zig").ScrollContainer {
+    pub fn scrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
         return self.gooey.widgets.scrollContainer(id);
     }
 
@@ -345,7 +347,6 @@ fn renderFrameWithContext(
     // Reset builder state
     ctx.builder.id_counter = 0;
     ctx.builder.pending_inputs.clearRetainingCapacity();
-    ctx.builder.pending_checkboxes.clearRetainingCapacity();
     ctx.builder.pending_scrolls.clearRetainingCapacity();
 
     // Call user's render function with typed context
@@ -377,30 +378,23 @@ fn renderFrameWithContext(
         const bounds = ctx.gooey.layout.getBoundingBox(pending.layout_id.id);
         if (bounds) |b| {
             if (ctx.gooey.textInput(pending.id)) |input_widget| {
+                // Calculate inner text area (inside padding and border)
+                const inset = pending.style.padding + pending.style.border_width;
                 input_widget.bounds = .{
-                    .x = b.x,
-                    .y = b.y,
-                    .width = b.width,
-                    .height = b.height,
+                    .x = b.x + inset,
+                    .y = b.y + inset,
+                    .width = pending.inner_width,
+                    .height = pending.inner_height,
                 };
                 input_widget.setPlaceholder(pending.style.placeholder);
-                try input_widget.render(ctx.gooey.scene, ctx.gooey.text_system, ctx.gooey.scale_factor);
-            }
-        }
-    }
 
-    // Render checkboxes
-    for (ctx.builder.pending_checkboxes.items) |pending| {
-        const bounds = ctx.gooey.layout.getBoundingBox(pending.layout_id.id);
-        if (bounds) |b| {
-            if (ctx.gooey.widgets.checkbox(pending.id)) |checkbox_widget| {
-                checkbox_widget.bounds = .{
-                    .x = b.x,
-                    .y = b.y,
-                    .width = b.width,
-                    .height = b.height,
-                };
-                try checkbox_widget.render(ctx.gooey.scene, ctx.gooey.text_system, ctx.gooey.scale_factor);
+                // Apply text styles from InputStyle
+                input_widget.style.text_color = render_bridge.colorToHsla(pending.style.text_color);
+                input_widget.style.placeholder_color = render_bridge.colorToHsla(pending.style.placeholder_color);
+                input_widget.style.selection_color = render_bridge.colorToHsla(pending.style.selection_color);
+                input_widget.style.cursor_color = render_bridge.colorToHsla(pending.style.cursor_color);
+
+                try input_widget.render(ctx.gooey.scene, ctx.gooey.text_system, ctx.gooey.scale_factor);
             }
         }
     }
@@ -441,6 +435,27 @@ fn handleInputWithContext(
                 }
             }
         }
+    }
+
+    // Handle mouse_moved for hover state
+    if (event == .mouse_moved or event == .mouse_dragged) {
+        const pos = switch (event) {
+            .mouse_moved => |m| m.position,
+            .mouse_dragged => |m| m.position,
+            else => unreachable,
+        };
+        const x: f32 = @floatCast(pos.x);
+        const y: f32 = @floatCast(pos.y);
+
+        if (ctx.gooey.updateHover(x, y)) {
+            ctx.notify();
+        }
+    }
+
+    // Handle mouse_exited to clear hover
+    if (event == .mouse_exited) {
+        ctx.gooey.clearHover();
+        ctx.notify();
     }
 
     // Handle mouse down through dispatch tree
@@ -643,6 +658,28 @@ pub fn run(config: RunConfig) !void {
                 }
             }
 
+            // Handle mouse_moved for hover state
+            if (event == .mouse_moved or event == .mouse_dragged) {
+                const pos = switch (event) {
+                    .mouse_moved => |m| m.position,
+                    .mouse_dragged => |m| m.position,
+                    else => unreachable,
+                };
+                const x: f32 = @floatCast(pos.x);
+                const y: f32 = @floatCast(pos.y);
+
+                // Update hover state - triggers re-render if changed
+                if (g_ui.gooey.updateHover(x, y)) {
+                    g_ui.requestRender();
+                }
+            }
+
+            // Handle mouse_exited to clear hover
+            if (event == .mouse_exited) {
+                g_ui.gooey.clearHover();
+                g_ui.requestRender();
+            }
+
             // Handle mouse down through dispatch tree
             if (event == .mouse_down) {
                 const pos = event.mouse_down.position;
@@ -784,8 +821,6 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
     // Reset builder state
     ui.builder.id_counter = 0;
     ui.builder.pending_inputs.clearRetainingCapacity();
-    // ui.builder.input_regions.clearRetainingCapacity();
-    ui.builder.pending_checkboxes.clearRetainingCapacity();
     ui.builder.pending_scrolls.clearRetainingCapacity();
 
     // Call user's render function
@@ -828,22 +863,6 @@ fn renderFrame(ui: *UI, render_fn: *const fn (*UI) void) !void {
                 // Set placeholder from style
                 input_widget.setPlaceholder(pending.style.placeholder);
                 try input_widget.render(ui.gooey.scene, ui.gooey.text_system, ui.gooey.scale_factor);
-            }
-        }
-    }
-
-    // Render checkboxes from pending list
-    for (ui.builder.pending_checkboxes.items) |pending| {
-        const bounds = ui.gooey.layout.getBoundingBox(pending.layout_id.id);
-        if (bounds) |b| {
-            if (ui.gooey.widgets.checkbox(pending.id)) |checkbox_widget| {
-                checkbox_widget.bounds = .{
-                    .x = b.x,
-                    .y = b.y,
-                    .width = b.width,
-                    .height = b.height,
-                };
-                try checkbox_widget.render(ui.gooey.scene, ui.gooey.text_system, ui.gooey.scale_factor);
             }
         }
     }

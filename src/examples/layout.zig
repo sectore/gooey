@@ -10,6 +10,8 @@ const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
 
+const Button = gooey.Button;
+
 // =============================================================================
 // State
 // =============================================================================
@@ -72,12 +74,8 @@ const Header = struct {
 
 const DropdownButton = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .padding = .{ .symmetric = .{ .x = 16, .y = 8 } },
-            .background = ui.Color.rgb(0.2, 0.5, 1.0),
-            .corner_radius = 6,
-        }, .{
-            ui.button("Menu ▼", toggleDropdown),
+        b.box(.{}, .{
+            Button{ .label = "Menu ▼", .on_click = toggleDropdown },
             DropdownOverlay{},
         });
     }

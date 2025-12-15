@@ -1,19 +1,23 @@
 //! Focus Timer - Pomodoro productivity app
 //!
 //! Demonstrates:
-//! - Custom animated shader (aurora/breathing effect)
+//! - Custom animated shader (plasma effect)
 //! - Text decorations (strikethrough for completed tasks)
-//! - Entity system for tasks
+//! - Component system (Button, Checkbox, TextInput)
+//! - Context pattern with cx.handler()
 //! - Timer state management
 //! - Beautiful, practical UI
 
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
+const Button = gooey.Button;
+const Checkbox = gooey.Checkbox;
+const TextInput = gooey.TextInput;
 
 const custom_shader = gooey.platform.mac.metal.custom_shader;
 
-//// Colorful flowing plasma effect
+/// Colorful flowing plasma effect
 pub const plasma_shader =
     \\void mainImage(thread float4& fragColor, float2 fragCoord,
     \\               constant ShaderUniforms& uniforms,
@@ -63,11 +67,6 @@ pub const plasma_shader =
 const Task = struct {
     text: []const u8,
     completed: bool = false,
-
-    pub fn toggle(self: *Task, cx: *gooey.EntityContext(Task)) void {
-        self.completed = !self.completed;
-        cx.notify();
-    }
 };
 
 const TimerPhase = enum {
@@ -79,9 +78,9 @@ const TimerPhase = enum {
     fn duration(self: TimerPhase) u32 {
         return switch (self) {
             .idle => 0,
-            .focus => 25 * 60, // 25 minutes
-            .short_break => 5 * 60, // 5 minutes
-            .long_break => 15 * 60, // 15 minutes
+            .focus => 25 * 60,
+            .short_break => 5 * 60,
+            .long_break => 15 * 60,
         };
     }
 
@@ -113,7 +112,7 @@ const MaxTasks = 20;
 const AppState = struct {
     // Timer state
     phase: TimerPhase = .idle,
-    time_remaining: u32 = 0, // seconds
+    time_remaining: u32 = 0,
     sessions_completed: u32 = 0,
     is_running: bool = false,
 
@@ -171,7 +170,6 @@ const AppState = struct {
                 self.time_remaining -= 1;
                 cx.notify();
             } else {
-                // Timer completed
                 if (self.phase == .focus) {
                     self.sessions_completed += 1;
                 }
@@ -196,6 +194,15 @@ const AppState = struct {
         }
         self.input_text = "";
         cx.notify();
+    }
+
+    pub fn toggleTask(self: *AppState, g: *gooey.Gooey, task_index: usize) void {
+        if (task_index >= self.task_count) return;
+
+        const entity = self.tasks[task_index];
+        if (g.writeEntity(Task, entity)) |task| {
+            task.completed = !task.completed;
+        }
     }
 
     pub fn clearCompleted(self: *AppState, cx: *gooey.Context(AppState)) void {
@@ -255,15 +262,12 @@ const TimerDisplay = struct {
             .gap = 8,
             .shadow = .{ .blur_radius = 20, .color = ui.Color.rgba(0, 0, 0, 0.1) },
         }, .{
-            // Phase label with underline when active
             ui.text(s.phase.label(), .{
                 .size = 18,
                 .color = s.phase.color(),
                 .underline = s.is_running,
             }),
-            // Big timer
             ui.text(time_str, .{ .size = 72, .color = ui.Color.rgb(0.1, 0.1, 0.1) }),
-            // Session counter
             ui.textFmt("Sessions: {}", .{s.sessions_completed}, .{
                 .size = 14,
                 .color = ui.Color.rgb(0.6, 0.6, 0.6),
@@ -274,14 +278,10 @@ const TimerDisplay = struct {
 
 const TimerControls = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
-        const cx = b.getContext(gooey.Context(AppState)) orelse return;
-        const s = cx.stateConst();
-
         b.hstack(.{ .gap = 12, .alignment = .center }, .{
             ControlButtons{},
             ResetButton{},
         });
-        _ = s;
     }
 };
 
@@ -292,7 +292,7 @@ const ResetButton = struct {
 
         if (s.phase != .idle) {
             b.box(.{}, .{
-                ui.buttonHandler("Reset", cx.handler(AppState.reset)),
+                Button{ .label = "Reset", .variant = .secondary, .on_click_handler = cx.handler(AppState.reset) },
             });
         }
     }
@@ -306,28 +306,27 @@ const ControlButtons = struct {
         switch (s.phase) {
             .idle => {
                 b.box(.{}, .{
-                    ui.buttonHandler("Start Focus", cx.handler(AppState.startFocus)),
+                    Button{ .label = "Start Focus", .on_click_handler = cx.handler(AppState.startFocus) },
                 });
             },
             .focus, .short_break, .long_break => {
                 if (s.time_remaining == 0) {
-                    // Timer completed
                     if (s.phase == .focus) {
                         b.box(.{}, .{
-                            ui.buttonHandler("Take Break", cx.handler(AppState.startBreak)),
+                            Button{ .label = "Take Break", .variant = .secondary, .on_click_handler = cx.handler(AppState.startBreak) },
                         });
                     } else {
                         b.box(.{}, .{
-                            ui.buttonHandler("Start Focus", cx.handler(AppState.startFocus)),
+                            Button{ .label = "Start Focus", .on_click_handler = cx.handler(AppState.startFocus) },
                         });
                     }
                 } else if (s.is_running) {
                     b.box(.{}, .{
-                        ui.buttonHandler("Pause", cx.handler(AppState.pause)),
+                        Button{ .label = "Pause", .variant = .danger, .on_click_handler = cx.handler(AppState.pause) },
                     });
                 } else {
                     b.box(.{}, .{
-                        ui.buttonHandler("Resume", cx.handler(AppState.resumeTimer)),
+                        Button{ .label = "Resume", .on_click_handler = cx.handler(AppState.resumeTimer) },
                     });
                 }
             },
@@ -341,22 +340,33 @@ const TaskInput = struct {
         const s = cx.state();
 
         b.hstack(.{ .gap = 12, .alignment = .center }, .{
-            ui.input("task-input", .{
+            TextInput{
+                .id = "task-input",
                 .placeholder = "Add a task...",
                 .width = 250,
                 .bind = &s.input_text,
-            }),
-            ui.buttonHandler("Add", cx.handler(AppState.addTask)),
+                // Soft, modern styling
+                .background = ui.Color.rgba(1.0, 1.0, 1.0, 0.9),
+                .border_color = ui.Color.rgba(0.0, 0.0, 0.0, 0.1),
+                .border_color_focused = ui.Color.rgb(0.4, 0.6, 1.0),
+                .text_color = ui.Color.rgb(0.2, 0.2, 0.2),
+                .placeholder_color = ui.Color.rgb(0.5, 0.5, 0.5),
+                .corner_radius = 8,
+                .padding = 12,
+            },
+            Button{ .label = "Add", .on_click_handler = cx.handler(AppState.addTask) },
         });
     }
 };
 
 const TaskItem = struct {
     task: gooey.Entity(Task),
+    index: usize,
 
     pub fn render(self: @This(), b: *ui.Builder) void {
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
         const g = b.getGooey() orelse return;
-        const data = g.writeEntity(Task, self.task) orelse return;
+        const data = g.readEntity(Task, self.task) orelse return;
 
         var id_buf: [32]u8 = undefined;
         const checkbox_id = std.fmt.bufPrint(&id_buf, "task-{}", .{self.task.id.id}) catch "task";
@@ -367,11 +377,16 @@ const TaskItem = struct {
             ui.Color.rgb(0.2, 0.2, 0.2);
 
         b.hstack(.{ .gap = 12, .alignment = .center }, .{
-            ui.checkbox(checkbox_id, .{ .bind = &data.completed }),
+            Checkbox{
+                .id = checkbox_id,
+                .checked = data.completed,
+                .on_click_handler = cx.commandWith(self.index, AppState.toggleTask),
+                .checked_background = ui.Color.rgb(0.3, 0.8, 0.5),
+            },
             ui.text(data.text, .{
                 .size = 16,
                 .color = text_color,
-                .strikethrough = data.completed, // ✨ Strikethrough completed tasks!
+                .strikethrough = data.completed,
             }),
         });
     }
@@ -388,7 +403,6 @@ const TaskList = struct {
             .min_height = 150,
             .min_width = 320,
         }, .{
-            // Header
             b.hstack(.{ .gap = 8, .alignment = .center }, .{
                 ui.text("Tasks", .{ .size = 16, .color = ui.Color.rgb(0.3, 0.3, 0.3) }),
                 ui.spacer(),
@@ -406,7 +420,7 @@ const ClearDoneButton = struct {
 
         if (s.completedCount(cx.gooey) > 0) {
             b.box(.{}, .{
-                ui.buttonHandler("Clear done", cx.handler(AppState.clearCompleted)),
+                Button{ .label = "Clear done", .size = .small, .variant = .secondary, .on_click_handler = cx.handler(AppState.clearCompleted) },
             });
         }
     }
@@ -417,9 +431,9 @@ const TaskItems = struct {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
         const s = cx.stateConst();
 
-        for (s.tasksSlice()) |entity| {
+        for (s.tasksSlice(), 0..) |entity, index| {
             b.box(.{ .padding = .{ .symmetric = .{ .x = 0, .y = 4 } } }, .{
-                TaskItem{ .task = entity },
+                TaskItem{ .task = entity, .index = index },
             });
         }
 
@@ -459,13 +473,12 @@ fn render(cx: *gooey.Context(AppState)) void {
     cx.box(.{
         .width = size.width,
         .height = size.height,
-        .background = ui.Color.rgb(0.12, 0.12, 0.15), // Dark background for aurora effect
+        .background = ui.Color.rgb(0.12, 0.12, 0.15),
         .padding = .{ .all = 32 },
         .gap = 24,
         .direction = .column,
         .alignment = .{ .cross = .center },
     }, .{
-        // Title with underline
         ui.text("Focus Timer", .{
             .size = 28,
             .color = ui.Color.rgb(0.9, 0.9, 0.95),

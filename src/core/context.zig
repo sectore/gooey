@@ -415,12 +415,12 @@ pub fn Context(comptime State: type) type {
             self.builder.hstack(style, children);
         }
 
-        pub fn box(self: *Self, style: ui_mod.BoxStyle, children: anytype) void {
-            self.builder.box(style, children);
+        pub fn box(self: *Self, props: ui_mod.Box, children: anytype) void {
+            self.builder.box(props, children);
         }
 
-        pub fn boxWithId(self: *Self, id: []const u8, style: ui_mod.BoxStyle, children: anytype) void {
-            self.builder.boxWithId(id, style, children);
+        pub fn boxWithId(self: *Self, id: []const u8, props: ui_mod.Box, children: anytype) void {
+            self.builder.boxWithId(id, props, children);
         }
 
         pub fn center(self: *Self, style: ui_mod.CenterStyle, children: anytype) void {
@@ -447,7 +447,7 @@ pub fn Context(comptime State: type) type {
         // Focus Operations (convenience pass-through)
         // =====================================================================
 
-        pub fn textInput(self: *Self, id: []const u8) ?*@import("../elements/text_input.zig").TextInput {
+        pub fn textInput(self: *Self, id: []const u8) ?*@import("../widgets/text_input.zig").TextInput {
             return self.gooey.textInput(id);
         }
 
@@ -471,7 +471,7 @@ pub fn Context(comptime State: type) type {
             return self.gooey.isElementFocused(id);
         }
 
-        pub fn scrollContainer(self: *Self, id: []const u8) ?*@import("../elements/scroll_container.zig").ScrollContainer {
+        pub fn scrollContainer(self: *Self, id: []const u8) ?*@import("../widgets/scroll_container.zig").ScrollContainer {
             return self.gooey.widgets.scrollContainer(id);
         }
     };

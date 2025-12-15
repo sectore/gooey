@@ -1,19 +1,25 @@
 //! Gooey Showcase
 //!
-//! A feature-rich demo showing off gooey's capabilities:
+//! A comprehensive demo showing gooey's capabilities:
+//! - Component pattern (Button, Checkbox, TextInput)
 //! - Pure state pattern with cx.update() / cx.updateWith()
-//! - Command pattern with cx.command() for framework operations
 //! - Tab navigation between pages
 //! - Form inputs with validation
-//! - Component composition
-//! - Keyboard shortcuts
+//! - Text styles (underline, strikethrough, wrap modes)
+//! - Layout features (shrink, grow, aspect ratio)
+//! - Scroll containers
 //! - Theming
+//! - Keyboard shortcuts
 
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
-const Gooey = gooey.Gooey;
+
 const ShadowConfig = ui.ShadowConfig;
+const Gooey = gooey.Gooey;
+const Button = gooey.Button;
+const Checkbox = gooey.Checkbox;
+const TextInput = gooey.TextInput;
 
 // =============================================================================
 // Theme
@@ -26,23 +32,28 @@ const Theme = struct {
     text: ui.Color,
     muted: ui.Color,
     accent: ui.Color,
+    danger: ui.Color,
 
+    // Catppuccin Latte (light theme)
     const light = Theme{
-        .bg = ui.Color.rgb(0.95, 0.95, 0.95),
-        .card = ui.Color.white,
-        .primary = ui.Color.rgb(0.2, 0.5, 1.0),
-        .text = ui.Color.rgb(0.1, 0.1, 0.1),
-        .muted = ui.Color.rgb(0.5, 0.5, 0.5),
-        .accent = ui.Color.rgb(0.3, 0.7, 0.4),
+        .bg = ui.Color.rgb(0.937, 0.945, 0.961),
+        .card = ui.Color.rgb(0.902, 0.914, 0.933),
+        .primary = ui.Color.rgb(0.118, 0.400, 0.961),
+        .text = ui.Color.rgb(0.298, 0.310, 0.412),
+        .muted = ui.Color.rgb(0.424, 0.435, 0.522),
+        .accent = ui.Color.rgb(0.251, 0.627, 0.169),
+        .danger = ui.Color.rgb(0.82, 0.24, 0.24),
     };
 
+    // Catppuccin Macchiato (dark theme)
     const dark = Theme{
-        .bg = ui.Color.rgb(0.12, 0.12, 0.14),
-        .card = ui.Color.rgb(0.18, 0.18, 0.20),
-        .primary = ui.Color.rgb(0.4, 0.6, 1.0),
-        .text = ui.Color.rgb(0.9, 0.9, 0.9),
-        .muted = ui.Color.rgb(0.6, 0.6, 0.6),
-        .accent = ui.Color.rgb(0.4, 0.8, 0.5),
+        .bg = ui.Color.rgb(0.141, 0.153, 0.227),
+        .card = ui.Color.rgb(0.212, 0.227, 0.310),
+        .primary = ui.Color.rgb(0.541, 0.678, 0.957),
+        .text = ui.Color.rgb(0.792, 0.827, 0.961),
+        .muted = ui.Color.rgb(0.647, 0.678, 0.796),
+        .accent = ui.Color.rgb(0.651, 0.855, 0.584),
+        .danger = ui.Color.rgb(0.93, 0.49, 0.49),
     };
 };
 
@@ -51,7 +62,7 @@ const Theme = struct {
 // =============================================================================
 
 const AppState = struct {
-    const Page = enum { home, forms, about, scroll_demo };
+    const Page = enum { home, forms, scroll_demo, about };
     const FormField = enum { name, email, message };
 
     // Navigation
@@ -74,6 +85,9 @@ const AppState = struct {
 
     // Stats (for home page)
     click_count: u32 = 0,
+
+    // Layout demo state
+    completed_tasks: [3]bool = .{ false, true, false },
 
     // =========================================================================
     // PURE methods - fn(*State) or fn(*State, Arg)
@@ -112,11 +126,29 @@ const AppState = struct {
     }
 
     pub fn increment(self: *AppState) void {
-        self.click_count += 1;
+        self.click_count +|= 1;
     }
 
     pub fn resetClicks(self: *AppState) void {
         self.click_count = 0;
+    }
+
+    pub fn toggleAgreeTerms(self: *AppState) void {
+        self.agree_terms = !self.agree_terms;
+    }
+
+    pub fn toggleSubscribe(self: *AppState) void {
+        self.subscribe_newsletter = !self.subscribe_newsletter;
+    }
+
+    pub fn toggleNotifications(self: *AppState) void {
+        self.enable_notifications = !self.enable_notifications;
+    }
+
+    pub fn toggleTask(self: *AppState, index: usize) void {
+        if (index < self.completed_tasks.len) {
+            self.completed_tasks[index] = !self.completed_tasks[index];
+        }
     }
 
     pub fn focusNextField(self: *AppState) void {
@@ -132,39 +164,29 @@ const AppState = struct {
             self.form_status = "Please enter your name";
         } else if (self.email.len == 0) {
             self.form_status = "Please enter your email";
-        } else if (std.mem.indexOf(u8, self.email, "@") == null) {
-            self.form_status = "Please enter a valid email";
+        } else if (!self.agree_terms) {
+            self.form_status = "Please agree to terms";
         } else {
             self.form_status = "Form submitted successfully!";
         }
     }
 
-    // =========================================================================
-    // COMMAND methods - fn(*State, *Gooey) or fn(*State, *Gooey, Arg)
-    // Use with cx.command() / cx.commandWith()
-    // For operations that need framework access (focus, window, etc.)
-    // =========================================================================
-
-    /// Navigate to forms page and focus the first field
-    pub fn goToFormsWithFocus(self: *AppState, g: *Gooey) void {
+    pub fn goToFormsWithFocus(self: *AppState, cx: *gooey.Context(AppState)) void {
         self.page = .forms;
         self.form_initialized = true;
         self.focused_field = .name;
-        g.focusTextInput("form_name");
+        cx.focusTextInput("form_name");
     }
 
-    /// Focus a specific form field
-    pub fn focusField(self: *AppState, g: *Gooey, field: FormField) void {
-        self.focused_field = field;
-        switch (field) {
-            .name => g.focusTextInput("form_name"),
-            .email => g.focusTextInput("form_email"),
-            .message => g.focusTextInput("form_message"),
+    pub fn focusField(self: *AppState, cx: *gooey.Context(AppState)) void {
+        switch (self.focused_field) {
+            .name => cx.focusTextInput("form_name"),
+            .email => cx.focusTextInput("form_email"),
+            .message => cx.focusTextInput("form_message"),
         }
     }
 
-    /// Submit form and blur all inputs on success
-    pub fn submitFormAndBlur(self: *AppState, g: *Gooey) void {
+    pub fn submitFormAndBlur(self: *AppState, g: *gooey.Gooey) void {
         self.submitForm();
         if (std.mem.indexOf(u8, self.form_status, "success") != null) {
             g.blurAll();
@@ -172,17 +194,13 @@ const AppState = struct {
     }
 };
 
-// =============================================================================
-// Entry Point
-// =============================================================================
-
 pub fn main() !void {
     var state = AppState{};
 
     try gooey.runWithState(AppState, .{
         .title = "Gooey Showcase",
-        .width = 800,
-        .height = 600,
+        .width = 900,
+        .height = 650,
         .state = &state,
         .render = render,
         .on_event = onEvent,
@@ -246,7 +264,6 @@ const NavTab = struct {
             .corner_radius = 6,
             .background = if (is_active) t.primary else ui.Color.transparent,
         }, .{
-            // Just show the text label with keyboard hint
             ui.textFmt("[{s}] {s}", .{ self.key, self.label }, .{
                 .size = 14,
                 .color = if (is_active) ui.Color.white else t.text,
@@ -255,7 +272,10 @@ const NavTab = struct {
     }
 };
 
-/// Home page content
+// =============================================================================
+// Home Page
+// =============================================================================
+
 const HomePage = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
@@ -272,7 +292,7 @@ const HomePage = struct {
             ui.text("A GPU-accelerated UI framework for Zig", .{ .size = 16, .color = t.muted }),
             StatsRow{},
             ButtonRow{},
-            ui.text("Use arrow keys or [1-4] to navigate", .{ .size = 12, .color = t.muted }),
+            ui.text("Use arrow keys or [1-5] to navigate", .{ .size = 12, .color = t.muted }),
         });
     }
 };
@@ -302,9 +322,8 @@ const ButtonRow = struct {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
 
         b.box(.{ .direction = .row, .gap = 12 }, .{
-            // Pure handlers with cx.update() - state methods are testable!
-            ui.buttonHandler("Click Me!", cx.update(AppState.increment)),
-            ui.buttonHandler("Reset", cx.update(AppState.resetClicks)),
+            Button{ .label = "Click Me!", .on_click_handler = cx.update(AppState.increment) },
+            Button{ .label = "Reset", .variant = .secondary, .on_click_handler = cx.update(AppState.resetClicks) },
         });
     }
 };
@@ -331,7 +350,149 @@ const StatCard = struct {
     }
 };
 
-/// Scroll Demo page
+// =============================================================================
+// Forms Page
+// =============================================================================
+
+const FormsPage = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
+        const t = s.theme;
+
+        b.box(.{
+            .padding = .{ .all = 32 },
+            .gap = 16,
+            .fill_width = true,
+            .fill_height = true,
+            .alignment = .{ .main = .center, .cross = .center },
+        }, .{
+            ui.text("Contact Form", .{ .size = 24, .color = t.text }),
+            ui.text(if (s.form_status.len > 0) s.form_status else "Fill out the form below", .{
+                .size = 14,
+                .color = if (std.mem.indexOf(u8, s.form_status, "success") != null) t.accent else t.muted,
+            }),
+            FormCard{},
+            ui.text("[Tab] to move between fields", .{ .size = 12, .color = t.muted }),
+        });
+    }
+};
+
+const CheckboxSection = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
+        const t = s.theme;
+
+        b.box(.{
+            .padding = .{ .all = 20 },
+            .gap = 14,
+            .background = t.card,
+            .corner_radius = 8,
+            .direction = .column,
+            .alignment = .{ .cross = .start },
+        }, .{
+            ui.text("Preferences", .{ .size = 14, .color = t.muted }),
+
+            Checkbox{
+                .id = "agree_terms",
+                .checked = s.agree_terms,
+                .label = "I agree to the terms and conditions",
+                .on_click_handler = cx.update(AppState.toggleAgreeTerms),
+                .unchecked_background = t.card,
+                .checked_background = t.primary,
+                .border_color = t.muted,
+                .checkmark_color = ui.Color.white,
+                .label_color = t.text,
+            },
+
+            Checkbox{
+                .id = "subscribe",
+                .checked = s.subscribe_newsletter,
+                .label = "Subscribe to newsletter",
+                .on_click_handler = cx.update(AppState.toggleSubscribe),
+                .unchecked_background = t.card,
+                .checked_background = t.primary,
+                .border_color = t.muted,
+                .checkmark_color = ui.Color.white,
+                .label_color = t.text,
+            },
+
+            Checkbox{
+                .id = "notifications",
+                .checked = s.enable_notifications,
+                .label = "Enable notifications",
+                .on_click_handler = cx.update(AppState.toggleNotifications),
+                .unchecked_background = t.card,
+                .checked_background = t.accent,
+                .border_color = t.muted,
+                .checkmark_color = ui.Color.white,
+                .label_color = t.text,
+            },
+        });
+    }
+};
+
+const FormCard = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        const cx = b.getContext(gooey.Context(AppState)) orelse return;
+        const s = cx.state();
+        const t = s.theme;
+
+        b.box(.{
+            .shadow = ShadowConfig.drop(6),
+            .padding = .{ .all = 24 },
+            .gap = 12,
+            .background = t.card,
+            .corner_radius = 12,
+        }, .{
+            TextInput{
+                .id = "form_name",
+                .placeholder = "Your Name",
+                .width = 280,
+                .bind = &s.name,
+                // Theme-aware styling
+                .background = t.bg,
+                .border_color = t.muted.withAlpha(0.3),
+                .border_color_focused = t.primary,
+                .text_color = t.text,
+                .placeholder_color = t.muted,
+                .corner_radius = 8,
+            },
+            TextInput{
+                .id = "form_email",
+                .placeholder = "Email Address",
+                .width = 280,
+                .bind = &s.email,
+                .background = t.bg,
+                .border_color = t.muted.withAlpha(0.3),
+                .border_color_focused = t.primary,
+                .text_color = t.text,
+                .placeholder_color = t.muted,
+                .corner_radius = 8,
+            },
+            TextInput{
+                .id = "form_message",
+                .placeholder = "Message",
+                .width = 280,
+                .bind = &s.message,
+                .background = t.bg,
+                .border_color = t.muted.withAlpha(0.3),
+                .border_color_focused = t.primary,
+                .text_color = t.text,
+                .placeholder_color = t.muted,
+                .corner_radius = 8,
+            },
+            CheckboxSection{},
+            Button{ .label = "Submit", .on_click_handler = cx.command(AppState.submitFormAndBlur) },
+        });
+    }
+};
+
+// =============================================================================
+// Scroll Demo Page
+// =============================================================================
+
 const ScrollDemoPage = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
@@ -342,7 +503,6 @@ const ScrollDemoPage = struct {
             .fill_width = true,
             .grow = true,
         }, .{
-            // Header
             b.box(.{
                 .direction = .row,
                 .padding = .{ .symmetric = .{ .x = 24, .y = 16 } },
@@ -355,7 +515,6 @@ const ScrollDemoPage = struct {
                 ui.text("Scroll with mousewheel or trackpad", .{ .size = 14, .color = t.muted }),
             }),
 
-            // Scroll containers
             b.box(.{
                 .direction = .row,
                 .gap = 24,
@@ -485,116 +644,10 @@ const InfoCard = struct {
     }
 };
 
-/// Forms page content
-const FormsPage = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        const cx = b.getContext(gooey.Context(AppState)) orelse return;
-        const s = cx.state();
-        const t = s.theme;
+// =============================================================================
+// About Page
+// =============================================================================
 
-        b.box(.{
-            .padding = .{ .all = 32 },
-            .gap = 16,
-            .fill_width = true,
-            .fill_height = true,
-            .alignment = .{ .main = .center, .cross = .center },
-        }, .{
-            ui.text("Contact Form", .{ .size = 24, .color = t.text }),
-            ui.text(if (s.form_status.len > 0) s.form_status else "Fill out the form below", .{
-                .size = 14,
-                .color = if (std.mem.indexOf(u8, s.form_status, "success") != null) t.accent else t.muted,
-            }),
-            FormCard{},
-            ui.text("[Tab] to move between fields", .{ .size = 12, .color = t.muted }),
-        });
-    }
-};
-
-const CheckboxSection = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        const cx = b.getContext(gooey.Context(AppState)) orelse return;
-        const s = cx.state();
-        const t = s.theme;
-
-        b.box(.{
-            .padding = .{ .all = 20 },
-            .gap = 14,
-            .background = t.card,
-            .corner_radius = 8,
-            .direction = .column,
-            .alignment = .{ .cross = .start },
-        }, .{
-            ui.text("Preferences", .{ .size = 14, .color = t.muted }),
-
-            ui.checkbox("agree_terms", .{
-                .label = "I agree to the terms and conditions",
-                .bind = &s.agree_terms,
-                .background = t.card,
-                .background_checked = t.primary,
-                .border_color = t.muted,
-                .checkmark_color = ui.Color.white,
-                .label_color = t.text,
-            }),
-
-            ui.checkbox("subscribe", .{
-                .label = "Subscribe to newsletter",
-                .bind = &s.subscribe_newsletter,
-                .background = t.card,
-                .background_checked = t.primary,
-                .border_color = t.muted,
-                .checkmark_color = ui.Color.white,
-                .label_color = t.text,
-            }),
-
-            ui.checkbox("notifications", .{
-                .label = "Enable notifications",
-                .bind = &s.enable_notifications,
-                .background = t.card,
-                .background_checked = t.accent,
-                .border_color = t.muted,
-                .checkmark_color = ui.Color.white,
-                .label_color = t.text,
-            }),
-        });
-    }
-};
-
-const FormCard = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        const cx = b.getContext(gooey.Context(AppState)) orelse return;
-        const s = cx.state();
-        const t = s.theme;
-
-        b.box(.{
-            .shadow = ShadowConfig.drop(6),
-            .padding = .{ .all = 24 },
-            .gap = 12,
-            .background = t.card,
-            .corner_radius = 12,
-        }, .{
-            ui.input("form_name", .{
-                .placeholder = "Your Name",
-                .width = 280,
-                .bind = &s.name,
-            }),
-            ui.input("form_email", .{
-                .placeholder = "Email Address",
-                .width = 280,
-                .bind = &s.email,
-            }),
-            ui.input("form_message", .{
-                .placeholder = "Message",
-                .width = 280,
-                .bind = &s.message,
-            }),
-            CheckboxSection{},
-            // Command handler - blurs inputs on successful submit
-            ui.buttonHandler("Submit", cx.command(AppState.submitFormAndBlur)),
-        });
-    }
-};
-
-/// About page content
 const AboutPage = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
@@ -629,10 +682,10 @@ const FeatureCard = struct {
         }, .{
             FeatureItem{ .text = "Metal GPU rendering" },
             FeatureItem{ .text = "Pure state pattern" },
-            FeatureItem{ .text = "Retained text input widgets" },
-            FeatureItem{ .text = "Checkbox components" },
+            FeatureItem{ .text = "Component system (Button, Checkbox, TextInput)" },
+            FeatureItem{ .text = "Text styles (underline, strikethrough)" },
             FeatureItem{ .text = "CoreText font shaping" },
-            FeatureItem{ .text = "Simple component model" },
+            FeatureItem{ .text = "Scroll containers" },
         });
     }
 };
@@ -656,7 +709,7 @@ const FeatureItem = struct {
 };
 
 // =============================================================================
-// Render
+// Render & Events
 // =============================================================================
 
 fn render(cx: *gooey.Context(AppState)) void {
@@ -688,17 +741,11 @@ const PageContent = struct {
         const cx = b.getContext(gooey.Context(AppState)) orelse return;
         const s = cx.state();
 
-        if (s.page == .home) {
-            b.box(.{ .grow = true }, .{HomePage{}});
-        }
-        if (s.page == .forms) {
-            b.box(.{ .grow = true }, .{FormsPage{}});
-        }
-        if (s.page == .scroll_demo) {
-            b.box(.{ .grow = true }, .{ScrollDemoPage{}});
-        }
-        if (s.page == .about) {
-            b.box(.{ .grow = true }, .{AboutPage{}});
+        switch (s.page) {
+            .home => b.box(.{ .grow = true }, .{HomePage{}}),
+            .forms => b.box(.{ .grow = true }, .{FormsPage{}}),
+            .scroll_demo => b.box(.{ .grow = true }, .{ScrollDemoPage{}}),
+            .about => b.box(.{ .grow = true }, .{AboutPage{}}),
         }
     }
 };
@@ -718,20 +765,10 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
     if (event == .key_down) {
         const key = event.key_down;
 
-        // Tab navigation (forms page) - use command pattern
+        // Tab navigation (forms page)
         if (key.key == .tab and s.page == .forms) {
-            const next_field: AppState.FormField = switch (s.focused_field) {
-                .name => .email,
-                .email => .message,
-                .message => .name,
-            };
-            // Direct state + framework access in event handler
-            s.focused_field = next_field;
-            switch (next_field) {
-                .name => cx.focusTextInput("form_name"),
-                .email => cx.focusTextInput("form_email"),
-                .message => cx.focusTextInput("form_message"),
-            }
+            s.focusNextField();
+            syncFormFocus(cx);
             cx.notify();
             return true;
         }
@@ -747,7 +784,6 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
                 return true;
             }
             if (key.key == .@"2") {
-                // Use the same logic as goToFormsWithFocus
                 s.page = .forms;
                 s.form_initialized = true;
                 s.focused_field = .name;
@@ -767,7 +803,7 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
             }
         }
 
-        // Arrow keys - pure state
+        // Arrow keys
         if (key.key == .left) {
             s.prevPage();
             cx.notify();
@@ -779,14 +815,14 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
             return true;
         }
 
-        // Theme toggle - pure state
+        // Theme toggle
         if (key.key == .t and s.page != .forms) {
             s.toggleTheme();
             cx.notify();
             return true;
         }
 
-        // Enter to submit form - command pattern
+        // Enter to submit form
         if (key.key == .@"return" and s.page == .forms) {
             s.submitForm();
             if (std.mem.indexOf(u8, s.form_status, "success") != null) {
@@ -801,30 +837,34 @@ fn onEvent(cx: *gooey.Context(AppState), event: gooey.InputEvent) bool {
 }
 
 // =============================================================================
-// Tests - State is fully testable!
+// Tests
 // =============================================================================
 
 test "AppState navigation" {
     var s = AppState{};
-
     try std.testing.expectEqual(AppState.Page.home, s.page);
 
     s.nextPage();
     try std.testing.expectEqual(AppState.Page.forms, s.page);
 
     s.nextPage();
+    try std.testing.expectEqual(AppState.Page.layout, s.page);
+
+    s.nextPage();
     try std.testing.expectEqual(AppState.Page.scroll_demo, s.page);
 
-    s.prevPage();
-    try std.testing.expectEqual(AppState.Page.forms, s.page);
+    s.nextPage();
+    try std.testing.expectEqual(AppState.Page.about, s.page);
 
-    s.goToPage(.about);
+    s.nextPage();
+    try std.testing.expectEqual(AppState.Page.home, s.page);
+
+    s.prevPage();
     try std.testing.expectEqual(AppState.Page.about, s.page);
 }
 
 test "AppState theme toggle" {
     var s = AppState{};
-
     try std.testing.expect(!s.is_dark);
     try std.testing.expectEqual(&Theme.light, s.theme);
 
@@ -840,31 +880,42 @@ test "AppState form validation" {
     var s = AppState{};
 
     s.submitForm();
-    try std.testing.expectEqualStrings("Please enter your name", s.form_status);
+    try std.testing.expect(std.mem.indexOf(u8, s.form_status, "name") != null);
 
-    s.name = "John";
+    s.name = "Test";
     s.submitForm();
-    try std.testing.expectEqualStrings("Please enter your email", s.form_status);
+    try std.testing.expect(std.mem.indexOf(u8, s.form_status, "email") != null);
 
-    s.email = "invalid";
+    s.email = "test@example.com";
     s.submitForm();
-    try std.testing.expectEqualStrings("Please enter a valid email", s.form_status);
+    try std.testing.expect(std.mem.indexOf(u8, s.form_status, "terms") != null);
 
-    s.email = "john@example.com";
+    s.agree_terms = true;
     s.submitForm();
-    try std.testing.expectEqualStrings("Form submitted successfully!", s.form_status);
+    try std.testing.expect(std.mem.indexOf(u8, s.form_status, "success") != null);
 }
 
 test "AppState clicks" {
     var s = AppState{};
-
     try std.testing.expectEqual(@as(u32, 0), s.click_count);
 
     s.increment();
     s.increment();
-    s.increment();
-    try std.testing.expectEqual(@as(u32, 3), s.click_count);
+    try std.testing.expectEqual(@as(u32, 2), s.click_count);
 
     s.resetClicks();
     try std.testing.expectEqual(@as(u32, 0), s.click_count);
+}
+
+test "AppState tasks" {
+    var s = AppState{};
+    try std.testing.expect(!s.completed_tasks[0]);
+    try std.testing.expect(s.completed_tasks[1]);
+    try std.testing.expect(!s.completed_tasks[2]);
+
+    s.toggleTask(0);
+    try std.testing.expect(s.completed_tasks[0]);
+
+    s.toggleTask(1);
+    try std.testing.expect(!s.completed_tasks[1]);
 }

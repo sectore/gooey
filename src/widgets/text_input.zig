@@ -59,18 +59,8 @@ pub const Bounds = struct {
     }
 };
 
-/// Visual style for the text input
+/// Visual style for text rendering (no chrome - that's handled by the component)
 pub const Style = struct {
-    /// Background color
-    background: Hsla = Hsla.white,
-    /// Border color when unfocused
-    border_color: Hsla = Hsla.init(0, 0, 0.8, 1),
-    /// Border color when focused
-    border_color_focused: Hsla = Hsla.init(0.6, 0.8, 0.5, 1), // Blue
-    /// Border width
-    border_width: f32 = 1,
-    /// Corner radius
-    corner_radius: f32 = 4,
     /// Text color
     text_color: Hsla = Hsla.black,
     /// Placeholder text color
@@ -81,8 +71,6 @@ pub const Style = struct {
     cursor_color: Hsla = Hsla.black,
     /// IME preedit underline color
     preedit_underline_color: Hsla = Hsla.init(0, 0, 0.3, 1),
-    /// Padding inside the input
-    padding: f32 = 8,
 };
 
 /// TextInput - editable single-line text field
@@ -624,44 +612,32 @@ pub const TextInput = struct {
         const preedit = self.preedit_buffer.items;
 
         // Safety: capture cursor position and ensure it's within valid range
-        // AND on a valid UTF-8 boundary. We use a local copy because another
-        // thread could modify self.cursor_byte during rendering.
+        // AND on a valid UTF-8 boundary.
         var cursor_byte = self.cursor_byte;
         if (cursor_byte > text.len) {
             cursor_byte = text.len;
         } else if (text.len > 0 and cursor_byte > 0) {
-            // Ensure cursor is on a valid UTF-8 character boundary
             cursor_byte = self.snapToCharBoundaryFor(text, cursor_byte);
         }
 
-        // Calculate text area dimensions early (needed for scroll calculation)
-        const text_x = self.bounds.x + self.style.padding;
-        const text_y = self.bounds.y + self.style.padding;
-        const text_width = self.bounds.width - (self.style.padding * 2);
-        const text_height = self.bounds.height - (self.style.padding * 2);
+        // Text area is now the full bounds (padding handled by component's box)
+        const text_x = self.bounds.x;
+        const text_y = self.bounds.y;
+        const text_width = self.bounds.width;
+        const text_height = self.bounds.height;
 
-        // Ensure cursor is visible BEFORE rendering (fixes first-frame overflow)
+        // Ensure cursor is visible BEFORE rendering
         if (self.focused and preedit.len == 0) {
             self.ensureCursorVisible(text_system, text_width);
         }
 
-        // Background (rendered OUTSIDE the clip region)
-        const border_color = if (self.focused) self.style.border_color_focused else self.style.border_color;
-        const bg = Quad.rounded(
-            self.bounds.x,
-            self.bounds.y,
-            self.bounds.width,
-            self.bounds.height,
-            self.style.background,
-            self.style.corner_radius,
-        ).withBorder(border_color, self.style.border_width);
-        try scene.insertQuad(bg);
+        // No background/border - component handles that
 
         // Get font metrics for baseline positioning
         const metrics = text_system.getMetrics() orelse return;
         const baseline_y = metrics.calcBaseline(self.bounds.y, self.bounds.height);
 
-        // Push clip for text content area - all glyphs will be clipped to this region
+        // Push clip for text content area
         try scene.pushClip(.{
             .x = text_x,
             .y = text_y,
@@ -679,7 +655,7 @@ pub const TextInput = struct {
         } else if (has_content) {
             // Render selection background first (if any)
             if (self.hasSelection()) {
-                try self.renderSelection(scene, text_system, text_x, text_y, self.bounds.height - self.style.padding * 2, scale_factor);
+                try self.renderSelection(scene, text_system, text_x, text_y, text_height, scale_factor);
             }
 
             // Render text before cursor
@@ -716,21 +692,20 @@ pub const TextInput = struct {
             }
         }
 
-        // Render cursor (still inside clip region, which is fine)
+        // Render cursor
         if (self.focused and self.cursor_visible and preedit.len == 0) {
-            // Calculate cursor x position (scroll already adjusted above)
             var cursor_x = text_x - self.scroll_offset;
             if (cursor_byte > 0 and text.len > 0) {
                 cursor_x += try self.measureText(text_system, text[0..cursor_byte]);
             }
 
             const cursor_height = metrics.line_height;
-            const cursor_y = text_y + (self.bounds.height - self.style.padding * 2 - cursor_height) / 2;
+            const cursor_y = text_y + (text_height - cursor_height) / 2;
 
             const cursor = Quad.filled(
                 cursor_x,
                 cursor_y,
-                1.5, // cursor width
+                1.5,
                 cursor_height,
                 self.style.cursor_color,
             );

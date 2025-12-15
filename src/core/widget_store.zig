@@ -1,15 +1,13 @@
 //! WidgetStore - Simple retained storage for stateful widgets
 
 const std = @import("std");
-const TextInput = @import("../elements/text_input.zig").TextInput;
-const Bounds = @import("../elements/text_input.zig").Bounds;
-const Checkbox = @import("../elements/checkbox.zig").Checkbox;
-const ScrollContainer = @import("../elements/scroll_container.zig").ScrollContainer;
+const TextInput = @import("../widgets/text_input.zig").TextInput;
+const Bounds = @import("../widgets/text_input.zig").Bounds;
+const ScrollContainer = @import("../widgets/scroll_container.zig").ScrollContainer;
 
 pub const WidgetStore = struct {
     allocator: std.mem.Allocator,
     text_inputs: std.StringHashMap(*TextInput),
-    checkboxes: std.StringHashMap(*Checkbox),
     scroll_containers: std.StringHashMap(*ScrollContainer),
     accessed_this_frame: std.StringHashMap(void),
     default_text_input_bounds: Bounds = .{ .x = 0, .y = 0, .width = 200, .height = 36 },
@@ -20,7 +18,6 @@ pub const WidgetStore = struct {
         return .{
             .allocator = allocator,
             .text_inputs = std.StringHashMap(*TextInput).init(allocator),
-            .checkboxes = std.StringHashMap(*Checkbox).init(allocator),
             .scroll_containers = std.StringHashMap(*ScrollContainer).init(allocator),
             .accessed_this_frame = std.StringHashMap(void).init(allocator),
         };
@@ -35,15 +32,6 @@ pub const WidgetStore = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.text_inputs.deinit();
-
-        // Clean up Checkboxes
-        var cb_it = self.checkboxes.iterator();
-        while (cb_it.next()) |entry| {
-            entry.value_ptr.*.deinit();
-            self.allocator.destroy(entry.value_ptr.*);
-            self.allocator.free(entry.key_ptr.*);
-        }
-        self.checkboxes.deinit();
 
         // Clean up ScrollContainers
         var sc_it = self.scroll_containers.iterator();
@@ -97,48 +85,6 @@ pub const WidgetStore = struct {
 
     pub fn textInputOrPanic(self: *Self, id: []const u8) *TextInput {
         return self.textInput(id) orelse @panic("Failed to allocate TextInput");
-    }
-
-    // =========================================================================
-    // Checkbox
-    // =========================================================================
-
-    pub fn checkbox(self: *Self, id: []const u8) ?*Checkbox {
-        // Use getEntry to get the stable key stored in the hashmap
-        if (self.checkboxes.getEntry(id)) |entry| {
-            const stable_key = entry.key_ptr.*;
-            // Guard against duplicate tracking - use the stable key
-            if (!self.accessed_this_frame.contains(stable_key)) {
-                self.accessed_this_frame.put(stable_key, {}) catch {};
-            }
-            return entry.value_ptr.*;
-        }
-
-        const cb = self.allocator.create(Checkbox) catch return null;
-        errdefer self.allocator.destroy(cb);
-
-        const owned_key = self.allocator.dupe(u8, id) catch {
-            self.allocator.destroy(cb);
-            return null;
-        };
-        errdefer self.allocator.free(owned_key);
-
-        // Initialize with owned_key so the Checkbox stores stable memory
-        cb.* = Checkbox.init(self.allocator, owned_key);
-
-        self.checkboxes.put(owned_key, cb) catch {
-            cb.deinit();
-            self.allocator.destroy(cb);
-            self.allocator.free(owned_key);
-            return null;
-        };
-
-        self.accessed_this_frame.put(owned_key, {}) catch {};
-        return cb;
-    }
-
-    pub fn getCheckbox(self: *Self, id: []const u8) ?*Checkbox {
-        return self.checkboxes.get(id);
     }
 
     // =========================================================================

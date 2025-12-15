@@ -29,6 +29,8 @@ const actionTypeId = action_mod.actionTypeId;
 const handler_mod = @import("../core/handler.zig");
 const entity_mod = @import("../core/entity.zig");
 pub const HandlerRef = handler_mod.HandlerRef;
+const layout_types = @import("../layout/types.zig");
+const BorderConfig = layout_types.BorderConfig;
 const layout_mod = @import("../layout/layout.zig");
 const LayoutEngine = layout_mod.LayoutEngine;
 const LayoutId = layout_mod.LayoutId;
@@ -82,8 +84,8 @@ pub const TextStyle = struct {
     pub const WrapMode = enum { none, words, newlines };
 };
 
-/// Box styling options
-pub const BoxStyle = struct {
+/// Box is the fundamental UI primitive. All interactive elements are built on Box.
+pub const Box = struct {
     // Sizing
     width: ?f32 = null,
     height: ?f32 = null,
@@ -109,9 +111,17 @@ pub const BoxStyle = struct {
 
     shadow: ?ShadowConfig = null,
 
+    // Hover styles (applied when element is hovered)
+    hover_background: ?Color = null,
+    hover_border_color: ?Color = null,
+
     // Layout
     direction: Direction = .column,
     alignment: Alignment = .{ .main = .start, .cross = .start },
+
+    // Interaction
+    on_click: ?*const fn () void = null,
+    on_click_handler: ?HandlerRef = null,
 
     pub const Direction = enum { row, column };
 
@@ -130,7 +140,7 @@ pub const BoxStyle = struct {
     };
 
     /// Convert to layout Padding
-    pub fn toPadding(self: BoxStyle) Padding {
+    pub fn toPadding(self: Box) Padding {
         return switch (self.padding) {
             .all => |v| Padding.all(@intFromFloat(v)),
             .symmetric => |s| Padding.symmetric(@intFromFloat(s.x), @intFromFloat(s.y)),
@@ -146,17 +156,34 @@ pub const BoxStyle = struct {
 
 /// Input field options
 pub const InputStyle = struct {
+    // Content
     placeholder: []const u8 = "",
     secure: bool = false,
-    font_size: u16 = 14,
+
+    // Binding
+    bind: ?*[]const u8 = null,
+
+    // Focus navigation
+    tab_index: i32 = 0,
+    tab_stop: bool = true,
+
+    // Layout
     width: ?f32 = null,
     height: f32 = 36,
-    /// Two-way binding to a string slice pointer
-    bind: ?*[]const u8 = null,
-    /// Tab order index (lower = earlier in tab order)
-    tab_index: i32 = 0,
-    /// Whether this input participates in tab navigation
-    tab_stop: bool = true,
+    padding: f32 = 8,
+
+    // Visual chrome (rendered by component)
+    background: Color = Color.white,
+    border_color: Color = Color.rgb(0.8, 0.8, 0.8),
+    border_color_focused: Color = Color.rgb(0.3, 0.5, 1.0),
+    border_width: f32 = 1,
+    corner_radius: f32 = 4,
+
+    // Text colors (passed to widget)
+    text_color: Color = Color.black,
+    placeholder_color: Color = Color.rgb(0.6, 0.6, 0.6),
+    selection_color: Color = Color.rgba(0.3, 0.5, 1.0, 0.3),
+    cursor_color: Color = Color.black,
 };
 
 /// Stack layout options
@@ -247,7 +274,7 @@ pub const ScrollStyle = struct {
     /// Content height (if known ahead of time)
     content_height: ?f32 = null,
     /// Padding inside the scroll area
-    padding: BoxStyle.PaddingValue = .{ .all = 0 },
+    padding: Box.PaddingValue = .{ .all = 0 },
     gap: u16 = 0,
     background: ?Color = null,
     corner_radius: f32 = 0,
@@ -276,6 +303,7 @@ pub const Spacer = struct {
 
 /// Button element descriptor
 pub const Button = struct {
+    id: ?[]const u8 = null, // Override ID (defaults to label hash)
     label: []const u8,
     style: ButtonStyle = .{},
     on_click: ?*const fn () void = null,
@@ -285,6 +313,7 @@ pub const Button = struct {
 
 /// Button with HandlerRef (new pattern with context access)
 pub const ButtonHandler = struct {
+    id: ?[]const u8 = null, // Override ID (defaults to label hash)
     label: []const u8,
     style: ButtonStyle = .{},
     handler: HandlerRef,
@@ -301,14 +330,24 @@ pub const Empty = struct {
 // Free Functions (return descriptors)
 // =============================================================================
 
-/// Create a button with HandlerRef (new pattern)
+/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click_handler = ... }` instead
 pub fn buttonHandler(label: []const u8, ref: HandlerRef) ButtonHandler {
     return .{ .label = label, .handler = ref };
 }
 
-/// Create a styled button with HandlerRef
+/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click_handler = ... }` instead
 pub fn buttonHandlerStyled(label: []const u8, style: ButtonStyle, ref: HandlerRef) ButtonHandler {
     return .{ .label = label, .style = style, .handler = ref };
+}
+
+/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click = ... }` instead
+pub fn button(label: []const u8, on_click: ?*const fn () void) Button {
+    return .{ .label = label, .on_click = on_click };
+}
+
+/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click = ... }` instead
+pub fn buttonStyled(label: []const u8, style: ButtonStyle, on_click: ?*const fn () void) Button {
+    return .{ .label = label, .style = style, .on_click = on_click };
 }
 
 /// Register an action handler using HandlerRef (new pattern)
@@ -339,6 +378,7 @@ pub fn spacerMin(min_size: f32) Spacer {
     return .{ .min_size = min_size };
 }
 
+/// DEPRECATED: Use `gooey.Checkbox{ ... }` component instead
 pub fn checkbox(id: []const u8, style: CheckboxStyle) CheckboxPrimitive {
     return .{ .id = id, .style = style };
 }
@@ -354,16 +394,6 @@ pub fn onAction(comptime Action: type, callback: *const fn () void) ActionHandle
         .action_type = actionTypeId(Action),
         .callback = callback,
     };
-}
-
-/// Create a button
-pub fn button(label: []const u8, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .on_click = on_click };
-}
-
-/// Create a styled button
-pub fn buttonStyled(label: []const u8, style: ButtonStyle, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .style = style, .on_click = on_click };
 }
 
 /// Create an empty element (for conditionals)
@@ -422,6 +452,8 @@ pub const Builder = struct {
         id: []const u8,
         layout_id: LayoutId,
         style: InputStyle,
+        inner_width: f32,
+        inner_height: f32,
     };
 
     const PendingCheckbox = struct {
@@ -560,77 +592,93 @@ pub const Builder = struct {
     // =========================================================================
 
     /// Generic box container with children
-    pub fn box(self: *Self, style: BoxStyle, children: anytype) void {
-        self.boxWithId(null, style, children);
+    pub fn box(self: *Self, props: Box, children: anytype) void {
+        self.boxWithId(null, props, children);
     }
 
     /// Box with explicit ID
-    pub fn boxWithId(self: *Self, id: ?[]const u8, style: BoxStyle, children: anytype) void {
+    pub fn boxWithId(self: *Self, id: ?[]const u8, props: Box, children: anytype) void {
         const layout_id = if (id) |i| LayoutId.fromString(i) else self.generateId();
 
         // Push dispatch node at element open
         _ = self.dispatch.pushNode();
         self.dispatch.setLayoutId(layout_id.id);
 
+        // Resolve hover styles - check if this element is currently hovered
+        const is_hovered = if (self.gooey) |g|
+            g.isHovered(layout_id.id)
+        else
+            false;
+
+        const resolved_background = if (is_hovered and props.hover_background != null)
+            props.hover_background.?
+        else
+            props.background;
+
+        const resolved_border_color = if (is_hovered and props.hover_border_color != null)
+            props.hover_border_color.?
+        else
+            props.border_color;
+
         var sizing = Sizing.fitContent();
 
         // Width sizing - grow takes precedence when combined with min/max
-        const grow_w = style.grow or style.grow_width;
+        const grow_w = props.grow or props.grow_width;
         if (grow_w) {
-            const min_w = style.min_width orelse 0;
-            const max_w = style.max_width orelse std.math.floatMax(f32);
+            const min_w = props.min_width orelse 0;
+            const max_w = props.max_width orelse std.math.floatMax(f32);
             sizing.width = SizingAxis.growMinMax(min_w, max_w);
-        } else if (style.width) |w| {
-            if (style.min_width != null or style.max_width != null) {
-                const min_w = style.min_width orelse 0;
-                const max_w = style.max_width orelse w;
+        } else if (props.width) |w| {
+            if (props.min_width != null or props.max_width != null) {
+                const min_w = props.min_width orelse 0;
+                const max_w = props.max_width orelse w;
                 sizing.width = SizingAxis.fitMinMax(min_w, @min(w, max_w));
             } else {
                 sizing.width = SizingAxis.fixed(w);
             }
-        } else if (style.min_width != null or style.max_width != null) {
-            const min_w = style.min_width orelse 0;
-            const max_w = style.max_width orelse std.math.floatMax(f32);
+        } else if (props.min_width != null or props.max_width != null) {
+            const min_w = props.min_width orelse 0;
+            const max_w = props.max_width orelse std.math.floatMax(f32);
             sizing.width = SizingAxis.fitMinMax(min_w, max_w);
-        } else if (style.fill_width) {
+        } else if (props.fill_width) {
             sizing.width = SizingAxis.percent(1.0);
         }
 
         // Height sizing - grow takes precedence when combined with min/max
-        const grow_h = style.grow or style.grow_height;
+        const grow_h = props.grow or props.grow_height;
         if (grow_h) {
-            const min_h = style.min_height orelse 0;
-            const max_h = style.max_height orelse std.math.floatMax(f32);
+            const min_h = props.min_height orelse 0;
+            const max_h = props.max_height orelse std.math.floatMax(f32);
             sizing.height = SizingAxis.growMinMax(min_h, max_h);
-        } else if (style.height) |h| {
-            if (style.min_height != null or style.max_height != null) {
-                const min_h = style.min_height orelse 0;
-                const max_h = style.max_height orelse h;
+        } else if (props.height) |h| {
+            if (props.min_height != null or props.max_height != null) {
+                const min_h = props.min_height orelse 0;
+                const max_h = props.max_height orelse h;
                 sizing.height = SizingAxis.fitMinMax(min_h, @min(h, max_h));
             } else {
                 sizing.height = SizingAxis.fixed(h);
             }
-        } else if (style.min_height != null or style.max_height != null) {
-            const min_h = style.min_height orelse 0;
-            const max_h = style.max_height orelse std.math.floatMax(f32);
+        } else if (props.min_height != null or props.max_height != null) {
+            const min_h = props.min_height orelse 0;
+            const max_h = props.max_height orelse std.math.floatMax(f32);
             sizing.height = SizingAxis.fitMinMax(min_h, max_h);
-        } else if (style.fill_height) {
+        } else if (props.fill_height) {
             sizing.height = SizingAxis.percent(1.0);
         }
 
-        const direction: LayoutDirection = switch (style.direction) {
+        const direction: LayoutDirection = switch (props.direction) {
             .row => .left_to_right,
             .column => .top_to_bottom,
         };
 
         const child_alignment = ChildAlignment{
-            .x = switch (style.alignment.cross) {
+            .x = switch (props.alignment.cross) {
                 .start => .left,
                 .center => .center,
                 .end => .right,
                 .stretch => .left,
             },
-            .y = switch (style.alignment.main) {
+            .y = switch (props.alignment.main) {
                 .start => .top,
                 .center => .center,
                 .end => .bottom,
@@ -638,23 +686,39 @@ pub const Builder = struct {
             },
         };
 
+        // Build border config if we have a border
+        const border_config: ?BorderConfig = if (props.border_width > 0)
+            BorderConfig.all(resolved_border_color, props.border_width)
+        else
+            null;
+
         self.layout.openElement(.{
             .id = layout_id,
             .layout = .{
                 .sizing = sizing,
-                .padding = style.toPadding(),
-                .child_gap = @intFromFloat(style.gap),
+                .padding = props.toPadding(),
+                .child_gap = @intFromFloat(props.gap),
                 .child_alignment = child_alignment,
                 .layout_direction = direction,
             },
-            .background_color = style.background,
-            .corner_radius = CornerRadius.all(style.corner_radius),
-            .shadow = style.shadow,
+            .background_color = resolved_background,
+            .corner_radius = CornerRadius.all(props.corner_radius),
+            .border = border_config,
+            .shadow = props.shadow,
         }) catch return;
 
         self.processChildren(children);
 
         self.layout.closeElement();
+
+        // Register click handlers before popping dispatch node
+        if (props.on_click) |callback| {
+            self.dispatch.onClick(callback);
+        }
+        if (props.on_click_handler) |handler| {
+            self.dispatch.onClickHandler(handler);
+        }
+
         // Pop dispatch node at element close
         self.dispatch.popNode();
     }
@@ -965,8 +1029,18 @@ pub const Builder = struct {
         const focus_id = FocusId.init(inp.id);
         self.dispatch.setFocusable(focus_id);
 
-        // Create placeholder in layout
+        // Check if this input is focused (for border color)
+        const is_focused = if (self.gooey) |g|
+            if (g.textInput(inp.id)) |ti| ti.isFocused() else false
+        else
+            false;
+
+        // Calculate inner content size (text area)
         const input_width = inp.style.width orelse 200;
+        const inner_width = input_width - (inp.style.padding * 2) - (inp.style.border_width * 2);
+        const inner_height = inp.style.height - (inp.style.padding * 2) - (inp.style.border_width * 2);
+
+        // Create the outer box with chrome
         self.layout.openElement(.{
             .id = layout_id,
             .layout = .{
@@ -974,18 +1048,27 @@ pub const Builder = struct {
                     .width = SizingAxis.fixed(input_width),
                     .height = SizingAxis.fixed(inp.style.height),
                 },
+                .padding = Padding.all(@intFromFloat(inp.style.padding + inp.style.border_width)),
             },
+            .background_color = inp.style.background,
+            .corner_radius = CornerRadius.all(inp.style.corner_radius),
+            .border = BorderConfig.all(
+                if (is_focused) inp.style.border_color_focused else inp.style.border_color,
+                inp.style.border_width,
+            ),
         }) catch {
             self.dispatch.popNode();
             return;
         };
         self.layout.closeElement();
 
-        // Store for later rendering (ONLY ONCE!)
+        // Store for later text rendering with inner dimensions
         self.pending_inputs.append(self.allocator, .{
             .id = inp.id,
             .layout_id = layout_id,
             .style = inp.style,
+            .inner_width = inner_width,
+            .inner_height = inner_height,
         }) catch {};
 
         // Register focus with FocusManager
@@ -1013,19 +1096,32 @@ pub const Builder = struct {
     }
 
     fn renderButton(self: *Self, btn: Button) void {
-        const layout_id = self.generateId();
+        // Use explicit ID if provided, otherwise derive from label
+        const layout_id = if (btn.id) |id| LayoutId.fromString(id) else LayoutId.fromString(btn.label);
 
         // Push dispatch node for this button
         _ = self.dispatch.pushNode();
         self.dispatch.setLayoutId(layout_id.id);
 
+        // Check hover state
+        const is_hovered = btn.style.enabled and
+            if (self.gooey) |g| g.isHovered(layout_id.id) else false;
+
         const bg = switch (btn.style.style) {
-            .primary => if (btn.style.enabled)
-                Color.rgb(0.2, 0.5, 1.0)
+            .primary => if (!btn.style.enabled)
+                Color.rgb(0.5, 0.7, 1.0)
+            else if (is_hovered)
+                Color.rgb(0.3, 0.6, 1.0) // Lighter on hover
             else
-                Color.rgb(0.5, 0.7, 1.0),
-            .secondary => Color.rgb(0.9, 0.9, 0.9),
-            .danger => Color.rgb(0.9, 0.3, 0.3),
+                Color.rgb(0.2, 0.5, 1.0),
+            .secondary => if (is_hovered)
+                Color.rgb(0.82, 0.82, 0.82) // Darker on hover
+            else
+                Color.rgb(0.9, 0.9, 0.9),
+            .danger => if (is_hovered)
+                Color.rgb(1.0, 0.4, 0.4) // Lighter on hover
+            else
+                Color.rgb(0.9, 0.3, 0.3),
         };
         const fg = switch (btn.style.style) {
             .primary, .danger => Color.white,
@@ -1053,7 +1149,7 @@ pub const Builder = struct {
 
         self.layout.closeElement();
 
-        // Register click handler with dispatch tree (NEW)
+        // Register click handler with dispatch tree
         if (btn.on_click) |callback| {
             if (btn.style.enabled) {
                 self.dispatch.onClick(callback);
@@ -1064,19 +1160,32 @@ pub const Builder = struct {
     }
 
     fn renderButtonHandler(self: *Self, btn: ButtonHandler) void {
-        const layout_id = self.generateId();
+        // Use explicit ID if provided, otherwise derive from label
+        const layout_id = if (btn.id) |id| LayoutId.fromString(id) else LayoutId.fromString(btn.label);
 
         // Push dispatch node for this button
         _ = self.dispatch.pushNode();
         self.dispatch.setLayoutId(layout_id.id);
 
+        // Check hover state
+        const is_hovered = btn.style.enabled and
+            if (self.gooey) |g| g.isHovered(layout_id.id) else false;
+
         const bg = switch (btn.style.style) {
-            .primary => if (btn.style.enabled)
-                Color.rgb(0.2, 0.5, 1.0)
+            .primary => if (!btn.style.enabled)
+                Color.rgb(0.5, 0.7, 1.0)
+            else if (is_hovered)
+                Color.rgb(0.3, 0.6, 1.0) // Lighter on hover
             else
-                Color.rgb(0.5, 0.7, 1.0),
-            .secondary => Color.rgb(0.9, 0.9, 0.9),
-            .danger => Color.rgb(0.9, 0.3, 0.3),
+                Color.rgb(0.2, 0.5, 1.0),
+            .secondary => if (is_hovered)
+                Color.rgb(0.82, 0.82, 0.82) // Darker on hover
+            else
+                Color.rgb(0.9, 0.9, 0.9),
+            .danger => if (is_hovered)
+                Color.rgb(1.0, 0.4, 0.4) // Lighter on hover
+            else
+                Color.rgb(0.9, 0.3, 0.3),
         };
         const fg = switch (btn.style.style) {
             .primary, .danger => Color.white,
@@ -1114,91 +1223,6 @@ pub const Builder = struct {
 
     fn renderActionHandlerRef(self: *Self, ah: ActionHandlerRefPrimitive) void {
         self.dispatch.onActionHandlerRaw(ah.action_type, ah.handler);
-    }
-
-    fn renderCheckbox(self: *Self, cb: CheckboxPrimitive) void {
-        const layout_id = LayoutId.fromString(cb.id);
-        const box_size: f32 = 18;
-        const label_gap: f32 = 8;
-
-        // Measure label width approximately
-        const label_width: f32 = if (cb.style.label.len > 0)
-            @as(f32, @floatFromInt(cb.style.label.len)) * 7.5 // ~7.5px per char estimate
-        else
-            0;
-
-        // Push dispatch node
-        _ = self.dispatch.pushNode();
-        self.dispatch.setLayoutId(layout_id.id);
-
-        // Create layout element for the checkbox + label
-        self.layout.openElement(.{
-            .id = layout_id,
-            .layout = .{
-                .sizing = .{
-                    .width = SizingAxis.fixed(box_size + label_gap + label_width),
-                    .height = SizingAxis.fixed(box_size),
-                },
-            },
-        }) catch {
-            self.dispatch.popNode();
-            return;
-        };
-        self.layout.closeElement();
-
-        // Store for later rendering (still needed for visual rendering)
-        self.pending_checkboxes.append(self.allocator, .{
-            .id = cb.id,
-            .layout_id = layout_id,
-            .style = cb.style,
-        }) catch {};
-
-        // Set up the Checkbox widget with theme colors
-        if (self.gooey) |g| {
-            if (g.widgets.checkbox(cb.id)) |checkbox_widget| {
-                // Set label
-                if (cb.style.label.len > 0) {
-                    checkbox_widget.setLabel(cb.style.label);
-                }
-
-                // Apply theme colors if provided
-                if (cb.style.background) |c| checkbox_widget.style.background = c;
-                if (cb.style.background_checked) |c| checkbox_widget.style.background_checked = c;
-                if (cb.style.border_color) |c| {
-                    checkbox_widget.style.border_color = c;
-                    checkbox_widget.style.border_color_focused = c;
-                }
-                if (cb.style.checkmark_color) |c| checkbox_widget.style.checkmark_color = c;
-                if (cb.style.label_color) |c| checkbox_widget.style.label_color = c;
-
-                // Two-way binding
-                if (cb.style.bind) |bind_ptr| {
-                    if (checkbox_widget.isChecked() != bind_ptr.*) {
-                        checkbox_widget.setChecked(bind_ptr.*);
-                    }
-                }
-
-                if (cb.style.on_change) |callback| {
-                    checkbox_widget.on_change = callback;
-                }
-
-                // Register click handler with dispatch tree
-                // Store bind pointer in the checkbox widget for the callback to access
-                checkbox_widget.bind_ptr = cb.style.bind;
-                self.dispatch.onClickWithContext(checkboxClickHandler, checkbox_widget);
-            }
-        }
-
-        self.dispatch.popNode();
-    }
-
-    fn checkboxClickHandler(ctx: *anyopaque) void {
-        const checkbox_widget: *@import("../elements/checkbox.zig").Checkbox = @ptrCast(@alignCast(ctx));
-        checkbox_widget.toggle();
-        // Sync back to bound variable
-        if (checkbox_widget.bind_ptr) |bind_ptr| {
-            bind_ptr.* = checkbox_widget.isChecked();
-        }
     }
 
     fn renderKeyContext(self: *Self, ctx: KeyContextPrimitive) void {

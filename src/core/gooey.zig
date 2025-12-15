@@ -53,7 +53,7 @@ const TextSystem = text_mod.TextSystem;
 // Widgets
 const widget_store_mod = @import("widget_store.zig");
 const WidgetStore = widget_store_mod.WidgetStore;
-const TextInput = @import("../elements/text_input.zig").TextInput;
+const TextInput = @import("../widgets/text_input.zig").TextInput;
 
 // Platform
 const Window = @import("../platform/mac/window.zig").Window;
@@ -90,6 +90,13 @@ pub const Gooey = struct {
 
     // Focus management
     focus: FocusManager,
+
+    // Hover state - tracks which layout element is currently hovered
+    // This is the layout_id (hash) of the hovered element, persists across frames
+    hovered_layout_id: ?u32 = null,
+
+    // Track if hover changed to trigger re-render
+    hover_changed: bool = false,
 
     /// Dispatch tree for event routing
     dispatch: *DispatchTree,
@@ -259,6 +266,9 @@ pub const Gooey = struct {
 
         // Begin layout pass
         self.layout.beginFrame(self.width, self.height);
+
+        // Clear hover_changed flag at frame start
+        self.hover_changed = false;
     }
 
     /// Call at the end of each frame after building UI
@@ -272,6 +282,53 @@ pub const Gooey = struct {
 
         // End layout and get render commands
         return try self.layout.endFrame();
+    }
+
+    // =========================================================================
+    // Hover State
+    // =========================================================================
+
+    /// Update hover state based on mouse position.
+    /// Call this on mouse_moved events AFTER bounds have been synced.
+    /// Returns true if hover state changed (requires re-render).
+    pub fn updateHover(self: *Self, x: f32, y: f32) bool {
+        const old_hovered = self.hovered_layout_id;
+
+        // Hit test using dispatch tree (which has bounds from last frame)
+        if (self.dispatch.hitTest(x, y)) |node_id| {
+            if (self.dispatch.getNodeConst(node_id)) |node| {
+                self.hovered_layout_id = node.layout_id;
+            } else {
+                self.hovered_layout_id = null;
+            }
+        } else {
+            self.hovered_layout_id = null;
+        }
+
+        // Check if hover changed
+        const changed = old_hovered != self.hovered_layout_id;
+        if (changed) {
+            self.hover_changed = true;
+        }
+        return changed;
+    }
+
+    /// Check if a specific layout element is currently hovered.
+    pub fn isHovered(self: *const Self, layout_id: u32) bool {
+        return self.hovered_layout_id == layout_id;
+    }
+
+    /// Check if a layout element (by LayoutId) is currently hovered.
+    pub fn isLayoutIdHovered(self: *const Self, id: LayoutId) bool {
+        return self.hovered_layout_id == id.id;
+    }
+
+    /// Clear hover state (e.g., when mouse exits window)
+    pub fn clearHover(self: *Self) void {
+        if (self.hovered_layout_id != null) {
+            self.hovered_layout_id = null;
+            self.hover_changed = true;
+        }
     }
 
     // =========================================================================
@@ -385,8 +442,6 @@ pub const Gooey = struct {
         // Focus the specific widget if it exists
         if (self.widgets.text_inputs.get(id)) |input| {
             input.focus();
-        } else if (self.widgets.checkboxes.get(id)) |cb| {
-            cb.focus();
         }
     }
 

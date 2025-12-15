@@ -1,16 +1,19 @@
-//! UI Component System
+//! UI Primitives and Builder
 //!
-//! A declarative, component-based UI API for Gooey.
+//! Low-level primitives for the UI system. For most uses, prefer
+//! the component wrappers in `gooey.components`:
 //!
-//! Components are structs with a `render` method:
 //! ```zig
-//! const MyComponent = struct {
-//!     value: i32,
+//! const gooey = @import("gooey");
 //!
-//!     pub fn render(self: @This(), b: *ui.Builder) void {
-//!         b.box(.{}, .{ ui.text("...", .{}) });
-//!     }
-//! };
+//! // Components (preferred)
+//! gooey.Button{ .label = "Click", .on_click_handler = cx.update(State.onClick) }
+//! gooey.Checkbox{ .id = "agree", .checked = state.agreed, .on_click_handler = cx.update(State.toggle) }
+//! gooey.TextInput{ .id = "name", .placeholder = "Enter name", .bind = &state.name }
+//!
+//! // Primitives (for text, spacers, etc.)
+//! gooey.ui.text("Hello", .{})
+//! gooey.ui.spacer()
 //! ```
 
 const ui_impl = @import("ui.zig");
@@ -24,21 +27,15 @@ pub const textFmt = ui_impl.textFmt;
 pub const input = ui_impl.input;
 pub const spacer = ui_impl.spacer;
 pub const spacerMin = ui_impl.spacerMin;
-pub const button = ui_impl.button;
-pub const buttonStyled = ui_impl.buttonStyled;
-pub const checkbox = ui_impl.checkbox;
 pub const empty = ui_impl.empty;
 pub const keyContext = ui_impl.keyContext;
 pub const onAction = ui_impl.onAction;
-pub const buttonHandler = ui_impl.buttonHandler;
 
 // Primitive types
 pub const Text = ui_impl.Text;
 pub const Input = ui_impl.Input;
 pub const Spacer = ui_impl.Spacer;
-pub const Button = ui_impl.Button;
 pub const Empty = ui_impl.Empty;
-pub const CheckboxPrimitive = ui_impl.CheckboxPrimitive;
 pub const KeyContextPrimitive = ui_impl.KeyContextPrimitive;
 pub const ActionHandlerPrimitive = ui_impl.ActionHandlerPrimitive;
 pub const PrimitiveType = ui_impl.PrimitiveType;
@@ -46,11 +43,9 @@ pub const PrimitiveType = ui_impl.PrimitiveType;
 // Styles
 pub const Color = ui_impl.Color;
 pub const TextStyle = ui_impl.TextStyle;
-pub const BoxStyle = ui_impl.BoxStyle;
+pub const Box = ui_impl.Box;
 pub const StackStyle = ui_impl.StackStyle;
 pub const CenterStyle = ui_impl.CenterStyle;
 pub const ShadowConfig = ui_impl.ShadowConfig;
-pub const ButtonStyle = ui_impl.ButtonStyle;
 pub const InputStyle = ui_impl.InputStyle;
-pub const CheckboxStyle = ui_impl.CheckboxStyle;
 pub const ScrollStyle = ui_impl.ScrollStyle;

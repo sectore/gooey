@@ -10,6 +10,7 @@
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
+const Button = gooey.Button;
 
 // =============================================================================
 // Models
@@ -97,7 +98,7 @@ const CounterCard = struct {
 
     pub fn render(self: @This(), b: *ui.Builder) void {
         const data = b.readEntity(Counter, self.counter) orelse return;
-        var cx = b.entityContext(Counter, self.counter) orelse return;
+        const cx = b.entityContext(Counter, self.counter) orelse return;
 
         b.box(.{
             .padding = .{ .all = 16 },
@@ -110,11 +111,27 @@ const CounterCard = struct {
         }, .{
             ui.text(data.label, .{ .size = 12, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
             ui.textFmt("{}", .{data.count}, .{ .size = 32 }),
-            b.hstack(.{ .gap = 8 }, .{
-                // Pure handlers - no cx.notify() needed!
-                ui.buttonHandler("-", cx.update(Counter.decrement)),
-                ui.buttonHandler("+", cx.update(Counter.increment)),
-            }),
+            CounterButtons{ .cx = cx, .counter_id = self.counter.id },
+        });
+    }
+};
+
+const CounterButtons = struct {
+    cx: gooey.EntityContext(Counter),
+    counter_id: gooey.core.EntityId,
+
+    pub fn render(self: @This(), b: *ui.Builder) void {
+        var cx = self.cx;
+
+        // Create unique IDs using counter's entity ID
+        var dec_id_buf: [32]u8 = undefined;
+        var inc_id_buf: [32]u8 = undefined;
+        const dec_id = std.fmt.bufPrint(&dec_id_buf, "dec_{d}", .{self.counter_id.id}) catch "-";
+        const inc_id = std.fmt.bufPrint(&inc_id_buf, "inc_{d}", .{self.counter_id.id}) catch "+";
+
+        b.hstack(.{ .gap = 8 }, .{
+            Button{ .id = dec_id, .label = "-", .size = .small, .on_click_handler = cx.update(Counter.decrement) },
+            Button{ .id = inc_id, .label = "+", .size = .small, .on_click_handler = cx.update(Counter.increment) },
         });
     }
 };
@@ -154,8 +171,8 @@ const ControlPanel = struct {
 
         b.hstack(.{ .gap = 12, .alignment = .center }, .{
             // These need handler() because they use cx.create()/cx.remove()
-            ui.buttonHandler("+ Add Counter", cx.handler(AppState.addCounter)),
-            ui.buttonHandler("- Remove Counter", cx.handler(AppState.removeCounter)),
+            Button{ .label = "+ Add Counter", .on_click_handler = cx.handler(AppState.addCounter) },
+            Button{ .label = "- Remove Counter", .variant = .secondary, .on_click_handler = cx.handler(AppState.removeCounter) },
             ui.textFmt("({}/10)", .{s.countersSlice().len}, .{ .size = 14, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
         });
     }

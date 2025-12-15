@@ -1,6 +1,7 @@
 const std = @import("std");
 const gooey = @import("gooey");
 const ui = gooey.ui;
+const Button = gooey.Button;
 
 // Define action types
 const Undo = struct {};
@@ -65,8 +66,8 @@ const ButtonRow = struct {
         b.hstack(.{
             .gap = 8,
         }, .{
-            ui.button("Undo (cmd+z)", doUndo),
-            ui.button("Redo (cmd+shift+z)", doRedo),
+            Button{ .label = "Undo (cmd+z)", .on_click = doUndo },
+            Button{ .label = "Redo (cmd+shift+z)", .on_click = doRedo },
         });
     }
 };
