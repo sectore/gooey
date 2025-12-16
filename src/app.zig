@@ -276,6 +276,18 @@ pub fn CxConfig(comptime State: type) type {
 
         /// Custom shader sources (Shadertoy-compatible MSL)
         custom_shaders: []const []const u8 = &.{},
+
+        // === Glass/Transparency Options ===
+
+        /// Background opacity (0.0 = fully transparent, 1.0 = opaque)
+        /// Values < 1.0 enable transparency effects
+        background_opacity: f64 = 1.0,
+
+        /// Glass/blur style for transparent windows
+        glass_style: window_mod.Window.GlassStyle = .none,
+
+        /// Corner radius for glass effect (macOS 26+ only)
+        glass_corner_radius: f64 = 16.0,
     };
 }
 
@@ -331,6 +343,10 @@ pub fn runCx(
         .height = config.height,
         .background_color = bg_color,
         .custom_shaders = config.custom_shaders,
+        // Glass/transparency options
+        .background_opacity = config.background_opacity,
+        .glass_style = config.glass_style,
+        .glass_corner_radius = config.glass_corner_radius,
     });
     defer window.deinit();
 

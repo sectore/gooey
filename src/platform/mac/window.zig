@@ -38,6 +38,10 @@ pub const Window = struct {
     delegate: ?objc.Object = null,
     // Custom shader animation flag
     custom_shader_animation: bool,
+    // Glass effect support (macOS 26.0+ / fallback blur)
+    glass_effect_view: ?objc.Object = null,
+    glass_style: GlassStyle = .none,
+    background_opacity: f64 = 1.0,
 
     /// Mutex protecting all render-related state accessed from DisplayLink thread.
     /// This includes: scene, text_atlas, background_color, size, scale_factor, renderer.
@@ -110,6 +114,18 @@ pub const Window = struct {
     /// Render callback: called each frame before drawing
     pub const RenderCallback = *const fn (*Window) void;
 
+    /// Glass/blur effect style for transparent windows
+    pub const GlassStyle = enum {
+        /// No glass effect
+        none,
+        /// macOS 26+ liquid glass (regular density)
+        glass_regular,
+        /// macOS 26+ liquid glass (clear/lighter)
+        glass_clear,
+        /// Traditional background blur (works on older macOS)
+        blur,
+    };
+
     pub const Options = struct {
         title: []const u8 = "gooey Window",
         width: f64 = 800,
@@ -117,6 +133,13 @@ pub const Window = struct {
         background_color: geometry.Color = geometry.Color.init(0.2, 0.2, 0.25, 1.0),
         use_display_link: bool = true,
         custom_shaders: []const []const u8 = &.{},
+        /// Background opacity (0.0 = fully transparent, 1.0 = opaque)
+        /// Values < 1.0 enable transparency effects
+        background_opacity: f64 = 1.0,
+        /// Glass/blur style for transparent windows
+        glass_style: GlassStyle = .none,
+        /// Corner radius for glass effect (macOS 26+ only)
+        glass_corner_radius: f64 = 16.0,
     };
 
     const Self = @This();
@@ -141,6 +164,8 @@ pub const Window = struct {
             .needs_render = std.atomic.Value(bool).init(true),
             .scene = null,
             .custom_shader_animation = false,
+            .glass_style = options.glass_style,
+            .background_opacity = options.background_opacity,
         };
 
         // Create NSWindow
@@ -178,6 +203,11 @@ pub const Window = struct {
         const view_frame: NSRect = self.ns_window.msgSend(NSRect, "contentLayoutRect", .{});
         self.ns_view = try input_view.create(view_frame, self);
         self.ns_window.msgSend(void, "setContentView:", .{self.ns_view.value});
+
+        // Setup glass/transparency effect if requested
+        if (options.background_opacity < 1.0) {
+            try self.setupGlassEffect(options.glass_style, options.background_opacity, options.glass_corner_radius);
+        }
 
         // Enable mouse tracking for mouseMoved events
         try self.setupTrackingArea();
@@ -379,6 +409,12 @@ pub const Window = struct {
             self.ns_window.msgSend(void, "setDelegate:", .{@as(?*anyopaque, null)});
             d.msgSend(void, "release", .{});
         }
+        // Clean up glass effect view
+        if (self.glass_effect_view) |glass_view| {
+            glass_view.msgSend(void, "removeFromSuperview", .{});
+            self.glass_effect_view = null;
+        }
+
         if (self.display_link) |*dl| {
             dl.deinit();
         }
@@ -541,6 +577,9 @@ pub const Window = struct {
         self.metal_layer.msgSend(void, "setDisplaySyncEnabled:", .{false});
         self.metal_layer.msgSend(void, "setMaximumDrawableCount:", .{@as(u64, 3)});
 
+        // Allow transparency through the Metal layer
+        self.metal_layer.msgSend(void, "setOpaque:", .{false});
+
         self.ns_view.msgSend(void, "setWantsLayer:", .{true});
         self.ns_view.msgSend(void, "setLayer:", .{self.metal_layer});
 
@@ -550,6 +589,123 @@ pub const Window = struct {
         };
         self.metal_layer.msgSend(void, "setDrawableSize:", .{drawable_size});
     }
+
+    fn setupGlassEffect(self: *Self, style: GlassStyle, opacity: f64, corner_radius: f64) !void {
+        if (style == .none and opacity >= 1.0) return;
+
+        // Make the window non-opaque for transparency
+        self.ns_window.msgSend(void, "setOpaque:", .{false});
+
+        // Set background color with transparency
+        // Using a very low alpha (0.001) like Ghostty/Terminal.app for best results
+        const NSColor = objc.getClass("NSColor") orelse return error.ClassNotFound;
+        const alpha = @max(0.001, @min(opacity, 1.0));
+        const transparent_bg = NSColor.msgSend(objc.Object, "colorWithRed:green:blue:alpha:", .{
+            @as(f64, 1.0), // white base
+            @as(f64, 1.0),
+            @as(f64, 1.0),
+            alpha,
+        });
+        self.ns_window.msgSend(void, "setBackgroundColor:", .{transparent_bg.value});
+
+        // Try to setup liquid glass (macOS 26.0+) or fallback to blur
+        switch (style) {
+            .glass_regular, .glass_clear => {
+                if (!self.setupLiquidGlass(style, corner_radius)) {
+                    // Fallback to traditional blur if liquid glass unavailable
+                    self.setupTraditionalBlur();
+                }
+            },
+            .blur => {
+                self.setupTraditionalBlur();
+            },
+            .none => {
+                // Just transparency, no blur effect
+            },
+        }
+    }
+
+    fn setupLiquidGlass(self: *Self, style: GlassStyle, corner_radius: f64) bool {
+        // NSGlassEffectView is only available on macOS 26.0+ (Tahoe)
+        const NSGlassEffectView = objc.getClass("NSGlassEffectView") orelse {
+            std.debug.print("NSGlassEffectView not available (requires macOS 26.0+)\n", .{});
+            return false;
+        };
+
+        // Get the content view's superview (the window's content view container)
+        const content_view: objc.Object = self.ns_window.msgSend(objc.Object, "contentView", .{});
+        const superview: objc.Object = content_view.msgSend(objc.Object, "superview", .{});
+        if (superview.value == null) {
+            std.debug.print("Could not get content view superview for glass effect\n", .{});
+            return false;
+        }
+
+        const bounds: NSRect = superview.msgSend(NSRect, "bounds", .{});
+
+        // Create and configure the glass effect view
+        const glass_alloc = NSGlassEffectView.msgSend(objc.Object, "alloc", .{});
+        const glass_view = glass_alloc.msgSend(objc.Object, "initWithFrame:", .{bounds});
+
+        // Set style: 0 = regular, 1 = clear
+        const style_value: i64 = switch (style) {
+            .glass_regular => 0,
+            .glass_clear => 1,
+            else => 0,
+        };
+        glass_view.msgSend(void, "setStyle:", .{style_value});
+
+        // Set corner radius
+        glass_view.msgSend(void, "setCornerRadius:", .{corner_radius});
+
+        // Set tint color based on our background color
+        const NSColor = objc.getClass("NSColor") orelse return false;
+        const tint_color = NSColor.msgSend(objc.Object, "colorWithRed:green:blue:alpha:", .{
+            @as(f64, self.background_color.r),
+            @as(f64, self.background_color.g),
+            @as(f64, self.background_color.b),
+            @as(f64, self.background_opacity),
+        });
+        glass_view.msgSend(void, "setTintColor:", .{tint_color.value});
+
+        // Enable autoresizing to fill the window
+        // NSViewWidthSizable | NSViewHeightSizable = 2 | 16 = 18
+        glass_view.msgSend(void, "setAutoresizingMask:", .{@as(u64, 18)});
+
+        // Add the glass view BELOW the content view
+        // NSWindowBelow = -1
+        superview.msgSend(void, "addSubview:positioned:relativeTo:", .{
+            glass_view.value,
+            @as(i64, -1), // NSWindowBelow
+            content_view.value,
+        });
+
+        self.glass_effect_view = glass_view;
+        std.debug.print("Liquid glass effect enabled (style: {})\n", .{style});
+        return true;
+    }
+
+    fn setupTraditionalBlur(self: *Self) void {
+        // Use the private CGS API for background blur (same as Terminal.app, Ghostty)
+        // This works on older macOS versions
+        const window_number = self.ns_window.msgSend(usize, "windowNumber", .{});
+        const blur_radius: c_int = 20; // Reasonable default blur amount
+
+        const result = CGSSetWindowBackgroundBlurRadius(
+            CGSDefaultConnectionForThread(),
+            window_number,
+            blur_radius,
+        );
+
+        if (result == 0) {
+            std.debug.print("Traditional background blur enabled (radius: {})\n", .{blur_radius});
+        } else {
+            std.debug.print("Failed to enable background blur (error: {})\n", .{result});
+        }
+    }
+
+    // Private CoreGraphics APIs for background blur (used by Terminal.app, Ghostty, etc.)
+    extern "c" fn CGSSetWindowBackgroundBlurRadius(*anyopaque, usize, c_int) i32;
+    extern "c" fn CGSDefaultConnectionForThread() *anyopaque;
 
     // =========================================================================
     // Interface Support

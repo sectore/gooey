@@ -86,6 +86,31 @@ pub fn build(b: *std.Build) void {
     run_pomodoro_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Liquid Glass Example
+    // =========================================================================
+
+    const glass_exe = b.addExecutable(.{
+        .name = "glass",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/glass.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(glass_exe);
+
+    // Run glass example
+    const run_glass_step = b.step("run-glass", "Run the glass example");
+    const run_glass_cmd = b.addRunArtifact(glass_exe);
+    run_glass_step.dependOn(&run_glass_cmd.step);
+    run_glass_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Counter Example
     // =========================================================================
 
