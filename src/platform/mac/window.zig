@@ -94,6 +94,16 @@ pub const Window = struct {
     // Convenience accessors (so user code doesn't need to convert)
     // =========================================================================
 
+    /// Get the effective clear color for rendering.
+    /// When glass effects are active, returns transparent so the glass shows through.
+    /// Otherwise returns the configured background color.
+    pub fn getClearColor(self: *const Self) geometry.Color {
+        return switch (self.glass_style) {
+            .glass_regular, .glass_clear => geometry.Color.transparent,
+            .blur, .none => self.background_color,
+        };
+    }
+
     /// Window width in logical pixels
     pub fn width(self: *const Self) u32 {
         return @intFromFloat(self.size.width);
@@ -130,7 +140,7 @@ pub const Window = struct {
         title: []const u8 = "gooey Window",
         width: f64 = 800,
         height: f64 = 600,
-        background_color: geometry.Color = geometry.Color.init(0.2, 0.2, 0.25, 1.0),
+        background_color: geometry.Color = geometry.Color.transparent,
         use_display_link: bool = true,
         custom_shaders: []const []const u8 = &.{},
         /// Background opacity (0.0 = fully transparent, 1.0 = opaque)
@@ -140,6 +150,10 @@ pub const Window = struct {
         glass_style: GlassStyle = .none,
         /// Corner radius for glass effect (macOS 26+ only)
         glass_corner_radius: f64 = 16.0,
+        /// Make titlebar transparent (blends with window content)
+        titlebar_transparent: bool = false,
+        /// Extend content under titlebar (full bleed)
+        full_size_content: bool = false,
     };
 
     const Self = @This();
@@ -192,6 +206,19 @@ pub const Window = struct {
                 false,
             },
         );
+
+        // Configure titlebar transparency
+        if (options.titlebar_transparent) {
+            self.ns_window.msgSend(void, "setTitlebarAppearsTransparent:", .{true});
+        }
+
+        // Extend content under titlebar for full-bleed effect
+        if (options.full_size_content) {
+            // Add NSWindowStyleMaskFullSizeContentView to existing style mask
+            const current_mask = self.ns_window.msgSend(u64, "styleMask", .{});
+            const full_size_content_mask: u64 = 1 << 15; // NSWindowStyleMaskFullSizeContentView
+            self.ns_window.msgSend(void, "setStyleMask:", .{current_mask | full_size_content_mask});
+        }
 
         const window_delegate = @import("window_delegate.zig");
         self.delegate = try window_delegate.create(self);
@@ -476,9 +503,9 @@ pub const Window = struct {
             }
 
             if (self.scene) |s| {
-                self.renderer.renderSceneSynchronous(s, self.background_color) catch {};
+                self.renderer.renderSceneSynchronous(s, self.getClearColor()) catch {};
             } else {
-                self.renderer.clearSynchronous(self.background_color);
+                self.renderer.clearSynchronous(self.getClearColor());
             }
         }
     }
@@ -520,7 +547,7 @@ pub const Window = struct {
 
     /// Manual render (for when display link is disabled)
     pub fn render(self: *Self) void {
-        self.renderer.clear(self.background_color);
+        self.renderer.clear(self.getClearColor());
     }
 
     pub fn setTitle(self: *Self, new_title: []const u8) void {
@@ -591,20 +618,20 @@ pub const Window = struct {
     }
 
     fn setupGlassEffect(self: *Self, style: GlassStyle, opacity: f64, corner_radius: f64) !void {
-        if (style == .none and opacity >= 1.0) return;
+        _ = opacity; // Opacity is handled by the glass tint, not window background
+        if (style == .none) return;
 
         // Make the window non-opaque for transparency
         self.ns_window.msgSend(void, "setOpaque:", .{false});
 
-        // Set background color with transparency
-        // Using a very low alpha (0.001) like Ghostty/Terminal.app for best results
+        // Set window background to nearly transparent
+        // The glass effect provides the actual visual background
         const NSColor = objc.getClass("NSColor") orelse return error.ClassNotFound;
-        const alpha = @max(0.001, @min(opacity, 1.0));
         const transparent_bg = NSColor.msgSend(objc.Object, "colorWithRed:green:blue:alpha:", .{
-            @as(f64, 1.0), // white base
             @as(f64, 1.0),
             @as(f64, 1.0),
-            alpha,
+            @as(f64, 1.0),
+            @as(f64, 0.001), // Nearly invisible - glass shows through
         });
         self.ns_window.msgSend(void, "setBackgroundColor:", .{transparent_bg.value});
 
@@ -657,13 +684,22 @@ pub const Window = struct {
         // Set corner radius
         glass_view.msgSend(void, "setCornerRadius:", .{corner_radius});
 
-        // Set tint color based on our background color
+        // Set tint color based on our background color and opacity
+        // If background_color is fully transparent, use a sensible default
         const NSColor = objc.getClass("NSColor") orelse return false;
+
+        // Compute effective tint: use background_color RGB with background_opacity as alpha
+        // If the color is fully transparent (default), use a dark gray as fallback
+        const tint_r: f64 = if (self.background_color.a > 0.001) self.background_color.r else 0.1;
+        const tint_g: f64 = if (self.background_color.a > 0.001) self.background_color.g else 0.1;
+        const tint_b: f64 = if (self.background_color.a > 0.001) self.background_color.b else 0.1;
+        const tint_a: f64 = @max(0.001, self.background_opacity); // Ensure some minimum opacity
+
         const tint_color = NSColor.msgSend(objc.Object, "colorWithRed:green:blue:alpha:", .{
-            @as(f64, self.background_color.r),
-            @as(f64, self.background_color.g),
-            @as(f64, self.background_color.b),
-            @as(f64, self.background_opacity),
+            tint_r,
+            tint_g,
+            tint_b,
+            tint_a,
         });
         glass_view.msgSend(void, "setTintColor:", .{tint_color.value});
 
@@ -680,7 +716,7 @@ pub const Window = struct {
         });
 
         self.glass_effect_view = glass_view;
-        std.debug.print("Liquid glass effect enabled (style: {})\n", .{style});
+        std.debug.print("Liquid glass effect enabled (style: {}, tint: rgba({d:.2},{d:.2},{d:.2},{d:.2}))\n", .{ style, tint_r, tint_g, tint_b, tint_a });
         return true;
     }
 
@@ -875,22 +911,23 @@ fn displayLinkCallback(
 
     // Use post-process rendering if shaders are active
     if (window.scene) |s| {
+        const clear_color = window.getClearColor();
         if (window.renderer.hasCustomShaders()) {
-            window.renderer.renderSceneWithPostProcess(s, window.background_color) catch |err| {
+            window.renderer.renderSceneWithPostProcess(s, clear_color) catch |err| {
                 std.debug.print("renderSceneWithPostProcess error: {}\n", .{err});
                 // Fall back to normal render
-                window.renderer.renderScene(s, window.background_color) catch {
-                    window.renderer.clear(window.background_color);
+                window.renderer.renderScene(s, clear_color) catch {
+                    window.renderer.clear(clear_color);
                 };
             };
         } else {
-            window.renderer.renderScene(s, window.background_color) catch |err| {
+            window.renderer.renderScene(s, clear_color) catch |err| {
                 std.debug.print("renderScene error: {}\n", .{err});
-                window.renderer.clear(window.background_color);
+                window.renderer.clear(clear_color);
             };
         }
     } else {
-        window.renderer.clear(window.background_color);
+        window.renderer.clear(window.getClearColor());
     }
 
     return .success;

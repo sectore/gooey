@@ -75,12 +75,15 @@ pub fn main() !void {
         .title = "Liquid Glass Demo",
         .width = 500,
         .height = 400,
-        .background_color = gooey.Color.init(0.1, 0.1, 0.15, 0.6),
-        // Enable transparency - required for glass effects
-        .background_opacity = 0.3,
-        // Request liquid glass (falls back to blur on older macOS)
-        .glass_style = .glass_clear,
-        .glass_corner_radius = 20.0,
+        // Dark background color - RGB values become the glass tint
+        .background_color = gooey.Color.init(0.1, 0.1, 0.15, 1.0),
+        // How opaque the tint is (0.0-1.0)
+        .background_opacity = 0.2,
+        // Request liquid glass
+        .glass_style = .glass_regular,
+        .glass_corner_radius = 10.0, // Try 10 to match typical window corners
+        .titlebar_transparent = true,
+        .full_size_content = false,
     });
 }
 

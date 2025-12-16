@@ -288,6 +288,12 @@ pub fn CxConfig(comptime State: type) type {
 
         /// Corner radius for glass effect (macOS 26+ only)
         glass_corner_radius: f64 = 16.0,
+
+        /// Make titlebar transparent (blends with window content)
+        titlebar_transparent: bool = false,
+
+        /// Extend content under titlebar (full bleed)
+        full_size_content: bool = false,
     };
 }
 
@@ -347,6 +353,8 @@ pub fn runCx(
         .background_opacity = config.background_opacity,
         .glass_style = config.glass_style,
         .glass_corner_radius = config.glass_corner_radius,
+        .titlebar_transparent = config.titlebar_transparent,
+        .full_size_content = config.full_size_content,
     });
     defer window.deinit();
 
