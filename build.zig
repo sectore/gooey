@@ -45,7 +45,14 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    b.installArtifact(exe);
+    // const zgpu = b.dependency("zgpu", .{});
+    // exe.root_module.addImport("zgpu", zgpu.module("root"));
+
+    // if (target.result.os.tag != .emscripten) {
+    //     exe.linkLibrary(zgpu.artifact("zdawn"));
+    // }
+
+    // b.installArtifact(exe);
 
     // Run step (default demo)
     const run_step = b.step("run", "Run the login form demo");
@@ -205,6 +212,82 @@ pub fn build(b: *std.Build) void {
     const run_actions_cmd = b.addRunArtifact(actions_exe);
     run_actions_step.dependOn(&run_actions_cmd.step);
     run_actions_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
+    // WebAssembly Build (browser)
+    // =========================================================================
+
+    const wasm_target = b.resolveTargetQuery(.{
+        .cpu_arch = .wasm32,
+        .os_tag = .freestanding,
+    });
+
+    const wasm_exe = b.addExecutable(.{
+        .name = "gooey",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/platform/wgpu/web/main.zig"),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+        }),
+    });
+
+    // Add shaders directory so @embedFile can find them
+    wasm_exe.root_module.addAnonymousImport("unified_wgsl", .{
+        .root_source_file = b.path("src/platform/wgpu/shaders/unified.wgsl"),
+    });
+    wasm_exe.root_module.addAnonymousImport("text_wgsl", .{
+        .root_source_file = b.path("src/platform/wgpu/shaders/text.wgsl"),
+    });
+
+    // Create geometry module (no dependencies)
+    const geometry_module = b.createModule(.{
+        .root_source_file = b.path("src/core/geometry.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+    });
+
+    // Create scene module first (it has no dependencies)
+    const scene_module = b.createModule(.{
+        .root_source_file = b.path("src/core/scene.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+        .imports = &.{
+            .{ .name = "geometry", .module = geometry_module },
+        },
+    });
+
+    // Create unified module with scene dependency
+    const unified_module = b.createModule(.{
+        .root_source_file = b.path("src/platform/wgpu/unified.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
+        .imports = &.{
+            .{ .name = "scene", .module = scene_module },
+        },
+    });
+
+    // Add modules to wasm executable
+    wasm_exe.root_module.addImport("scene", scene_module);
+    wasm_exe.root_module.addImport("unified", unified_module);
+
+    // WASM-specific settings
+    wasm_exe.entry = .disabled; // No _start, we use exports
+    wasm_exe.rdynamic = true; // Export all pub functions
+
+    // Install to web/ directory
+    const wasm_install = b.addInstallArtifact(wasm_exe, .{
+        .dest_dir = .{ .override = .{ .custom = "web" } },
+    });
+
+    // Copy HTML shell to output directory
+    const html_install = b.addInstallFile(
+        b.path("web/index.html"),
+        "web/index.html",
+    );
+
+    const wasm_step = b.step("wasm", "Build WebAssembly module");
+    wasm_step.dependOn(&wasm_install.step);
+    wasm_step.dependOn(&html_install.step);
 
     // =========================================================================
     // Tests
