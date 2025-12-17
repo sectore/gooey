@@ -27,10 +27,11 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 
-// Core imports
-const platform_mod = @import("platform/mac/platform.zig");
-const window_mod = @import("platform/mac/window.zig");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
+// Core imports (platform-agnostic)
 const gooey_mod = @import("core/gooey.zig");
 const scene_mod = @import("core/scene.zig");
 const render_bridge = @import("core/render_bridge.zig");
@@ -44,16 +45,26 @@ const dispatch_mod = @import("core/dispatch.zig");
 const scroll_mod = @import("widgets/scroll_container.zig");
 const text_input_mod = @import("widgets/text_input.zig");
 const text_area_mod = @import("widgets/text_area.zig");
-
 const cx_mod = @import("cx.zig");
-pub const Cx = cx_mod.Cx;
 
+// Platform-specific imports
+const platform_mod = if (is_wasm)
+    @import("platform/wgpu/web/mod.zig")
+else
+    @import("platform/mac/platform.zig");
+
+const window_mod = if (is_wasm)
+    @import("platform/wgpu/web/window.zig")
+else
+    @import("platform/mac/window.zig");
+
+// Types
+pub const Cx = cx_mod.Cx;
 const TextInput = text_input_mod.TextInput;
 const TextArea = text_area_mod.TextArea;
-
-const MacPlatform = platform_mod.MacPlatform;
+const Platform = if (is_wasm) platform_mod.WebPlatform else platform_mod.MacPlatform;
+const Window = if (is_wasm) platform_mod.WebWindow else window_mod.Window;
 const DispatchNodeId = dispatch_mod.DispatchNodeId;
-const Window = window_mod.Window;
 const Gooey = gooey_mod.Gooey;
 const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
@@ -336,7 +347,7 @@ pub fn runCx(
     const allocator = gpa.allocator();
 
     // Initialize platform
-    var plat = try MacPlatform.init();
+    var plat = try Platform.init();
     defer plat.deinit();
 
     // Default background color
@@ -421,14 +432,14 @@ pub fn runCx(
     window.setTextAtlas(gooey_ctx.text_system.getAtlas());
     window.setScene(gooey_ctx.scene);
 
-    std.debug.print("Gooey app started (Cx): {s}\n", .{config.title});
+    //std.debug.print("Gooey app started (Cx): {s}\n", .{config.title});
 
     // Run the event loop
     plat.run();
 }
 
 /// Internal: render a single frame with Cx context
-fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
+pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     // Reset dispatch tree for new frame
     cx.gooey.dispatch.reset();
 
@@ -518,7 +529,7 @@ fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
 }
 
 /// Internal: handle input with Cx context
-fn handleInputCx(
+pub fn handleInputCx(
     cx: *Cx,
     on_event: ?*const fn (*Cx, input_mod.InputEvent) bool,
     event: input_mod.InputEvent,
@@ -1140,6 +1151,22 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
         },
         .text => {
             const text_data = cmd.data.text;
+
+            // DEBUG: Compare layout width vs rendered width
+            if (@import("builtin").cpu.arch == .wasm32) {
+                //const web_imports = @import("platform/wgpu/web/imports.zig");
+                var shaped = gooey_ctx.text_system.shapeText(text_data.text) catch null;
+                if (shaped) |*s| {
+                    defer s.deinit(gooey_ctx.text_system.allocator);
+                    // web_imports.log("TEXT: bbox.w={d} shaped.w={d} diff={d} \"{s}\"", .{
+                    //     cmd.bounding_box.width,
+                    //     s.width,
+                    //     cmd.bounding_box.width - s.width,
+                    //     text_data.text,
+                    // });
+                }
+            }
+
             const baseline_y = if (gooey_ctx.text_system.getMetrics()) |metrics|
                 metrics.calcBaseline(cmd.bounding_box.y, cmd.bounding_box.height)
             else
@@ -1201,5 +1228,267 @@ fn isControlKey(key: input_mod.KeyCode, mods: input_mod.Modifiers) bool {
         .escape,
         => true,
         else => false,
+    };
+}
+
+// =============================================================================
+// Unified App - Works for both Native and Web
+// =============================================================================
+
+/// Unified app entry point generator. On native, generates `main()`.
+/// On web, generates WASM exports (init/frame/resize).
+///
+/// Example:
+/// ```zig
+/// var state = AppState{};
+/// pub usingnamespace gooey.App(AppState, &state, render, .{
+///     .title = "My App",
+///     .width = 800,
+///     .height = 600,
+/// });
+/// ```
+pub fn App(
+    comptime State: type,
+    state: *State,
+    comptime render: fn (*Cx) void,
+    comptime config: anytype,
+) type {
+    if (is_wasm) {
+        return WebApp(State, state, render, config);
+    } else {
+        return struct {
+            pub fn main() !void {
+                try runCx(State, state, render, .{
+                    .title = if (@hasField(@TypeOf(config), "title")) config.title else "Gooey App",
+                    .width = if (@hasField(@TypeOf(config), "width")) config.width else 800,
+                    .height = if (@hasField(@TypeOf(config), "height")) config.height else 600,
+                    .background_color = if (@hasField(@TypeOf(config), "background_color")) config.background_color else null,
+                    .on_event = if (@hasField(@TypeOf(config), "on_event")) config.on_event else null,
+                });
+            }
+        };
+    }
+}
+
+// =============================================================================
+// WebApp - WASM Export Generator
+// =============================================================================
+
+/// Generates WASM exports for running a gooey app in the browser.
+/// The returned struct contains init/frame/resize functions that are
+/// automatically exported via @export when the type is analyzed.
+///
+/// Example:
+/// ```zig
+/// var state = AppState{};
+///
+/// // Create the WebApp type - this triggers the exports
+/// const App = gooey.WebApp(AppState, &state, render, .{
+///     .title = "My App",
+///     .width = 800,
+///     .height = 600,
+/// });
+///
+/// // Force type analysis to ensure exports are emitted
+/// comptime { _ = App; }
+/// ```
+pub fn WebApp(
+    comptime State: type,
+    state: *State,
+    comptime render: fn (*Cx) void,
+    comptime config: anytype,
+) type {
+    // Only generate for WASM targets
+    if (!is_wasm) {
+        return struct {};
+    }
+
+    const web_imports = @import("platform/wgpu/web/imports.zig");
+    const WebRenderer = @import("platform/wgpu/web/renderer.zig").WebRenderer;
+    const handler_mod = @import("core/handler.zig");
+
+    return struct {
+        const Self = @This();
+
+        // Global state (WASM exports can't capture closures)
+        var g_initialized: bool = false;
+        var g_platform: ?Platform = null;
+        var g_window: ?*Window = null;
+        var g_gooey: ?*Gooey = null;
+        var g_builder: ?*Builder = null;
+        var g_cx: ?Cx = null;
+        var g_renderer: ?WebRenderer = null;
+
+        const on_event: ?*const fn (*Cx, InputEvent) bool = if (@hasField(@TypeOf(config), "on_event"))
+            config.on_event
+        else
+            null;
+
+        /// Initialize the application (called from JavaScript)
+        pub fn init() callconv(.c) void {
+            initImpl() catch |err| {
+                web_imports.err("Init failed: {}", .{err});
+            };
+        }
+
+        fn initImpl() !void {
+            const allocator = std.heap.wasm_allocator;
+
+            web_imports.log("Initializing gooey app...", .{});
+
+            // Initialize platform
+            g_platform = try Platform.init();
+
+            // Create window
+            g_window = try Window.init(allocator, &g_platform.?, .{
+                .title = if (@hasField(@TypeOf(config), "title")) config.title else "Gooey App",
+                .width = if (@hasField(@TypeOf(config), "width")) config.width else 800,
+                .height = if (@hasField(@TypeOf(config), "height")) config.height else 600,
+            });
+
+            // Initialize Gooey (owns layout, scene, text_system)
+            const gooey_ptr = try allocator.create(Gooey);
+            gooey_ptr.* = try Gooey.initOwned(allocator, g_window.?);
+            g_gooey = gooey_ptr;
+
+            //web_imports.log("TextSystem scale: {d}", .{g_gooey.?.text_system.scale_factor});
+
+            // Initialize Builder
+            g_builder = try allocator.create(Builder);
+            g_builder.?.* = Builder.init(
+                allocator,
+                g_gooey.?.layout,
+                g_gooey.?.scene,
+                g_gooey.?.dispatch,
+            );
+            g_builder.?.gooey = g_gooey.?;
+
+            // Create Cx context
+            g_cx = Cx{
+                .allocator = allocator,
+                .gooey = g_gooey.?,
+                .builder = g_builder.?,
+                .state_ptr = @ptrCast(state),
+                .state_type_id = cx_mod.typeId(State),
+            };
+
+            // Wire up builder to cx
+            g_builder.?.cx_ptr = @ptrCast(&g_cx.?);
+
+            // Set root state for handler callbacks
+            handler_mod.setRootState(State, state);
+
+            // Initialize GPU renderer
+            g_renderer = try WebRenderer.init();
+
+            // Upload initial atlas
+            g_renderer.?.uploadAtlas(g_gooey.?.text_system);
+
+            g_initialized = true;
+            web_imports.log("Gooey app ready!", .{});
+
+            // Start the animation loop
+            if (g_platform) |*p| p.run();
+        }
+
+        // Track previous mouse state for click detection
+        var g_prev_mouse_down: bool = false;
+        var g_prev_mouse_x: f32 = 0;
+        var g_prev_mouse_y: f32 = 0;
+
+        pub fn frame(timestamp: f64) callconv(.c) void {
+            _ = timestamp;
+            if (!g_initialized) return;
+
+            const w = g_window orelse return;
+            const cx = &g_cx.?;
+
+            // Update window size
+            w.updateSize();
+            g_gooey.?.width = @floatCast(w.size.width);
+            g_gooey.?.height = @floatCast(w.size.height);
+            g_gooey.?.scale_factor = @floatCast(w.scale_factor);
+
+            // Poll mouse state (coordinates should be in logical pixels from JS)
+            const mouse_x = web_imports.getMouseX();
+            const mouse_y = web_imports.getMouseY();
+            const mouse_buttons = web_imports.getMouseButtons();
+            const mouse_down = (mouse_buttons & 1) != 0;
+
+            // Generate mouse events
+            if (mouse_x != g_prev_mouse_x or mouse_y != g_prev_mouse_y) {
+                const move_event = input_mod.InputEvent{
+                    .mouse_moved = .{
+                        .position = .{ .x = mouse_x, .y = mouse_y },
+                        .button = .left,
+                        .click_count = 0,
+                        .modifiers = .{},
+                    },
+                };
+                _ = handleInputCx(cx, on_event, move_event);
+                g_prev_mouse_x = mouse_x;
+                g_prev_mouse_y = mouse_y;
+            }
+
+            // Detect click (mouse up after mouse down)
+            if (g_prev_mouse_down and !mouse_down) {
+                const up_event = input_mod.InputEvent{
+                    .mouse_up = .{
+                        .position = .{ .x = mouse_x, .y = mouse_y },
+                        .button = .left,
+                        .click_count = 1,
+                        .modifiers = .{},
+                    },
+                };
+                _ = handleInputCx(cx, on_event, up_event);
+            } else if (!g_prev_mouse_down and mouse_down) {
+                const down_event = input_mod.InputEvent{
+                    .mouse_down = .{
+                        .position = .{ .x = mouse_x, .y = mouse_y },
+                        .button = .left,
+                        .click_count = 1,
+                        .modifiers = .{},
+                    },
+                };
+                _ = handleInputCx(cx, on_event, down_event);
+            }
+            g_prev_mouse_down = mouse_down;
+
+            // Render frame using existing gooey infrastructure
+            renderFrameCx(cx, render) catch |err| {
+                web_imports.err("Render error: {}", .{err});
+                return;
+            };
+
+            // Get viewport dimensions (use LOGICAL pixels, not physical)
+            const vw: f32 = @floatCast(w.size.width);
+            const vh: f32 = @floatCast(w.size.height);
+
+            // Sync atlas texture if glyphs were added
+            g_renderer.?.syncAtlas(g_gooey.?.text_system);
+
+            // Render to GPU
+            const bg = w.background_color;
+            g_renderer.?.render(g_gooey.?.scene, vw, vh, bg.r, bg.g, bg.b, bg.a);
+
+            // Request next frame
+            if (g_platform) |p| {
+                if (p.isRunning()) web_imports.requestAnimationFrame();
+            }
+        }
+
+        /// Handle window resize (called from JavaScript)
+        pub fn resize(width: u32, height: u32) callconv(.c) void {
+            _ = width;
+            _ = height;
+            if (g_window) |w| w.updateSize();
+        }
+
+        // Export functions for WASM - this comptime block runs when the type is analyzed
+        comptime {
+            @export(&Self.init, .{ .name = "init" });
+            @export(&Self.frame, .{ .name = "frame" });
+            @export(&Self.resize, .{ .name = "resize" });
+        }
     };
 }

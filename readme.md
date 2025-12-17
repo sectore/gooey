@@ -1,23 +1,23 @@
 # Gooey
 
-A GPU-accelerated UI framework for Zig, targeting macOS with Metal rendering.
+A GPU-accelerated UI framework for Zig, targeting macOS with Metal rendering and Browser via WASM.
 
-> ⚠️ **Early Development**: macOS-only. API is evolving.
+> ⚠️ **Early Development**: macOS-only (wasm half-baked). API is evolving.
 
 <table>
   <tr>
-    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-1.png" height="300px" /></td>
-    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-2.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-light.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-dark.png" height="300px" /></td>
   </tr>
   <tr>
-    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-3.png" height="300px" /></td>
-    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-dark.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-shader.png" height="300px" /></td>
+    <td><img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-shader2.png" height="300px" /></td>
   </tr>
 </table>
 
-Now with custom shader support!
+WASM support imminent
 
-<img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-shader.png" height="300px" />
+<img src="https://github.com/duanebester/gooey/blob/main/assets/screenshots/gooey-wasm.png" height="300px" />
 
 ## Features
 
@@ -139,6 +139,24 @@ Gooey includes ready-to-use components:
 | Dynamic  | `zig build run-dynamic`  | Entity creation and deletion       |
 | Layout   | `zig build run-layout`   | Flexbox, shrink, text wrapping     |
 | Shader   | `zig build run-shader`   | Custom Metal shaders               |
+
+## WASM
+
+:warning: Currently supports subset of the API. :warning:
+
+To build the browser version of the counter/dynamic counters examples:
+
+```bash
+zig build wasm-counter
+zig build wasm-dynamic-counters
+```
+
+To then run the example(s):
+
+```bash
+python3 -m http.server 8080 -d zig-out/web/counter
+python3 -m http.server 8080 -d zig-out/web/dynamic
+```
 
 ## Inspiration
 

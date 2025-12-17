@@ -117,8 +117,8 @@
 
       canvas.addEventListener("mousemove", (e) => {
         const rect = canvas.getBoundingClientRect();
-        mouseX = (e.clientX - rect.left) * dpr;
-        mouseY = (e.clientY - rect.top) * dpr;
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
       });
       canvas.addEventListener("mousedown", (e) => {
         mouseButtons |= 1 << e.button;
@@ -148,6 +148,8 @@
         consoleLog: (ptr, len) => console.log("[WASM]", getString(ptr, len)),
         consoleError: (ptr, len) =>
           console.error("[WASM]", getString(ptr, len)),
+
+        getTimestampMillis: () => Date.now(),
 
         getCanvasWidth: () => canvas.clientWidth,
         getCanvasHeight: () => canvas.clientHeight,
@@ -399,12 +401,12 @@
           view.setUint32(outWidth, width, true);
           view.setUint32(outHeight, height, true);
           view.setFloat32(outBearingX, -(left + 1), true); // Offset from cursor to bitmap left edge
-          view.setFloat32(outBearingY, -(ascent + 1), true); // Offset from baseline to bitmap top edge
+          view.setFloat32(outBearingY, -(ascent - 1), true); // Offset from baseline to bitmap top edge
           view.setFloat32(outAdvance, advance, true);
 
-          console.log(
-            `Rasterized '${char}': ${width}x${height}, bearing=(${-(left + 1)}, ${-(ascent + 1)}), advance=${advance}`,
-          );
+          // console.log(
+          //   `Rasterized '${char}': ${width}x${height}, bearing=(${-(left + 1)}, ${-(ascent + 1)}), advance=${advance}`,
+          // );
         },
 
         createTexture: (width, height, dataPtr, dataLen) => {
@@ -425,6 +427,28 @@
             { width, height },
           );
           return allocHandle(handles.textures, texture);
+        },
+
+        updateTexture: (textureHandle, width, height, dataPtr, dataLen) => {
+          const texture = handles.textures.get(textureHandle);
+          if (!texture) {
+            console.error(
+              "updateTexture: invalid texture handle",
+              textureHandle,
+            );
+            return;
+          }
+          const data = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            dataPtr,
+            dataLen,
+          );
+          queue.writeTexture(
+            { texture },
+            data,
+            { bytesPerRow: width },
+            { width, height },
+          );
         },
 
         createSampler: () => {
@@ -492,7 +516,7 @@
 
         // Load WASM
         status.textContent = "Loading WASM...";
-        const response = await fetch("gooey.wasm");
+        const response = await fetch("app.wasm");
         const wasmBytes = await response.arrayBuffer();
         const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
         wasmInstance = instance;

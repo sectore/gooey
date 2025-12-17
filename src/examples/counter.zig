@@ -6,6 +6,7 @@
 //! - State with arguments via cx.updateWith()
 //! - Command handlers with cx.command() for framework access
 //! - Components receiving *Cx instead of *Builder
+//! - WebApp for browser support
 
 const std = @import("std");
 const gooey = @import("gooey");
@@ -22,7 +23,6 @@ const AppState = struct {
     step: i32 = 1,
     message: []const u8 = "",
 
-    // Pure state methods - no context needed, fully testable!
     pub fn increment(self: *AppState) void {
         self.count += self.step;
     }
@@ -45,7 +45,6 @@ const AppState = struct {
         self.count = value;
     }
 
-    // Command method - needs framework access for focus management
     pub fn resetAndBlur(self: *AppState, g: *gooey.Gooey) void {
         self.count = 0;
         self.message = "Reset and blurred!";
@@ -54,17 +53,30 @@ const AppState = struct {
 };
 
 // =============================================================================
-// Entry Point
+// Entry Points
 // =============================================================================
 
-pub fn main() !void {
-    var state = AppState{};
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
-    try gooey.runCx(AppState, &state, render, .{
-        .title = "Counter (Cx API)",
-        .width = 500,
-        .height = 350,
-    });
+var state = AppState{};
+
+// For WASM: WebApp with @export; For Native: struct with main()
+const App = gooey.App(AppState, &state, render, .{
+    .title = "Counter",
+    .width = 500,
+    .height = 350,
+});
+
+// Force type analysis - triggers @export on WASM
+comptime {
+    _ = App;
+}
+
+// Native entry point
+pub fn main() !void {
+    if (is_wasm) unreachable;
+    return App.main();
 }
 
 // =============================================================================
@@ -105,18 +117,6 @@ fn render(cx: *Cx) void {
 // =============================================================================
 // Components - Now receive *Cx directly!
 // =============================================================================
-
-const MessageDisplay = struct {
-    pub fn render(_: @This(), cx: *Cx) void {
-        const s = cx.state(AppState);
-        if (s.message.len > 0) {
-            // Wrap in a box so text has a parent element
-            cx.box(.{}, .{
-                ui.text(s.message, .{ .size = 14, .color = ui.Color.rgb(0.3, 0.6, 0.3) }),
-            });
-        }
-    }
-};
 
 const CounterDisplay = struct {
     pub fn render(_: @This(), cx: *Cx) void {

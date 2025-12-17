@@ -89,6 +89,9 @@ pub extern "env" fn requestAnimationFrame() void;
 /// Get the timestamp of the current frame (milliseconds)
 pub extern "env" fn getFrameTime() f64;
 
+/// Get current timestamp in milliseconds (from JS Date.now())
+pub extern "env" fn getTimestampMillis() f64;
+
 // =============================================================================
 // Input Events (polled from JS)
 // =============================================================================
@@ -113,7 +116,7 @@ pub extern "env" fn getFontMetrics(
 ) void;
 
 /// Measure text width
-pub extern "env" fn measureText(
+pub extern "env" fn measureTextWidth(
     font_ptr: [*]const u8,
     font_len: u32,
     size: f32,
@@ -138,6 +141,9 @@ pub extern "env" fn rasterizeGlyph(
 
 /// Create a texture from pixel data
 pub extern "env" fn createTexture(width: u32, height: u32, data_ptr: [*]const u8, data_len: u32) u32;
+
+/// Update an existing texture with new pixel data
+pub extern "env" fn updateTexture(handle: u32, width: u32, height: u32, data_ptr: [*]const u8, data_len: u32) void;
 
 /// Create a sampler
 pub extern "env" fn createSampler() u32;

@@ -540,7 +540,7 @@ pub fn EntityContext(comptime T: type) type {
                 fn invoke(gooey: *Gooey, eid: EntityId) void {
                     const ents = gooey.getEntities();
                     const data = ents.write(T, .{ .id = eid }) orelse {
-                        std.debug.print("Handler error: entity {} not found\n", .{eid.id});
+                        //std.debug.print("Handler error: entity {} not found\n", .{eid.id});
                         return;
                     };
 
@@ -584,7 +584,7 @@ pub fn EntityContext(comptime T: type) type {
                 fn invoke(gooey: *Gooey, eid: EntityId) void {
                     const ents = gooey.getEntities();
                     const data = ents.write(T, .{ .id = eid }) orelse {
-                        std.debug.print("Handler error: entity {} not found\n", .{eid.id});
+                        //std.debug.print("Handler error: entity {} not found\n", .{eid.id});
                         return;
                     };
 
@@ -670,7 +670,7 @@ pub fn EntityContext(comptime T: type) type {
                     // Get entities from gooey
                     const ents = gooey.getEntities();
                     const data = ents.write(T, .{ .id = eid }) orelse {
-                        std.debug.print("Handler error: entity {} not found\n", .{eid.id});
+                        //std.debug.print("Handler error: entity {} not found\n", .{eid.id});
                         return;
                     };
 

@@ -45,23 +45,11 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // const zgpu = b.dependency("zgpu", .{});
-    // exe.root_module.addImport("zgpu", zgpu.module("root"));
-
-    // if (target.result.os.tag != .emscripten) {
-    //     exe.linkLibrary(zgpu.artifact("zdawn"));
-    // }
-
-    // b.installArtifact(exe);
-
     // Run step (default demo)
     const run_step = b.step("run", "Run the login form demo");
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
     run_cmd.step.dependOn(b.getInstallStep());
-
-    // Enable Metal HUD for FPS/GPU stats
-    //run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
 
     if (b.args) |args| {
         run_cmd.addArgs(args);
@@ -213,81 +201,60 @@ pub fn build(b: *std.Build) void {
     run_actions_step.dependOn(&run_actions_cmd.step);
     run_actions_cmd.step.dependOn(b.getInstallStep());
 
-    // =========================================================================
-    // WebAssembly Build (browser)
-    // =========================================================================
+    // =============================================================================
+    // WebAssembly Builds
+    // =============================================================================
 
     const wasm_target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
     });
 
-    const wasm_exe = b.addExecutable(.{
-        .name = "gooey",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/platform/wgpu/web/main.zig"),
-            .target = wasm_target,
-            .optimize = .ReleaseSmall,
-        }),
+    // Create gooey module for WASM (shared by all examples)
+    const gooey_wasm_module = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = wasm_target,
+        .optimize = .ReleaseSmall,
     });
 
-    // Add shaders directory so @embedFile can find them
-    wasm_exe.root_module.addAnonymousImport("unified_wgsl", .{
+    // Add shader embeds (needed by renderer.zig)
+    gooey_wasm_module.addAnonymousImport("unified_wgsl", .{
         .root_source_file = b.path("src/platform/wgpu/shaders/unified.wgsl"),
     });
-    wasm_exe.root_module.addAnonymousImport("text_wgsl", .{
+    gooey_wasm_module.addAnonymousImport("text_wgsl", .{
         .root_source_file = b.path("src/platform/wgpu/shaders/text.wgsl"),
     });
 
-    // Create geometry module (no dependencies)
-    const geometry_module = b.createModule(.{
-        .root_source_file = b.path("src/core/geometry.zig"),
-        .target = wasm_target,
-        .optimize = .ReleaseSmall,
-    });
+    // -------------------------------------------------------------------------
+    // WASM Examples
+    // -------------------------------------------------------------------------
 
-    // Create scene module first (it has no dependencies)
-    const scene_module = b.createModule(.{
-        .root_source_file = b.path("src/core/scene.zig"),
-        .target = wasm_target,
-        .optimize = .ReleaseSmall,
-        .imports = &.{
-            .{ .name = "geometry", .module = geometry_module },
-        },
-    });
+    // Main demo: "zig build wasm" builds showcase (matches "zig build run")
+    {
+        const wasm_exe = b.addExecutable(.{
+            .name = "app",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/showcase.zig"),
+                .target = wasm_target,
+                .optimize = .ReleaseSmall,
+                .imports = &.{
+                    .{ .name = "gooey", .module = gooey_wasm_module },
+                },
+            }),
+        });
+        wasm_exe.entry = .disabled;
+        wasm_exe.rdynamic = true;
 
-    // Create unified module with scene dependency
-    const unified_module = b.createModule(.{
-        .root_source_file = b.path("src/platform/wgpu/unified.zig"),
-        .target = wasm_target,
-        .optimize = .ReleaseSmall,
-        .imports = &.{
-            .{ .name = "scene", .module = scene_module },
-        },
-    });
+        const wasm_step = b.step("wasm", "Build showcase for web (main demo)");
+        wasm_step.dependOn(&b.addInstallArtifact(wasm_exe, .{
+            .dest_dir = .{ .override = .{ .custom = "web" } },
+        }).step);
+        wasm_step.dependOn(&b.addInstallFile(b.path("web/index.html"), "web/index.html").step);
+    }
 
-    // Add modules to wasm executable
-    wasm_exe.root_module.addImport("scene", scene_module);
-    wasm_exe.root_module.addImport("unified", unified_module);
-
-    // WASM-specific settings
-    wasm_exe.entry = .disabled; // No _start, we use exports
-    wasm_exe.rdynamic = true; // Export all pub functions
-
-    // Install to web/ directory
-    const wasm_install = b.addInstallArtifact(wasm_exe, .{
-        .dest_dir = .{ .override = .{ .custom = "web" } },
-    });
-
-    // Copy HTML shell to output directory
-    const html_install = b.addInstallFile(
-        b.path("web/index.html"),
-        "web/index.html",
-    );
-
-    const wasm_step = b.step("wasm", "Build WebAssembly module");
-    wasm_step.dependOn(&wasm_install.step);
-    wasm_step.dependOn(&html_install.step);
+    // Individual examples
+    addWasmExample(b, gooey_wasm_module, wasm_target, "counter", "src/examples/counter.zig", "web/counter");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "dynamic-counters", "src/examples/dynamic_counters.zig", "web/dynamic");
 
     // =========================================================================
     // Tests
@@ -306,4 +273,43 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+}
+
+/// Helper to add a WASM example with minimal boilerplate.
+/// All examples output as "app.wasm" so index.html works universally.
+fn addWasmExample(
+    b: *std.Build,
+    gooey_module: *std.Build.Module,
+    wasm_target: std.Build.ResolvedTarget,
+    name: []const u8,
+    source: []const u8,
+    output_dir: []const u8,
+) void {
+    const exe = b.addExecutable(.{
+        .name = "app",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(source),
+            .target = wasm_target,
+            .optimize = .ReleaseSmall,
+            .imports = &.{
+                .{ .name = "gooey", .module = gooey_module },
+            },
+        }),
+    });
+
+    exe.entry = .disabled;
+    exe.rdynamic = true;
+
+    const step_name = b.fmt("wasm-{s}", .{name});
+    const step_desc = b.fmt("Build {s} example for web", .{name});
+    const step = b.step(step_name, step_desc);
+
+    step.dependOn(&b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .{ .custom = output_dir } },
+    }).step);
+
+    step.dependOn(&b.addInstallFile(
+        b.path("web/index.html"),
+        b.fmt("{s}/index.html", .{output_dir}),
+    ).step);
 }

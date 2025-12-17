@@ -9,6 +9,9 @@
 //! - Beautiful, practical UI
 
 const std = @import("std");
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
 const gooey = @import("gooey");
 const ui = gooey.ui;
 const Cx = gooey.Cx;
@@ -133,14 +136,14 @@ const AppState = struct {
         self.phase = .focus;
         self.time_remaining = TimerPhase.focus.duration();
         self.is_running = true;
-        self.last_tick = std.time.milliTimestamp();
+        self.last_tick = getTimestamp();
     }
 
     pub fn startBreak(self: *AppState) void {
         self.phase = if (self.sessions_completed % 4 == 3) .long_break else .short_break;
         self.time_remaining = self.phase.duration();
         self.is_running = true;
-        self.last_tick = std.time.milliTimestamp();
+        self.last_tick = getTimestamp();
     }
 
     pub fn reset(self: *AppState) void {
@@ -155,13 +158,13 @@ const AppState = struct {
 
     pub fn resumeTimer(self: *AppState) void {
         self.is_running = true;
-        self.last_tick = std.time.milliTimestamp();
+        self.last_tick = getTimestamp();
     }
 
     pub fn tick(self: *AppState) void {
         if (!self.is_running or self.phase == .idle) return;
 
-        const now = std.time.milliTimestamp();
+        const now = getTimestamp();
         const elapsed = now - self.last_tick;
 
         if (elapsed >= 1000) {
@@ -449,13 +452,21 @@ const TaskItems = struct {
 
 var app_state = AppState{};
 
+const App = gooey.App(AppState, &app_state, render, .{
+    .title = "Focus Timer",
+    .width = 500,
+    .height = 700,
+    .custom_shaders = &.{plasma_shader},
+});
+
+// Force type analysis - triggers @export on WASM
+comptime {
+    _ = App;
+}
+
 pub fn main() !void {
-    try gooey.runCx(AppState, &app_state, render, .{
-        .title = "Focus Timer",
-        .width = 500,
-        .height = 700,
-        .custom_shaders = &.{plasma_shader},
-    });
+    if (is_wasm) unreachable;
+    return App.main();
 }
 
 fn render(cx: *Cx) void {
@@ -485,4 +496,13 @@ fn render(cx: *Cx) void {
         TaskInput{},
         TaskList{},
     });
+}
+
+fn getTimestamp() i64 {
+    if (comptime is_wasm) {
+        const web_imports = @import("gooey").platform.web.imports;
+        return @intFromFloat(web_imports.getTimestampMillis());
+    } else {
+        return std.time.milliTimestamp();
+    }
 }

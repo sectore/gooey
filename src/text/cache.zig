@@ -4,6 +4,7 @@
 //! them in the texture atlas.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const types = @import("types.zig");
 const font_face_mod = @import("font_face.zig");
 const Atlas = @import("atlas.zig").Atlas;
@@ -13,6 +14,8 @@ const FontFace = font_face_mod.FontFace;
 const RasterizedGlyph = types.RasterizedGlyph;
 const SUBPIXEL_VARIANTS_X = types.SUBPIXEL_VARIANTS_X;
 const SUBPIXEL_VARIANTS_Y = types.SUBPIXEL_VARIANTS_Y;
+
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
 /// Key for glyph lookup - includes subpixel variant
 pub const GlyphKey = struct {
@@ -95,7 +98,7 @@ pub const GlyphCache = struct {
             .grayscale_atlas = try Atlas.init(allocator, .grayscale),
             .color_atlas = null,
             .render_buffer = render_buffer,
-            .render_buffer_size = RENDER_BUFFER_SIZE,
+            .render_buffer_size = buffer_bytes,
             .scale_factor = scale,
         };
     }
@@ -226,6 +229,12 @@ pub const GlyphCache = struct {
         subpixel_x: u8,
         subpixel_y: u8,
     ) !CachedGlyph {
+        // Fallback fonts are only supported on native platforms
+        // On web, the browser handles font fallback automatically
+        if (is_wasm) {
+            return error.FallbackNotSupported;
+        }
+
         @memset(self.render_buffer, 0);
 
         const subpixel_shift_x = @as(f32, @floatFromInt(subpixel_x)) / @as(f32, @floatFromInt(SUBPIXEL_VARIANTS_X));

@@ -1063,7 +1063,7 @@ pub const Builder = struct {
                     child.render(cx);
                 } else {
                     // Cx not available, skip
-                    std.debug.print("Warning: Component expects *Cx but cx_ptr is null\n", .{});
+                    //std.debug.print("Warning: Component expects *Cx but cx_ptr is null\n", .{});
                 }
             }
             return;

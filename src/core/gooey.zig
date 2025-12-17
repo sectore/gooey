@@ -57,7 +57,8 @@ const TextInput = @import("../widgets/text_input.zig").TextInput;
 const TextArea = @import("../widgets/text_area.zig").TextArea;
 
 // Platform
-const Window = @import("../platform/mac/window.zig").Window;
+const platform = @import("../platform/mod.zig");
+const Window = platform.Window;
 
 // Input
 const input_mod = @import("input.zig");
@@ -257,6 +258,9 @@ pub const Gooey = struct {
         self.height = @floatCast(self.window.size.height);
         self.scale_factor = @floatCast(self.window.scale_factor);
 
+        // Sync scale factor to text system for correct glyph rasterization
+        // self.text_system.setScaleFactor(self.scale_factor);
+
         // Clear scene for new frame
         self.scene.clear();
 
@@ -395,7 +399,7 @@ pub const Gooey = struct {
         if (self.widgets.textArea(id)) |ta| {
             ta.focus();
         } else {
-            std.debug.print("  Widget NOT FOUND!\n", .{});
+            //std.debug.print("  Widget NOT FOUND!\n", .{});
         }
         // Also update FocusManager so action dispatch works
         self.focus.focusByName(id);
@@ -560,22 +564,18 @@ pub const Gooey = struct {
     }
 };
 
-/// Text measurement callback for layout engine
 fn measureTextCallback(
     text_content: []const u8,
     _: u16, // font_id
-    _: u16, // font_size
+    _: u16, // font_size - ignored, rendering uses base font size
     _: ?f32, // max_width
     user_data: ?*anyopaque,
 ) TextMeasurement {
     if (user_data) |ptr| {
         const text_system: *TextSystem = @ptrCast(@alignCast(ptr));
         const width = text_system.measureText(text_content) catch 0;
-        const metrics = text_system.getMetrics();
-        return .{
-            .width = width,
-            .height = if (metrics) |m| m.line_height else 20,
-        };
+        const metrics = text_system.getMetrics() orelse return .{ .width = 0, .height = 20 };
+        return .{ .width = width, .height = metrics.line_height };
     }
     return .{
         .width = @as(f32, @floatFromInt(text_content.len)) * 10,

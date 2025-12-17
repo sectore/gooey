@@ -23,6 +23,8 @@ const Checkbox = gooey.Checkbox;
 const TextInput = gooey.TextInput;
 const TextArea = gooey.TextArea;
 
+const custom_shader = gooey.platform.mac.metal.custom_shader;
+
 // =============================================================================
 // Theme
 // =============================================================================
@@ -214,6 +216,7 @@ pub fn main() !void {
         .width = 900,
         .height = 650,
         .on_event = onEvent,
+        .custom_shaders = &.{custom_shader.vhs_glitch_shader},
     });
 }
 

@@ -264,11 +264,11 @@ pub const LayoutEngine = struct {
         if (decl.id.id != 0) {
             const result = self.seen_ids.getOrPut(decl.id.id) catch unreachable;
             if (result.found_existing) {
-                std.log.warn("Layout ID collision detected! ID hash {d} used by both \"{?s}\" and \"{?s}\"", .{
-                    decl.id.id,
-                    result.value_ptr.*,
-                    decl.id.string_id,
-                });
+                // std.log.warn("Layout ID collision detected! ID hash {d} used by both \"{?s}\" and \"{?s}\"", .{
+                //     decl.id.id,
+                //     result.value_ptr.*,
+                //     decl.id.string_id,
+                // });
             } else {
                 result.value_ptr.* = decl.id.string_id;
             }
