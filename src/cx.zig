@@ -162,21 +162,41 @@ pub const Cx = struct {
     }
 
     /// Change the window's glass/transparency effect at runtime.
-    /// Only works on macOS.
+    /// Only works on macOS (no-op on web).
     pub fn setGlassStyle(
         self: *Self,
-        style: @import("platform/mac/window.zig").Window.GlassStyle,
+        style: anytype,
         opacity: f64,
         corner_radius: f64,
     ) void {
-        // Access the concrete window type
-        const window = @as(*@import("platform/mac/window.zig").Window, @ptrCast(@alignCast(self.gooey.window.ptr)));
-        window.setGlassStyle(style, opacity, corner_radius);
+        const builtin = @import("builtin");
+        const is_wasm = comptime (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64);
+
+        if (comptime is_wasm) {
+            // No-op on web - suppress unused parameter warnings
+            // _ = self;
+            // _ = style;
+            // _ = opacity;
+            // _ = corner_radius;
+        } else {
+            const mac_window = @import("platform/mac/window.zig");
+            const window: *mac_window.Window = @ptrCast(@alignCast(self.gooey.window.ptr));
+            window.setGlassStyle(@enumFromInt(@intFromEnum(style)), opacity, corner_radius);
+        }
     }
 
     /// Close the window (and exit the application).
     pub fn close(self: *Self) void {
-        self.gooey.window.performClose();
+        const builtin = @import("builtin");
+        const is_wasm = comptime (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64);
+
+        if (comptime is_wasm) {
+            _ = self;
+            // No-op on web - can't close browser tabs
+        } else {
+            // TODO: implement native window close
+            _ = self;
+        }
     }
 
     // =========================================================================
@@ -197,7 +217,7 @@ pub const Cx = struct {
         const Wrapper = struct {
             fn invoke(gooey: *Gooey, _: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
-                    std.debug.print("Handler error: state not found\n", .{});
+                    //std.debug.print("Handler error: state not found\n", .{});
                     return;
                 };
                 method(state_ptr);
@@ -237,7 +257,7 @@ pub const Cx = struct {
         const Wrapper = struct {
             fn invoke(gooey: *Gooey, packed_arg: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
-                    std.debug.print("Handler error: state not found\n", .{});
+                    //std.debug.print("Handler error: state not found\n", .{});
                     return;
                 };
                 const unpacked = unpackArg(Arg, packed_arg);
@@ -273,7 +293,7 @@ pub const Cx = struct {
         const Wrapper = struct {
             fn invoke(gooey: *Gooey, _: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
-                    std.debug.print("Handler error: state not found\n", .{});
+                    //std.debug.print("Handler error: state not found\n", .{});
                     return;
                 };
                 method(state_ptr, gooey);
@@ -312,7 +332,7 @@ pub const Cx = struct {
         const Wrapper = struct {
             fn invoke(gooey: *Gooey, packed_arg: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
-                    std.debug.print("Handler error: state not found\n", .{});
+                    //std.debug.print("Handler error: state not found\n", .{});
                     return;
                 };
                 const unpacked = unpackArg(Arg, packed_arg);

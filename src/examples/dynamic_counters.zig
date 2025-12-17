@@ -198,15 +198,26 @@ const CounterItems = struct {
 // =============================================================================
 // Entry Point
 // =============================================================================
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
 var app_state = AppState{};
 
+const App = gooey.App(AppState, &app_state, render, .{
+    .title = "Dynamic Counters",
+    .width = 600,
+    .height = 400,
+});
+
+// Force type analysis - triggers @export on WASM
+comptime {
+    _ = App;
+}
+
+// Native entry point
 pub fn main() !void {
-    try gooey.runCx(AppState, &app_state, render, .{
-        .title = "Dynamic Counters",
-        .width = 600,
-        .height = 400,
-    });
+    if (is_wasm) unreachable;
+    return App.main();
 }
 
 fn render(cx: *Cx) void {

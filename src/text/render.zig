@@ -31,6 +31,11 @@ pub fn renderText(
 ) !f32 {
     if (text.len == 0) return 0;
 
+    // if (@import("builtin").cpu.arch == .wasm32) {
+    //     const web_imports = @import("../platform/wgpu/web/imports.zig");
+    //     web_imports.log("renderText: x={d} text=\"{s}\"", .{ x, text });
+    // }
+
     var shaped = try text_system.shapeText(text);
     defer shaped.deinit(text_system.allocator);
 
@@ -61,6 +66,18 @@ pub fn renderText(
             // This is how GPUI does it: floor(device_pos) + raster_offset
             const glyph_x = (@floor(device_x) + @as(f32, @floatFromInt(cached.offset_x))) / scale_factor;
             const glyph_y = (@floor(device_y) - @as(f32, @floatFromInt(cached.offset_y))) / scale_factor;
+
+            // DEBUG: Log glyph positioning
+            // if (@import("builtin").cpu.arch == .wasm32) {
+            //     const web_imports = @import("../platform/wgpu/web/imports.zig");
+            //     web_imports.log("Glyph: baseline_y={d} offset_y={d} glyph_y={d} glyph_h={d} bottom={d}", .{
+            //         baseline_y,
+            //         cached.offset_y,
+            //         glyph_y,
+            //         glyph_h,
+            //         glyph_y + glyph_h,
+            //     });
+            // }
 
             const instance = GlyphInstance.init(glyph_x, glyph_y, glyph_w, glyph_h, uv.u0, uv.v0, uv.u1, uv.v1, color);
 

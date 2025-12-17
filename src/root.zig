@@ -153,6 +153,11 @@ pub const Cx = app.Cx;
 /// Run an app with the unified Cx context (recommended for stateful apps)
 pub const runCx = app.runCx;
 
+/// Web app generator (for WASM targets)
+pub const WebApp = app.WebApp;
+/// Unified app generator (works for native and web)
+pub const App = app.App;
+
 /// Configuration for runCx
 pub const CxConfig = app.CxConfig;
 

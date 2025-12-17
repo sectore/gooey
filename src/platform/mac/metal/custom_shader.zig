@@ -499,6 +499,81 @@ pub const passthrough_shader =
     \\}
 ;
 
+/// VHS Glitch - Retro analog video with tracking errors, RGB bleeding, and tape artifacts
+pub const vhs_glitch_shader =
+    \\void mainImage(thread float4& fragColor, float2 fragCoord,
+    \\               constant ShaderUniforms& uniforms,
+    \\               texture2d<float> iChannel0,
+    \\               sampler iChannel0Sampler) {
+    \\    float2 uv = fragCoord / uniforms.iResolution.xy;
+    \\    float time = uniforms.iTime;
+    \\
+    \\    // Tracking wobble - horizontal displacement that varies by scanline
+    \\    float wobble = sin(uv.y * 100.0 + time * 2.0) * 0.001;
+    \\    wobble += sin(uv.y * 50.0 - time * 3.0) * 0.0005;
+    \\
+    \\    // Occasional horizontal tear/glitch bands
+    \\    float glitchLine = step(0.99, fract(sin(floor(uv.y * 80.0) + time * 5.0) * 43758.5));
+    \\    float glitchOffset = glitchLine * (fract(sin(time * 100.0) * 1000.0) - 0.5) * 0.08;
+    \\
+    \\    // VHS tracking error - big horizontal shifts that roll through
+    \\    float trackingPhase = fract(time * 0.1);
+    \\    float trackingY = fract(uv.y - trackingPhase);
+    \\    float trackingBand = smoothstep(0.0, 0.02, trackingY) * smoothstep(0.08, 0.02, trackingY);
+    \\    float trackingShift = trackingBand * sin(time * 20.0) * 0.03;
+    \\
+    \\    // Apply horizontal distortions
+    \\    float2 distortedUV = uv;
+    \\    distortedUV.x += wobble + glitchOffset + trackingShift;
+    \\
+    \\    // RGB channel separation (VHS color bleeding)
+    \\    float rgbSplit = 0.004 + glitchLine * 0.01;
+    \\    float4 color;
+    \\    color.r = iChannel0.sample(iChannel0Sampler, distortedUV + float2(rgbSplit, 0.0)).r;
+    \\    color.g = iChannel0.sample(iChannel0Sampler, distortedUV).g;
+    \\    color.b = iChannel0.sample(iChannel0Sampler, distortedUV - float2(rgbSplit, 0.0)).b;
+    \\    color.a = 1.0;
+    \\
+    \\    // Scanlines (NTSC-style)
+    \\    float scanline = sin(fragCoord.y * 1.5) * 0.5 + 0.5;
+    \\    scanline = pow(scanline, 0.8) * 0.12 + 0.88;
+    \\    color.rgb *= scanline;
+    \\
+    \\    // VHS noise/static grain
+    \\    float noise = fract(sin(dot(fragCoord + time * 1000.0, float2(12.9898, 78.233))) * 43758.5453);
+    \\    color.rgb += (noise - 0.5) * 0.06;
+    \\
+    \\    // Bottom screen noise band (like worn tape)
+    \\    float bottomNoise = smoothstep(0.92, 1.0, uv.y);
+    \\    float staticNoise = fract(sin(fragCoord.x * 0.1 + time * 500.0) * 10000.0);
+    \\    color.rgb = mix(color.rgb, float3(staticNoise), bottomNoise * 0.7);
+    \\
+    \\    // Color bleed/smear to the right (VHS artifact)
+    \\    float4 smear = iChannel0.sample(iChannel0Sampler, distortedUV - float2(0.01, 0.0));
+    \\    color.rgb = mix(color.rgb, smear.rgb, 0.15);
+    \\
+    \\    // Slight color degradation (reduce saturation)
+    \\    float luma = dot(color.rgb, float3(0.299, 0.587, 0.114));
+    \\    color.rgb = mix(float3(luma), color.rgb, 0.85);
+    \\
+    \\    // Warm VHS color cast
+    \\    color.r *= 1.05;
+    \\    color.b *= 0.92;
+    \\
+    \\    // Vignette (darker corners like old TV)
+    \\    float2 vignetteUV = uv * (1.0 - uv);
+    \\    float vignette = vignetteUV.x * vignetteUV.y * 15.0;
+    \\    vignette = clamp(pow(vignette, 0.25), 0.0, 1.0);
+    \\    color.rgb *= vignette;
+    \\
+    \\    // Subtle brightness fluctuation
+    \\    float flicker = 0.98 + sin(time * 12.0) * 0.01 + sin(time * 23.0) * 0.005;
+    \\    color.rgb *= flicker;
+    \\
+    \\    fragColor = color;
+    \\}
+;
+
 pub const crt_shader =
     \\void mainImage(thread float4& fragColor, float2 fragCoord,
     \\               constant ShaderUniforms& uniforms,

@@ -1,0 +1,550 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gooey WebGPU</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #1a1a2e;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        font-family: system-ui, sans-serif;
+      }
+      #container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+      canvas {
+        width: 100vw;
+        height: 100vh;
+        border-radius: 8px;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+      }
+
+      #status {
+        color: #888;
+        font-size: 14px;
+      }
+      .error {
+        color: #e74c3c;
+      }
+      .success {
+        color: #2ecc71;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <canvas id="canvas" width="800" height="600"></canvas>
+      <div id="status">Initializing WebGPU...</div>
+    </div>
+
+    <script type="module">
+      const canvas = document.getElementById("canvas");
+      const status = document.getElementById("status");
+
+      // Handle high-DPI displays
+      const dpr = window.devicePixelRatio || 1;
+      // Maximum texture size (WebGPU default limit)
+      const MAX_SIZE = 8192;
+
+      function updateCanvasSize() {
+        // Use CSS size, not canvas.width (which we're about to set)
+        const cssWidth = canvas.clientWidth;
+        const cssHeight = canvas.clientHeight;
+
+        // Calculate device pixel size, clamped to max texture size
+        const targetWidth = Math.min(Math.floor(cssWidth * dpr), MAX_SIZE);
+        const targetHeight = Math.min(Math.floor(cssHeight * dpr), MAX_SIZE);
+
+        // Only update if actually changed
+        if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
+          return true; // Size changed
+        }
+        return false; // No change
+      }
+
+      // Set initial size
+      updateCanvasSize();
+
+      // WebGPU state
+      let device, queue, context, format;
+      let wasmInstance;
+
+      // Resource handle management (JS owns the actual GPU objects)
+      const handles = {
+        shaderModules: new Map(),
+        pipelines: new Map(),
+        buffers: new Map(),
+        bindGroups: new Map(),
+        textureViews: new Map(),
+        textures: new Map(),
+        samplers: new Map(),
+        nextId: 1,
+      };
+
+      function allocHandle(map, obj) {
+        const id = handles.nextId++;
+        map.set(id, obj);
+        return id;
+      }
+
+      // Text encoder for string conversion
+      const textDecoder = new TextDecoder();
+
+      function getString(ptr, len) {
+        const memory = wasmInstance.exports.memory;
+        return textDecoder.decode(new Uint8Array(memory.buffer, ptr, len));
+      }
+
+      // Mouse state
+      let mouseX = 0,
+        mouseY = 0,
+        mouseButtons = 0,
+        mouseInCanvas = false;
+
+      canvas.addEventListener("mousemove", (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+      });
+      canvas.addEventListener("mousedown", (e) => {
+        mouseButtons |= 1 << e.button;
+      });
+      canvas.addEventListener("mouseup", (e) => {
+        mouseButtons &= ~(1 << e.button);
+      });
+      canvas.addEventListener("mouseenter", () => {
+        mouseInCanvas = true;
+      });
+      canvas.addEventListener("mouseleave", () => {
+        mouseInCanvas = false;
+        mouseButtons = 0;
+      });
+
+      // Text rendering helper
+      const textCanvas = new OffscreenCanvas(256, 256);
+      const textCtx = textCanvas.getContext("2d", { willReadFrequently: true });
+
+      function getFont(fontPtr, fontLen, size) {
+        const fontName = getString(fontPtr, fontLen);
+        return `${size}px ${fontName}`;
+      }
+
+      // Environment functions provided to WASM
+      const env = {
+        consoleLog: (ptr, len) => console.log("[WASM]", getString(ptr, len)),
+        consoleError: (ptr, len) =>
+          console.error("[WASM]", getString(ptr, len)),
+
+        getTimestampMillis: () => Date.now(),
+
+        getCanvasWidth: () => canvas.clientWidth,
+        getCanvasHeight: () => canvas.clientHeight,
+        getDevicePixelRatio: () => dpr,
+        setCanvasSize: (w, h) => {
+          canvas.width = w;
+          canvas.height = h;
+        },
+
+        getCurrentTextureView: () => {
+          const texture = context.getCurrentTexture();
+          const view = texture.createView();
+          return allocHandle(handles.textureViews, view);
+        },
+
+        releaseTextureView: (handle) => {
+          handles.textureViews.delete(handle);
+        },
+
+        createShaderModule: (codePtr, codeLen) => {
+          const code = getString(codePtr, codeLen);
+          const module = device.createShaderModule({ code });
+          return allocHandle(handles.shaderModules, module);
+        },
+
+        createRenderPipeline: (shaderHandle, vsPtr, vsLen, fsPtr, fsLen) => {
+          const module = handles.shaderModules.get(shaderHandle);
+          const vsEntry = getString(vsPtr, vsLen);
+          const fsEntry = getString(fsPtr, fsLen);
+
+          const pipeline = device.createRenderPipeline({
+            layout: "auto",
+            vertex: {
+              module,
+              entryPoint: vsEntry,
+            },
+            fragment: {
+              module,
+              entryPoint: fsEntry,
+              targets: [
+                {
+                  format,
+                  blend: {
+                    color: {
+                      srcFactor: "src-alpha",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                    alpha: {
+                      srcFactor: "one",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                  },
+                },
+              ],
+            },
+            primitive: {
+              topology: "triangle-list",
+            },
+          });
+          return allocHandle(handles.pipelines, pipeline);
+        },
+
+        createBuffer: (size, usage) => {
+          const buffer = device.createBuffer({ size, usage });
+          return allocHandle(handles.buffers, buffer);
+        },
+
+        writeBuffer: (handle, offset, dataPtr, dataLen) => {
+          const buffer = handles.buffers.get(handle);
+          const memory = wasmInstance.exports.memory;
+          const data = new Uint8Array(memory.buffer, dataPtr, dataLen);
+          queue.writeBuffer(buffer, offset, data);
+        },
+
+        createBindGroup: (
+          pipelineHandle,
+          groupIndex,
+          bufferHandlesPtr,
+          bufferHandlesLen,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const memory = wasmInstance.exports.memory;
+          const handleArray = new Uint32Array(
+            memory.buffer,
+            bufferHandlesPtr,
+            bufferHandlesLen,
+          );
+
+          const entries = [];
+          for (let i = 0; i < bufferHandlesLen; i++) {
+            const buffer = handles.buffers.get(handleArray[i]);
+            entries.push({
+              binding: i,
+              resource: { buffer },
+            });
+          }
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(groupIndex),
+            entries,
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // Render pass state
+        currentEncoder: null,
+        currentPass: null,
+
+        beginRenderPass: (textureViewHandle, r, g, b, a) => {
+          const view = handles.textureViews.get(textureViewHandle);
+          env.currentEncoder = device.createCommandEncoder();
+          env.currentPass = env.currentEncoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view,
+                clearValue: { r, g, b, a },
+                loadOp: "clear",
+                storeOp: "store",
+              },
+            ],
+          });
+        },
+
+        setPipeline: (pipelineHandle) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          env.currentPass.setPipeline(pipeline);
+        },
+
+        setBindGroup: (groupIndex, bindGroupHandle) => {
+          const bindGroup = handles.bindGroups.get(bindGroupHandle);
+          env.currentPass.setBindGroup(groupIndex, bindGroup);
+        },
+
+        drawInstanced: (vertexCount, instanceCount) => {
+          env.currentPass.draw(vertexCount, instanceCount);
+        },
+
+        endRenderPass: () => {
+          env.currentPass.end();
+          queue.submit([env.currentEncoder.finish()]);
+          env.currentPass = null;
+          env.currentEncoder = null;
+        },
+
+        requestAnimationFrame: () => {
+          requestAnimationFrame((timestamp) => {
+            wasmInstance.exports.frame(timestamp);
+          });
+        },
+
+        getFrameTime: () => performance.now(),
+
+        getMouseX: () => mouseX,
+        getMouseY: () => mouseY,
+        getMouseButtons: () => mouseButtons,
+        isMouseInCanvas: () => mouseInCanvas,
+
+        getFontMetrics: (
+          fontPtr,
+          fontLen,
+          size,
+          outAscent,
+          outDescent,
+          outLineHeight,
+        ) => {
+          const font = getFont(fontPtr, fontLen, size);
+          textCtx.font = font;
+          const metrics = textCtx.measureText("Hg");
+          const ascent = metrics.actualBoundingBoxAscent;
+          const descent = metrics.actualBoundingBoxDescent;
+          const lineHeight = ascent + descent + 4; // Add some padding
+
+          const mem = new DataView(wasmInstance.exports.memory.buffer);
+          mem.setFloat32(outAscent, ascent, true);
+          mem.setFloat32(outDescent, descent, true);
+          mem.setFloat32(outLineHeight, lineHeight, true);
+        },
+
+        measureText: (fontPtr, fontLen, size, textPtr, textLen) => {
+          const font = getFont(fontPtr, fontLen, size);
+          const text = getString(textPtr, textLen);
+          textCtx.font = font;
+          return textCtx.measureText(text).width;
+        },
+
+        rasterizeGlyph: (
+          fontPtr,
+          fontLen,
+          size,
+          codepoint,
+          outBuffer,
+          bufferSize,
+          outWidth,
+          outHeight,
+          outBearingX,
+          outBearingY,
+          outAdvance,
+        ) => {
+          const font = getFont(fontPtr, fontLen, size);
+          const char = String.fromCodePoint(codepoint);
+
+          textCtx.font = font;
+          textCtx.textBaseline = "alphabetic";
+          const metrics = textCtx.measureText(char);
+
+          // These are distances from the origin point (where we draw)
+          const left = Math.ceil(metrics.actualBoundingBoxLeft); // extends LEFT of origin
+          const right = Math.ceil(metrics.actualBoundingBoxRight); // extends RIGHT of origin
+          const ascent = Math.ceil(metrics.actualBoundingBoxAscent); // extends ABOVE baseline
+          const descent = Math.ceil(metrics.actualBoundingBoxDescent); // extends BELOW baseline
+
+          const padding = 2;
+          const width = left + right + padding;
+          const height = ascent + descent + padding;
+          const advance = metrics.width;
+
+          // Resize canvas if needed
+          if (textCanvas.width < width) textCanvas.width = Math.max(256, width);
+          if (textCanvas.height < height)
+            textCanvas.height = Math.max(256, height);
+
+          // Clear and draw - position so glyph is fully visible
+          // Draw at x=left+1 so left edge is at x=1
+          // Draw at y=ascent+1 so top edge is at y=1
+          textCtx.clearRect(0, 0, width, height);
+          textCtx.font = font;
+          textCtx.fillStyle = "white";
+          textCtx.textBaseline = "alphabetic";
+          textCtx.fillText(char, left + 1, ascent + 1);
+
+          // Extract alpha channel
+          const imageData = textCtx.getImageData(0, 0, width, height);
+          const mem = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            outBuffer,
+            bufferSize,
+          );
+          for (let i = 0; i < width * height && i < bufferSize; i++) {
+            mem[i] = imageData.data[i * 4 + 3];
+          }
+
+          // Output values:
+          // - bearingX: how far RIGHT of cursor the glyph bitmap starts (negative = starts left of cursor)
+          // - bearingY: how far DOWN from cursor the glyph bitmap starts (negative = starts above cursor)
+          // For alphabetic baseline: bitmap top is at cursor_y - ascent
+          const view = new DataView(wasmInstance.exports.memory.buffer);
+          view.setUint32(outWidth, width, true);
+          view.setUint32(outHeight, height, true);
+          view.setFloat32(outBearingX, -(left + 1), true); // Offset from cursor to bitmap left edge
+          view.setFloat32(outBearingY, -(ascent - 1), true); // Offset from baseline to bitmap top edge
+          view.setFloat32(outAdvance, advance, true);
+
+          // console.log(
+          //   `Rasterized '${char}': ${width}x${height}, bearing=(${-(left + 1)}, ${-(ascent + 1)}), advance=${advance}`,
+          // );
+        },
+
+        createTexture: (width, height, dataPtr, dataLen) => {
+          const data = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            dataPtr,
+            dataLen,
+          );
+          const texture = device.createTexture({
+            size: { width, height },
+            format: "r8unorm",
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+          });
+          queue.writeTexture(
+            { texture },
+            data,
+            { bytesPerRow: width },
+            { width, height },
+          );
+          return allocHandle(handles.textures, texture);
+        },
+
+        updateTexture: (textureHandle, width, height, dataPtr, dataLen) => {
+          const texture = handles.textures.get(textureHandle);
+          if (!texture) {
+            console.error(
+              "updateTexture: invalid texture handle",
+              textureHandle,
+            );
+            return;
+          }
+          const data = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            dataPtr,
+            dataLen,
+          );
+          queue.writeTexture(
+            { texture },
+            data,
+            { bytesPerRow: width },
+            { width, height },
+          );
+        },
+
+        createSampler: () => {
+          const sampler = device.createSampler({
+            magFilter: "linear",
+            minFilter: "linear",
+          });
+          return allocHandle(handles.samplers, sampler);
+        },
+
+        createTextBindGroup: (
+          pipelineHandle,
+          groupIndex,
+          glyphBuffer,
+          uniformBuffer,
+          textureHandle,
+          samplerHandle,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const texture = handles.textures.get(textureHandle);
+          const sampler = handles.samplers.get(samplerHandle);
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(groupIndex),
+            entries: [
+              {
+                binding: 0,
+                resource: { buffer: handles.buffers.get(glyphBuffer) },
+              },
+              {
+                binding: 1,
+                resource: { buffer: handles.buffers.get(uniformBuffer) },
+              },
+              { binding: 2, resource: texture.createView() },
+              { binding: 3, resource: sampler },
+            ],
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+      };
+
+      async function init() {
+        // Check WebGPU support
+        if (!navigator.gpu) {
+          status.textContent = "WebGPU not supported in this browser";
+          status.className = "error";
+          return;
+        }
+
+        // Request adapter and device
+        const adapter = await navigator.gpu.requestAdapter();
+        if (!adapter) {
+          status.textContent = "Failed to get WebGPU adapter";
+          status.className = "error";
+          return;
+        }
+
+        device = await adapter.requestDevice();
+        queue = device.queue;
+
+        // Configure canvas context
+        context = canvas.getContext("webgpu");
+        format = navigator.gpu.getPreferredCanvasFormat();
+        context.configure({ device, format, alphaMode: "premultiplied" });
+
+        // Load WASM
+        status.textContent = "Loading WASM...";
+        const response = await fetch("app.wasm");
+        const wasmBytes = await response.arrayBuffer();
+        const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
+        wasmInstance = instance;
+
+        // Handle resize - debounced to avoid loops
+        let resizeTimeout = null;
+        const resizeObserver = new ResizeObserver(() => {
+          if (resizeTimeout) return; // Already scheduled
+          resizeTimeout = setTimeout(() => {
+            resizeTimeout = null;
+            if (updateCanvasSize() && context) {
+              context.configure({ device, format, alphaMode: "premultiplied" });
+            }
+          }, 16); // ~1 frame debounce
+        });
+        resizeObserver.observe(canvas);
+
+        // Initialize and start
+        status.textContent = "Running!";
+        status.className = "success";
+        wasmInstance.exports.init();
+      }
+
+      init().catch((err) => {
+        console.error(err);
+        status.textContent = `Error: ${err.message}`;
+        status.className = "error";
+      });
+    </script>
+  </body>
+</html>

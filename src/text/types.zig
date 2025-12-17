@@ -3,6 +3,8 @@
 //! These types are platform-agnostic and used by all text backends.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
 /// Subpixel variants for sharper text rendering at fractional pixel positions.
 /// Each glyph can be cached at up to VARIANTS_X * VARIANTS_Y different sub-pixel offsets.
@@ -124,29 +126,39 @@ pub const ShapedRun = struct {
     /// Total advance width
     width: f32,
 
-    // CoreFoundation release function (for fallback fonts)
-    extern "c" fn CFRelease(cf: *anyopaque) void;
+    // CoreFoundation release function (for fallback fonts) - native only
+    const CFRelease = if (!is_wasm)
+        struct {
+            extern "c" fn CFRelease(cf: *anyopaque) void;
+        }.CFRelease
+    else
+        struct {
+            fn f(_: *anyopaque) void {}
+        }.f;
 
     pub fn deinit(self: *ShapedRun, allocator: std.mem.Allocator) void {
         if (self.glyphs.len > 0) {
             // Release any retained fallback fonts (avoid double-release)
-            var released: [16]usize = [_]usize{0} ** 16;
-            var released_count: usize = 0;
+            // Only needed on native where we use CoreFoundation
+            if (!is_wasm) {
+                var released: [16]usize = [_]usize{0} ** 16;
+                var released_count: usize = 0;
 
-            for (self.glyphs) |glyph| {
-                if (glyph.font_ref) |font_ptr| {
-                    const ptr_val = @intFromPtr(font_ptr);
-                    var already_released = false;
-                    for (released[0..released_count]) |r| {
-                        if (r == ptr_val) {
-                            already_released = true;
-                            break;
+                for (self.glyphs) |glyph| {
+                    if (glyph.font_ref) |font_ptr| {
+                        const ptr_val = @intFromPtr(font_ptr);
+                        var already_released = false;
+                        for (released[0..released_count]) |r| {
+                            if (r == ptr_val) {
+                                already_released = true;
+                                break;
+                            }
                         }
-                    }
-                    if (!already_released and released_count < released.len) {
-                        CFRelease(font_ptr);
-                        released[released_count] = ptr_val;
-                        released_count += 1;
+                        if (!already_released and released_count < released.len) {
+                            CFRelease(font_ptr);
+                            released[released_count] = ptr_val;
+                            released_count += 1;
+                        }
                     }
                 }
             }

@@ -82,7 +82,7 @@ pub fn main() !void {
     var state = AppState{};
 
     try gooey.runCx(AppState, &state, render, .{
-        .title = "Liquid Glass Demo",
+        .title = "Glass Demo",
         .width = 500,
         .height = 400,
         // Dark background color - RGB values become the glass tint
@@ -108,7 +108,7 @@ fn render(cx: *Cx) void {
         .gap = 16,
     }, .{
         // Title
-        ui.text("Liquid Glass Demo", .{
+        ui.text("Glass Demo", .{
             .size = 28,
             .color = text_color,
         }),

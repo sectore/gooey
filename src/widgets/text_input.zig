@@ -22,6 +22,8 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
 // Direct imports from core modules (not through root.zig to avoid cycles)
 // Use prefixed names to avoid shadowing function parameters
@@ -214,7 +216,7 @@ pub const TextInput = struct {
     pub fn focus(self: *Self) void {
         self.focused = true;
         self.cursor_visible = true;
-        self.last_blink_time = std.time.milliTimestamp();
+        self.last_blink_time = getTimestamp();
     }
 
     pub fn blur(self: *Self) void {
@@ -480,14 +482,14 @@ pub const TextInput = struct {
 
     fn resetCursorBlink(self: *Self) void {
         self.cursor_visible = true;
-        self.last_blink_time = std.time.milliTimestamp();
+        self.last_blink_time = getTimestamp();
     }
 
     /// Update cursor blink state (call once per frame)
     pub fn updateBlink(self: *Self) void {
         if (!self.focused) return;
 
-        const now = std.time.milliTimestamp();
+        const now = getTimestamp();
         if (now - self.last_blink_time >= BLINK_INTERVAL_MS) {
             self.cursor_visible = !self.cursor_visible;
             self.last_blink_time = now;
@@ -700,6 +702,14 @@ pub const TextInput = struct {
         self.scroll_offset = @max(0, self.scroll_offset);
     }
 };
+
+fn getTimestamp() i64 {
+    const now: i64 = if (is_wasm) blk: {
+        const web_imports = @import("../platform/wgpu/web/imports.zig");
+        break :blk @intFromFloat(web_imports.getTimestampMillis());
+    } else std.time.milliTimestamp();
+    return now;
+}
 
 test "TextInput basic operations" {
     const allocator = std.testing.allocator;

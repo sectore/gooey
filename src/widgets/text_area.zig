@@ -8,6 +8,9 @@
 //! - Multi-line selection rendering
 
 const std = @import("std");
+const builtin = @import("builtin");
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
 const scene_mod = @import("../core/scene.zig");
 const input_mod = @import("../core/input.zig");
 const text_mod = @import("../text/mod.zig");
@@ -337,7 +340,7 @@ pub const TextArea = struct {
     pub fn focus(self: *Self) void {
         self.focused = true;
         self.cursor_visible = true;
-        self.last_blink_time = std.time.milliTimestamp();
+        self.last_blink_time = getTimestamp();
     }
 
     pub fn blur(self: *Self) void {
@@ -690,15 +693,22 @@ pub const TextArea = struct {
     // Visual State
     // =========================================================================
 
+    fn getTimestamp() i64 {
+        return if (is_wasm) blk: {
+            const web_imports = @import("../platform/wgpu/web/imports.zig");
+            break :blk @intFromFloat(web_imports.getTimestampMillis());
+        } else std.time.milliTimestamp();
+    }
+
     fn resetCursorBlink(self: *Self) void {
         self.cursor_visible = true;
-        self.last_blink_time = std.time.milliTimestamp();
+        self.last_blink_time = getTimestamp();
     }
 
     pub fn updateBlink(self: *Self) void {
         if (!self.focused) return;
 
-        const now = std.time.milliTimestamp();
+        const now = getTimestamp();
         if (now - self.last_blink_time >= BLINK_INTERVAL_MS) {
             self.cursor_visible = !self.cursor_visible;
             self.last_blink_time = now;

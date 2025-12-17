@@ -28,6 +28,7 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 // Core types (platform-agnostic)
 pub const types = @import("types.zig");
@@ -66,9 +67,16 @@ pub const CachedGlyph = cache.CachedGlyph;
 pub const TextSystem = @import("text_system.zig").TextSystem;
 
 // Platform backends
-pub const backends = struct {
-    pub const coretext = @import("backends/coretext/mod.zig");
-};
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
+pub const backends = if (is_wasm)
+    struct {
+        pub const web = @import("backends/web/mod.zig");
+    }
+else
+    struct {
+        pub const coretext = @import("backends/coretext/mod.zig");
+    };
 
 test {
     std.testing.refAllDecls(@This());

@@ -7,14 +7,34 @@
 //! - GPU-ready glyph data
 
 const std = @import("std");
+const builtin = @import("builtin");
+
 const types = @import("types.zig");
 const font_face_mod = @import("font_face.zig");
 const shaper_mod = @import("shaper.zig");
 const cache_mod = @import("cache.zig");
 const Atlas = @import("atlas.zig").Atlas;
 
-// Backend imports (compile-time platform selection)
-const coretext = @import("backends/coretext/mod.zig");
+// =============================================================================
+// Platform Selection (compile-time)
+// =============================================================================
+
+const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
+const backend = if (is_wasm)
+    @import("backends/web/mod.zig")
+else
+    @import("backends/coretext/mod.zig");
+
+/// Platform-specific font face type
+const PlatformFace = if (is_wasm) backend.WebFontFace else backend.CoreTextFace;
+
+/// Platform-specific shaper type (web uses simple shaper, native uses CoreText)
+const PlatformShaper = if (is_wasm) void else backend.CoreTextShaper;
+
+// =============================================================================
+// Public Types
+// =============================================================================
 
 pub const FontFace = font_face_mod.FontFace;
 pub const Metrics = types.Metrics;
@@ -30,10 +50,10 @@ pub const SUBPIXEL_VARIANTS_X = types.SUBPIXEL_VARIANTS_X;
 pub const TextSystem = struct {
     allocator: std.mem.Allocator,
     cache: cache_mod.GlyphCache,
-    /// Current font face (backend-specific storage)
-    current_face: ?coretext.CoreTextFace,
-    /// Complex shaper (optional, for ligatures/kerning)
-    shaper: ?coretext.CoreTextShaper,
+    /// Current font face (platform-specific)
+    current_face: ?PlatformFace,
+    /// Complex shaper (native only, void on web)
+    shaper: if (is_wasm) void else ?PlatformShaper,
     scale_factor: f32,
 
     const Self = @This();
@@ -47,7 +67,7 @@ pub const TextSystem = struct {
             .allocator = allocator,
             .cache = try cache_mod.GlyphCache.init(allocator, scale),
             .current_face = null,
-            .shaper = null,
+            .shaper = if (is_wasm) {} else null,
             .scale_factor = scale,
         };
     }
@@ -59,7 +79,9 @@ pub const TextSystem = struct {
 
     pub fn deinit(self: *Self) void {
         if (self.current_face) |*f| f.deinit();
-        if (self.shaper) |*s| s.deinit();
+        if (!is_wasm) {
+            if (self.shaper) |*s| s.deinit();
+        }
         self.cache.deinit();
         self.* = undefined;
     }
@@ -67,14 +89,14 @@ pub const TextSystem = struct {
     /// Load a font by name
     pub fn loadFont(self: *Self, name: []const u8, size: f32) !void {
         if (self.current_face) |*f| f.deinit();
-        self.current_face = try coretext.CoreTextFace.init(name, size);
+        self.current_face = try PlatformFace.init(name, size);
         self.cache.clear();
     }
 
     /// Load a system font
     pub fn loadSystemFont(self: *Self, style: SystemFont, size: f32) !void {
         if (self.current_face) |*f| f.deinit();
-        self.current_face = try coretext.CoreTextFace.initSystem(style, size);
+        self.current_face = try PlatformFace.initSystem(style, size);
         self.cache.clear();
     }
 
@@ -97,16 +119,21 @@ pub const TextSystem = struct {
         return self.shapeTextComplex(text);
     }
 
-    /// Shape text using complex shaper (ligatures, kerning)
+    /// Shape text using complex shaper (ligatures, kerning on native; simple on web)
     pub fn shapeTextComplex(self: *Self, text: []const u8) !ShapedRun {
         const face = self.current_face orelse return error.NoFontLoaded;
 
-        // Lazy init shaper
-        if (self.shaper == null) {
-            self.shaper = coretext.CoreTextShaper.init(self.allocator);
+        if (is_wasm) {
+            // Web: use simple shaper (no complex text layout)
+            var mutable_face = face;
+            return shaper_mod.shapeSimple(self.allocator, mutable_face.asFontFace(), text);
+        } else {
+            // Native: use platform shaper for ligatures/kerning
+            if (self.shaper == null) {
+                self.shaper = backend.CoreTextShaper.init(self.allocator);
+            }
+            return self.shaper.?.shape(&face, text, self.allocator);
         }
-
-        return self.shaper.?.shape(&face, text, self.allocator);
     }
 
     /// Get cached glyph with subpixel variant (renders if needed)
