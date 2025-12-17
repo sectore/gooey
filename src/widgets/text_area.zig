@@ -8,8 +8,7 @@
 //! - Multi-line selection rendering
 
 const std = @import("std");
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+const platform = @import("../platform/mod.zig");
 
 const scene_mod = @import("../core/scene.zig");
 const input_mod = @import("../core/input.zig");
@@ -693,13 +692,6 @@ pub const TextArea = struct {
     // Visual State
     // =========================================================================
 
-    fn getTimestamp() i64 {
-        return if (is_wasm) blk: {
-            const web_imports = @import("../platform/wgpu/web/imports.zig");
-            break :blk @intFromFloat(web_imports.getTimestampMillis());
-        } else std.time.milliTimestamp();
-    }
-
     fn resetCursorBlink(self: *Self) void {
         self.cursor_visible = true;
         self.last_blink_time = getTimestamp();
@@ -1072,6 +1064,10 @@ pub const TextArea = struct {
         });
     }
 };
+
+fn getTimestamp() i64 {
+    return platform.time.milliTimestamp();
+}
 
 // =============================================================================
 // Tests

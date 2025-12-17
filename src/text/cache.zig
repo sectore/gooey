@@ -7,6 +7,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const types = @import("types.zig");
 const font_face_mod = @import("font_face.zig");
+const platform = @import("../platform/mod.zig");
+
 const Atlas = @import("atlas.zig").Atlas;
 const Region = @import("atlas.zig").Region;
 
@@ -15,7 +17,7 @@ const RasterizedGlyph = types.RasterizedGlyph;
 const SUBPIXEL_VARIANTS_X = types.SUBPIXEL_VARIANTS_X;
 const SUBPIXEL_VARIANTS_Y = types.SUBPIXEL_VARIANTS_Y;
 
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+const is_wasm = platform.is_wasm;
 
 /// Key for glyph lookup - includes subpixel variant
 pub const GlyphKey = struct {
@@ -118,6 +120,36 @@ pub const GlyphCache = struct {
         self.* = undefined;
     }
 
+    /// Reserve space in the atlas, with eviction on overflow.
+    /// When the atlas is at max size and can't fit the glyph,
+    /// clears the entire cache and tries again.
+    fn reserveWithEviction(self: *Self, width: u32, height: u32) !Region {
+        // First attempt: try to reserve directly
+        if (try self.grayscale_atlas.reserve(width, height)) |region| {
+            return region;
+        }
+
+        // No space - try to grow the atlas
+        self.grayscale_atlas.grow() catch |err| {
+            if (err == error.AtlasFull) {
+                // Atlas is at max size and full - evict everything and retry
+                std.debug.print("Atlas full at max size, evicting cache ({} entries)\n", .{self.map.count()});
+                self.clear();
+
+                // After clearing, we should definitely have space
+                if (try self.grayscale_atlas.reserve(width, height)) |region| {
+                    return region;
+                }
+                // If we still can't fit after clearing, the glyph is too large
+                return error.GlyphTooLarge;
+            }
+            return err;
+        };
+
+        // Growth succeeded - try reserve again
+        return try self.grayscale_atlas.reserve(width, height) orelse error.GlyphTooLarge;
+    }
+
     /// Get a cached glyph with subpixel variant, or render and cache it
     pub inline fn getOrRenderSubpixel(
         self: *Self,
@@ -176,12 +208,8 @@ pub const GlyphCache = struct {
             };
         }
 
-        // Reserve space in atlas
-        const region = try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse blk: {
-            try self.grayscale_atlas.grow();
-            break :blk try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse
-                return error.AtlasFull;
-        };
+        // Reserve space in atlas with eviction support
+        const region = try self.reserveWithEviction(rasterized.width, rasterized.height);
 
         // Copy rasterized data to atlas
         self.grayscale_atlas.set(region, self.render_buffer[0 .. rasterized.width * rasterized.height]);
@@ -262,11 +290,8 @@ pub const GlyphCache = struct {
             };
         }
 
-        const region = try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse blk: {
-            try self.grayscale_atlas.grow();
-            break :blk try self.grayscale_atlas.reserve(rasterized.width, rasterized.height) orelse
-                return error.AtlasFull;
-        };
+        // Reserve space in atlas with eviction support
+        const region = try self.reserveWithEviction(rasterized.width, rasterized.height);
 
         self.grayscale_atlas.set(region, self.render_buffer[0 .. rasterized.width * rasterized.height]);
 

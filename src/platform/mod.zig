@@ -2,6 +2,22 @@
 //!
 //! This module provides a unified interface for platform-specific functionality.
 //! The appropriate backend is selected at compile time based on the target OS.
+//!
+//! ## Usage
+//!
+//! ```zig
+//! const platform = @import("gooey").platform;
+//!
+//! // Time (works on native and WASM)
+//! const now = platform.time.milliTimestamp();
+//!
+//! // Platform detection
+//! if (platform.is_wasm) { ... }
+//!
+//! // Capabilities
+//! const caps = platform.getCapabilities();
+//! if (caps.can_close_window) { ... }
+//! ```
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -32,6 +48,16 @@ pub const RendererCapabilities = interface.RendererCapabilities;
 // =============================================================================
 
 pub const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+
+// =============================================================================
+// Platform-agnostic Time Utilities
+// =============================================================================
+
+pub const time = @import("time.zig");
+
+// =============================================================================
+// Backend Selection
+// =============================================================================
 
 pub const backend = if (is_wasm)
     @import("wgpu/web/mod.zig")

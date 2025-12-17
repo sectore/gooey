@@ -10,6 +10,7 @@
 
 const std = @import("std");
 const gooey = @import("gooey");
+const platform = gooey.platform;
 const ui = gooey.ui;
 const Cx = gooey.Cx;
 const Button = gooey.Button;
@@ -56,9 +57,6 @@ const AppState = struct {
 // Entry Points
 // =============================================================================
 
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
-
 var state = AppState{};
 
 // For WASM: WebApp with @export; For Native: struct with main()
@@ -75,7 +73,7 @@ comptime {
 
 // Native entry point
 pub fn main() !void {
-    if (is_wasm) unreachable;
+    if (platform.is_wasm) unreachable;
     return App.main();
 }
 

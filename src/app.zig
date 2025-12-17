@@ -27,9 +27,9 @@
 //! ```
 
 const std = @import("std");
-const builtin = @import("builtin");
 
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+// Platform abstraction (single source of truth)
+const platform = @import("platform/mod.zig");
 
 // Core imports (platform-agnostic)
 const gooey_mod = @import("core/gooey.zig");
@@ -47,23 +47,12 @@ const text_input_mod = @import("widgets/text_input.zig");
 const text_area_mod = @import("widgets/text_area.zig");
 const cx_mod = @import("cx.zig");
 
-// Platform-specific imports
-const platform_mod = if (is_wasm)
-    @import("platform/wgpu/web/mod.zig")
-else
-    @import("platform/mac/platform.zig");
-
-const window_mod = if (is_wasm)
-    @import("platform/wgpu/web/window.zig")
-else
-    @import("platform/mac/window.zig");
-
-// Types
+// Use platform types directly
 pub const Cx = cx_mod.Cx;
 const TextInput = text_input_mod.TextInput;
 const TextArea = text_area_mod.TextArea;
-const Platform = if (is_wasm) platform_mod.WebPlatform else platform_mod.MacPlatform;
-const Window = if (is_wasm) platform_mod.WebWindow else window_mod.Window;
+const Platform = platform.Platform;
+const Window = platform.Window;
 const DispatchNodeId = dispatch_mod.DispatchNodeId;
 const Gooey = gooey_mod.Gooey;
 const Scene = scene_mod.Scene;
@@ -295,7 +284,7 @@ pub fn CxConfig(comptime State: type) type {
         background_opacity: f64 = 1.0,
 
         /// Glass/blur style for transparent windows
-        glass_style: window_mod.Window.GlassStyle = .none,
+        glass_style: Window.GlassStyle = .none,
 
         /// Corner radius for glass effect (macOS 26+ only)
         glass_corner_radius: f64 = 16.0,
@@ -1237,7 +1226,7 @@ pub fn App(
     comptime render: fn (*Cx) void,
     comptime config: anytype,
 ) type {
-    if (is_wasm) {
+    if (platform.is_wasm) {
         return WebApp(State, state, render, config);
     } else {
         return struct {
@@ -1248,6 +1237,14 @@ pub fn App(
                     .height = if (@hasField(@TypeOf(config), "height")) config.height else 600,
                     .background_color = if (@hasField(@TypeOf(config), "background_color")) config.background_color else null,
                     .on_event = if (@hasField(@TypeOf(config), "on_event")) config.on_event else null,
+                    // Custom shaders (native only - Shadertoy-compatible MSL)
+                    .custom_shaders = if (@hasField(@TypeOf(config), "custom_shaders")) config.custom_shaders else &.{},
+                    // Glass/transparency options
+                    .background_opacity = if (@hasField(@TypeOf(config), "background_opacity")) config.background_opacity else 1.0,
+                    .glass_style = if (@hasField(@TypeOf(config), "glass_style")) config.glass_style else .none,
+                    .glass_corner_radius = if (@hasField(@TypeOf(config), "glass_corner_radius")) config.glass_corner_radius else 16.0,
+                    .titlebar_transparent = if (@hasField(@TypeOf(config), "titlebar_transparent")) config.titlebar_transparent else false,
+                    .full_size_content = if (@hasField(@TypeOf(config), "full_size_content")) config.full_size_content else false,
                 });
             }
         };
@@ -1283,7 +1280,7 @@ pub fn WebApp(
     comptime config: anytype,
 ) type {
     // Only generate for WASM targets
-    if (!is_wasm) {
+    if (!platform.is_wasm) {
         return struct {};
     }
 

@@ -13,14 +13,15 @@ const types = @import("types.zig");
 const font_face_mod = @import("font_face.zig");
 const shaper_mod = @import("shaper.zig");
 const cache_mod = @import("cache.zig");
+const platform = @import("../platform/mod.zig");
+
 const Atlas = @import("atlas.zig").Atlas;
 
 // =============================================================================
 // Platform Selection (compile-time)
 // =============================================================================
 
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
-
+const is_wasm = platform.is_wasm;
 const backend = if (is_wasm)
     @import("backends/web/mod.zig")
 else

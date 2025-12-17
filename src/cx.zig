@@ -161,41 +161,42 @@ pub const Cx = struct {
         self.gooey.window.setTitle(title);
     }
 
-    /// Change the window's glass/transparency effect at runtime.
-    /// Only works on macOS (no-op on web).
+    /// Set the glass/blur effect style for the window.
+    /// Only has an effect on platforms that support glass effects (e.g., macOS).
     pub fn setGlassStyle(
         self: *Self,
         style: anytype,
         opacity: f64,
         corner_radius: f64,
     ) void {
-        const builtin = @import("builtin");
-        const is_wasm = comptime (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64);
+        const platform = @import("platform/mod.zig");
 
-        if (comptime is_wasm) {
-            // No-op on web - suppress unused parameter warnings
+        if (comptime platform.is_wasm) {
+            // No-op on web - glass effects not supported
             // _ = self;
             // _ = style;
             // _ = opacity;
             // _ = corner_radius;
         } else {
-            const mac_window = @import("platform/mac/window.zig");
+            const mac_window = platform.mac.window;
             const window: *mac_window.Window = @ptrCast(@alignCast(self.gooey.window.ptr));
             window.setGlassStyle(@enumFromInt(@intFromEnum(style)), opacity, corner_radius);
         }
     }
 
     /// Close the window (and exit the application).
+    /// On web platforms, this is a no-op since browser tabs can't be closed programmatically.
     pub fn close(self: *Self) void {
-        const builtin = @import("builtin");
-        const is_wasm = comptime (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64);
+        const platform = @import("platform/mod.zig");
 
-        if (comptime is_wasm) {
-            _ = self;
+        if (comptime platform.is_wasm) {
+            // _ = self;
             // No-op on web - can't close browser tabs
         } else {
-            // TODO: implement native window close
-            _ = self;
+            // Get the mac window and request close
+            const mac_window = platform.mac.window;
+            const window: *mac_window.Window = @ptrCast(@alignCast(self.gooey.window.ptr));
+            window.performClose();
         }
     }
 

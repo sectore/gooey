@@ -6,24 +6,12 @@
 const std = @import("std");
 const types = @import("../../types.zig");
 const font_face_mod = @import("../../font_face.zig");
-const builtin = @import("builtin");
 
 const Metrics = types.Metrics;
 const GlyphMetrics = types.GlyphMetrics;
 const RasterizedGlyph = types.RasterizedGlyph;
 const SystemFont = types.SystemFont;
 const FontFace = font_face_mod.FontFace;
-
-// Direct extern for logging (only used on WASM)
-extern "env" fn consoleLog(ptr: [*]const u8, len: u32) void;
-
-fn logDebug(comptime fmt: []const u8, args: anytype) void {
-    if (builtin.cpu.arch == .wasm32) {
-        var buf: [256]u8 = undefined;
-        const slice = std.fmt.bufPrint(&buf, fmt, args) catch return;
-        consoleLog(slice.ptr, @intCast(slice.len));
-    }
-}
 
 // JS imports
 extern "env" fn getFontMetrics(
@@ -178,7 +166,6 @@ pub const WebFontFace = struct {
         const size = self.metrics.point_size * scale;
         const name = self.fontName();
 
-        //logDebug("renderGlyph: glyph={d} scale={d} size={d}", .{ glyph_id, scale, size });
         rasterizeGlyph(name.ptr, @intCast(name.len), size, glyph_id, buffer.ptr, buffer_size, &width, &height, &bearing_x, &bearing_y, &advance);
 
         return .{

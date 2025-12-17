@@ -31,6 +31,13 @@ pub const MacPlatform = struct {
         .multi_window = true,
         .gpu_accelerated = true,
         .display_link = true,
+        .can_close_window = true,
+        .glass_effects = true,
+        .clipboard = true,
+        .file_dialogs = true,
+        .ime = true,
+        .custom_cursors = true,
+        .window_drag_by_content = true,
         .name = "macOS",
         .graphics_backend = "Metal",
     };

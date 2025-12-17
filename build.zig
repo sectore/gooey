@@ -84,6 +84,31 @@ pub fn build(b: *std.Build) void {
     run_pomodoro_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Spaceship Example
+    // =========================================================================
+
+    const spaceship_exe = b.addExecutable(.{
+        .name = "spaceship",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/spaceship.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(spaceship_exe);
+
+    // Run spaceship example
+    const run_spaceship_step = b.step("run-spaceship", "Run the spaceship example");
+    const run_spaceship_cmd = b.addRunArtifact(spaceship_exe);
+    run_spaceship_step.dependOn(&run_spaceship_cmd.step);
+    run_spaceship_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Liquid Glass Example
     // =========================================================================
 

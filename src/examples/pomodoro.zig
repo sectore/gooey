@@ -9,10 +9,11 @@
 //! - Beautiful, practical UI
 
 const std = @import("std");
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
-
 const gooey = @import("gooey");
+
+// Use platform abstraction for time
+const platform = gooey.platform;
+
 const ui = gooey.ui;
 const Cx = gooey.Cx;
 const Button = gooey.Button;
@@ -465,7 +466,7 @@ comptime {
 }
 
 pub fn main() !void {
-    if (is_wasm) unreachable;
+    if (platform.is_wasm) unreachable;
     return App.main();
 }
 
@@ -499,10 +500,5 @@ fn render(cx: *Cx) void {
 }
 
 fn getTimestamp() i64 {
-    if (comptime is_wasm) {
-        const web_imports = @import("gooey").platform.web.imports;
-        return @intFromFloat(web_imports.getTimestampMillis());
-    } else {
-        return std.time.milliTimestamp();
-    }
+    return platform.time.milliTimestamp();
 }

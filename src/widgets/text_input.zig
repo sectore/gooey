@@ -22,14 +22,13 @@
 //! ```
 
 const std = @import("std");
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+const platform = @import("../platform/mod.zig");
 
 // Direct imports from core modules (not through root.zig to avoid cycles)
-// Use prefixed names to avoid shadowing function parameters
 const scene_mod = @import("../core/scene.zig");
 const input_mod = @import("../core/input.zig");
 const text_mod = @import("../text/mod.zig");
+
 const common = @import("text_common.zig");
 
 const element_types = @import("../core/element_types.zig");
@@ -704,11 +703,7 @@ pub const TextInput = struct {
 };
 
 fn getTimestamp() i64 {
-    const now: i64 = if (is_wasm) blk: {
-        const web_imports = @import("../platform/wgpu/web/imports.zig");
-        break :blk @intFromFloat(web_imports.getTimestampMillis());
-    } else std.time.milliTimestamp();
-    return now;
+    return platform.time.milliTimestamp();
 }
 
 test "TextInput basic operations" {

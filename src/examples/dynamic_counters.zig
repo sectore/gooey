@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const gooey = @import("gooey");
+const platform = gooey.platform;
 const ui = gooey.ui;
 const Cx = gooey.Cx;
 const Button = gooey.Button;
@@ -198,8 +199,6 @@ const CounterItems = struct {
 // =============================================================================
 // Entry Point
 // =============================================================================
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
 
 var app_state = AppState{};
 
@@ -216,7 +215,7 @@ comptime {
 
 // Native entry point
 pub fn main() !void {
-    if (is_wasm) unreachable;
+    if (platform.is_wasm) unreachable;
     return App.main();
 }
 

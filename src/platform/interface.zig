@@ -86,7 +86,7 @@ pub const PlatformVTable = struct {
     }
 };
 
-/// Capabilities a platform implementation may support.
+//// Capabilities a platform implementation may support.
 /// Used for feature detection at runtime.
 pub const PlatformCapabilities = struct {
     /// Platform supports high-DPI (Retina) displays
@@ -100,6 +100,27 @@ pub const PlatformCapabilities = struct {
 
     /// Platform supports vsync via display link
     display_link: bool = true,
+
+    /// Platform can programmatically close windows
+    can_close_window: bool = true,
+
+    /// Platform supports glass/blur effects
+    glass_effects: bool = false,
+
+    /// Platform supports clipboard access
+    clipboard: bool = true,
+
+    /// Platform supports native file dialogs
+    file_dialogs: bool = true,
+
+    /// Platform supports IME (Input Method Editor)
+    ime: bool = true,
+
+    /// Platform supports cursor customization
+    custom_cursors: bool = true,
+
+    /// Platform supports window dragging by content
+    window_drag_by_content: bool = false,
 
     /// Platform name (for debugging)
     name: []const u8 = "unknown",

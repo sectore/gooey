@@ -3,8 +3,8 @@
 //! These types are platform-agnostic and used by all text backends.
 
 const std = @import("std");
-const builtin = @import("builtin");
-const is_wasm = builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64;
+const platform = @import("../platform/mod.zig");
+const is_wasm = platform.is_wasm;
 
 /// Subpixel variants for sharper text rendering at fractional pixel positions.
 /// Each glyph can be cached at up to VARIANTS_X * VARIANTS_Y different sub-pixel offsets.
