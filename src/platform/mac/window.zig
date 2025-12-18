@@ -59,7 +59,7 @@ pub const Window = struct {
     /// Used to prevent the main thread from modifying state mid-render.
     render_in_progress: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
-    benchmark_mode: bool = false,
+    benchmark_mode: bool = true,
 
     /// Current mouse position (updated on every mouse event)
     mouse_position: geometry.Point(f64) = .{ .x = 0, .y = 0 },
@@ -933,6 +933,19 @@ fn displayLinkCallback(
     // Always render if custom shader animation is enabled (for iTime)
     const explicit_render = window.needs_render.swap(false, .acq_rel);
     const should_render = window.benchmark_mode or explicit_render or window.custom_shader_animation;
+
+    // DEBUG
+    const static = struct {
+        var count: u32 = 0;
+        var last_print: i64 = 0;
+    };
+    static.count += 1;
+    const now = std.time.milliTimestamp();
+    if (now - static.last_print > 1000) {
+        //std.debug.print("DisplayLink callbacks/sec: {}, should_render: {}, explicit: {}\n", .{ static.count, should_render, explicit_render });
+        static.count = 0;
+        static.last_print = now;
+    }
 
     if (!should_render) {
         return .success;

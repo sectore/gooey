@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(b.getInstallStep());
 
     // Enable Metal HUD for FPS/GPU stats
-    //run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
+    run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
 
     if (b.args) |args| {
         run_cmd.addArgs(args);
@@ -84,6 +84,31 @@ pub fn build(b: *std.Build) void {
     run_pomodoro_cmd.step.dependOn(b.getInstallStep());
 
     // =========================================================================
+    // Animation Example
+    // =========================================================================
+
+    const animation_exe = b.addExecutable(.{
+        .name = "animation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/examples/animation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "gooey", .module = mod },
+                .{ .name = "objc", .module = objc_dep.module("objc") },
+            },
+        }),
+    });
+
+    b.installArtifact(animation_exe);
+
+    // Run animation example
+    const run_animation_step = b.step("run-animation", "Run the animation example");
+    const run_animation_cmd = b.addRunArtifact(animation_exe);
+    run_animation_step.dependOn(&run_animation_cmd.step);
+    run_animation_cmd.step.dependOn(b.getInstallStep());
+
+    // =========================================================================
     // Spaceship Example
     // =========================================================================
 
@@ -105,6 +130,7 @@ pub fn build(b: *std.Build) void {
     // Run spaceship example
     const run_spaceship_step = b.step("run-spaceship", "Run the spaceship example");
     const run_spaceship_cmd = b.addRunArtifact(spaceship_exe);
+    run_spaceship_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
     run_spaceship_step.dependOn(&run_spaceship_cmd.step);
     run_spaceship_cmd.step.dependOn(b.getInstallStep());
 
