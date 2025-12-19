@@ -1177,11 +1177,6 @@ pub fn WebApp(
             if (g_platform) |*p| p.run();
         }
 
-        // Track previous mouse state for click detection
-        var g_prev_mouse_down: bool = false;
-        var g_prev_mouse_x: f32 = 0;
-        var g_prev_mouse_y: f32 = 0;
-
         pub fn frame(timestamp: f64) callconv(.c) void {
             _ = timestamp;
             if (!g_initialized) return;
@@ -1217,50 +1212,21 @@ pub fn WebApp(
                 }
             }.handler);
 
-            // 3. Process mouse input (existing polling code)
-            const mouse_x = web_imports.getMouseX();
-            const mouse_y = web_imports.getMouseY();
-            const mouse_buttons = web_imports.getMouseButtons();
-            const mouse_down = (mouse_buttons & 1) != 0;
+            // 3. Process scroll events
+            const scroll_events_mod = @import("platform/wgpu/web/scroll_events.zig");
+            _ = scroll_events_mod.processEvents(struct {
+                fn handler(event: input_mod.InputEvent) bool {
+                    return handleInputCx(&g_cx.?, on_event, event);
+                }
+            }.handler);
 
-            // Generate mouse events
-            if (mouse_x != g_prev_mouse_x or mouse_y != g_prev_mouse_y) {
-                const move_event = input_mod.InputEvent{
-                    .mouse_moved = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 0,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, move_event);
-                g_prev_mouse_x = mouse_x;
-                g_prev_mouse_y = mouse_y;
-            }
-
-            // Detect click (mouse up after mouse down)
-            if (g_prev_mouse_down and !mouse_down) {
-                const up_event = input_mod.InputEvent{
-                    .mouse_up = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 1,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, up_event);
-            } else if (!g_prev_mouse_down and mouse_down) {
-                const down_event = input_mod.InputEvent{
-                    .mouse_down = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 1,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, down_event);
-            }
-            g_prev_mouse_down = mouse_down;
+            // 4. Process mouse events (new ring buffer approach)
+            const mouse_events_mod = @import("platform/wgpu/web/mouse_events.zig");
+            _ = mouse_events_mod.processEvents(struct {
+                fn handler(event: input_mod.InputEvent) bool {
+                    return handleInputCx(&g_cx.?, on_event, event);
+                }
+            }.handler);
 
             // =========================================================
             // RENDER

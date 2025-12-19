@@ -598,7 +598,7 @@ pub const Builder = struct {
         comptime T: type,
         entity: entity_mod.Entity(T),
     ) ?entity_mod.EntityContext(T) {
-        const g = self._gooey orelse return null;
+        const g = self.gooey orelse return null;
         return entity.context(g);
     }
 
@@ -607,20 +607,20 @@ pub const Builder = struct {
     /// Useful for reading entity data or other Gooey operations.
     /// Returns null if Builder wasn't initialized with a Gooey reference.
     pub fn getGooey(self: *Self) ?*Gooey {
-        return self._gooey;
+        return self.gooey;
     }
 
     /// Read an entity's data directly from Builder.
     /// Convenience wrapper around gooey.readEntity().
     pub fn readEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*const T {
-        const g = self._gooey orelse return null;
+        const g = self.gooey orelse return null;
         return g.readEntity(T, entity);
     }
 
     /// Write to an entity's data directly from Builder.
     /// Convenience wrapper around gooey.writeEntity().
     pub fn writeEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*T {
-        const g = self._gooey orelse return null;
+        const g = self.gooey orelse return null;
         return g.writeEntity(T, entity);
     }
 
@@ -857,7 +857,7 @@ pub const Builder = struct {
 
         // Get scroll offset from retained widget
         var scroll_offset_y: f32 = 0;
-        if (self._gooey) |g| {
+        if (self.gooey) |g| {
             if (g.widgets.scrollContainer(id)) |sc| {
                 scroll_offset_y = sc.state.offset_y;
             }
