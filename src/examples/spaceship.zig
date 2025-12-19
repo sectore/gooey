@@ -697,7 +697,7 @@ const GaugeBar = struct {
             .corner_radius = 3,
         }, .{
             cx.box(.{
-                .width = fill_width,
+                .width_percent = fill_width,
                 .height = 6,
                 .background = bar_color,
                 .corner_radius = 3,

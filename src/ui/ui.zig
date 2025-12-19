@@ -98,6 +98,8 @@ pub const Box = struct {
     grow_height: bool = false, // Grow height only
     fill_width: bool = false, // 100% of parent width
     fill_height: bool = false, // 100% of parent height
+    width_percent: ?f32 = null, // Percentage of parent width (0.0-1.0)
+    height_percent: ?f32 = null, // Percentage of parent height (0.0-1.0)
 
     // Spacing
     padding: PaddingValue = .{ .all = 0 },
@@ -677,6 +679,8 @@ pub const Builder = struct {
             const min_w = props.min_width orelse 0;
             const max_w = props.max_width orelse std.math.floatMax(f32);
             sizing.width = SizingAxis.fitMinMax(min_w, max_w);
+        } else if (props.width_percent) |p| {
+            sizing.width = SizingAxis.percent(p);
         } else if (props.fill_width) {
             sizing.width = SizingAxis.percent(1.0);
         }
@@ -699,6 +703,8 @@ pub const Builder = struct {
             const min_h = props.min_height orelse 0;
             const max_h = props.max_height orelse std.math.floatMax(f32);
             sizing.height = SizingAxis.fitMinMax(min_h, max_h);
+        } else if (props.height_percent) |p| {
+            sizing.height = SizingAxis.percent(p);
         } else if (props.fill_height) {
             sizing.height = SizingAxis.percent(1.0);
         }
