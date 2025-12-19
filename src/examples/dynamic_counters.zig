@@ -101,7 +101,7 @@ const CounterCard = struct {
     counter: gooey.Entity(Counter),
 
     pub fn render(self: @This(), cx: *Cx) void {
-        const g = cx.getGooey();
+        const g = cx.gooey();
         const data = g.readEntity(Counter, self.counter) orelse return;
 
         cx.box(.{
@@ -142,7 +142,7 @@ const CounterButtons = struct {
 const TotalDisplay = struct {
     pub fn render(_: @This(), cx: *Cx) void {
         const s = cx.stateConst(AppState);
-        const g = cx.getGooey();
+        const g = cx.gooey();
 
         var total: i32 = 0;
         for (s.countersSlice()) |counter_entity| {

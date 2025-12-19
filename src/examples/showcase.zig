@@ -728,7 +728,7 @@ fn render(cx: *Cx) void {
     const s = cx.state(AppState);
     const t = s.theme;
     const size = cx.windowSize();
-    const g = cx.getGooey();
+    const g = cx.gooey();
 
     // Initialize form focus on first render of forms page
     if (s.page == .forms and !s.form_initialized) {
@@ -772,7 +772,7 @@ fn syncFormFocus(s: *AppState, g: *Gooey) void {
 
 fn onEvent(cx: *Cx, event: gooey.InputEvent) bool {
     const s = cx.state(AppState);
-    const g = cx.getGooey();
+    const g = cx.gooey();
 
     // Let focused text widgets handle their own input
     if (g.getFocusedTextArea() != null) {

@@ -612,7 +612,7 @@ pub fn EntityContext(comptime T: type) type {
             const data = self.entities.write(U, entity) orelse return;
 
             var inner_cx = EntityContext(U){
-                .gooey = self.gooey,
+                .gooey = self._gooey,
                 .entities = self.entities,
                 .entity_id = entity.id,
             };
@@ -642,7 +642,7 @@ pub fn EntityContext(comptime T: type) type {
         /// This marks all observers as needing re-render.
         pub fn notify(self: *Self) void {
             self.entities.markDirty(self.entity_id);
-            self.gooey.requestRender();
+            self._gooey.requestRender();
         }
 
         // =====================================================================
@@ -694,14 +694,14 @@ pub fn EntityContext(comptime T: type) type {
 
         /// Get the allocator
         pub fn allocator(self: *Self) std.mem.Allocator {
-            return self.gooey.allocator;
+            return self._gooey.allocator;
         }
 
         /// Get window dimensions
         pub fn windowSize(self: *Self) struct { width: f32, height: f32 } {
             return .{
-                .width = self.gooey.width,
-                .height = self.gooey.height,
+                .width = self._gooey.width,
+                .height = self._gooey.height,
             };
         }
     };

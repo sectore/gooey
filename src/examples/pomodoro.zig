@@ -367,7 +367,7 @@ const TaskItem = struct {
     index: usize,
 
     pub fn render(self: @This(), cx: *Cx) void {
-        const g = cx.getGooey();
+        const g = cx.gooey();
         const data = g.readEntity(Task, self.task) orelse return;
 
         var id_buf: [32]u8 = undefined;
@@ -418,7 +418,7 @@ const TaskList = struct {
 const ClearDoneButton = struct {
     pub fn render(_: @This(), cx: *Cx) void {
         const s = cx.stateConst(AppState);
-        const g = cx.getGooey();
+        const g = cx.gooey();
 
         if (s.completedCount(g) > 0) {
             cx.box(.{}, .{

@@ -365,26 +365,6 @@ pub const Empty = struct {
 // Free Functions (return descriptors)
 // =============================================================================
 
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click_handler = ... }` instead
-pub fn buttonHandler(label: []const u8, ref: HandlerRef) ButtonHandler {
-    return .{ .label = label, .handler = ref };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click_handler = ... }` instead
-pub fn buttonHandlerStyled(label: []const u8, style: ButtonStyle, ref: HandlerRef) ButtonHandler {
-    return .{ .label = label, .style = style, .handler = ref };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click = ... }` instead
-pub fn button(label: []const u8, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .on_click = on_click };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click = ... }` instead
-pub fn buttonStyled(label: []const u8, style: ButtonStyle, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .style = style, .on_click = on_click };
-}
-
 /// Register an action handler using HandlerRef (new pattern)
 pub fn onActionHandler(comptime Action: type, ref: HandlerRef) ActionHandlerRefPrimitive {
     return .{
@@ -452,9 +432,6 @@ pub fn When(comptime ChildrenType: type) type {
 pub fn empty() Empty {
     return .{};
 }
-
-/// Buffer for textFmt (thread-local static)
-var fmt_buffer: [1024]u8 = undefined;
 
 /// Rotating buffer pool for textFmt (allows multiple calls per frame)
 var fmt_buffers: [16][256]u8 = undefined;
@@ -621,7 +598,7 @@ pub const Builder = struct {
         comptime T: type,
         entity: entity_mod.Entity(T),
     ) ?entity_mod.EntityContext(T) {
-        const g = self.gooey orelse return null;
+        const g = self._gooey orelse return null;
         return entity.context(g);
     }
 
@@ -630,20 +607,20 @@ pub const Builder = struct {
     /// Useful for reading entity data or other Gooey operations.
     /// Returns null if Builder wasn't initialized with a Gooey reference.
     pub fn getGooey(self: *Self) ?*Gooey {
-        return self.gooey;
+        return self._gooey;
     }
 
     /// Read an entity's data directly from Builder.
     /// Convenience wrapper around gooey.readEntity().
     pub fn readEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*const T {
-        const g = self.gooey orelse return null;
+        const g = self._gooey orelse return null;
         return g.readEntity(T, entity);
     }
 
     /// Write to an entity's data directly from Builder.
     /// Convenience wrapper around gooey.writeEntity().
     pub fn writeEntity(self: *Self, comptime T: type, entity: entity_mod.Entity(T)) ?*T {
-        const g = self.gooey orelse return null;
+        const g = self._gooey orelse return null;
         return g.writeEntity(T, entity);
     }
 
@@ -880,7 +857,7 @@ pub const Builder = struct {
 
         // Get scroll offset from retained widget
         var scroll_offset_y: f32 = 0;
-        if (self.gooey) |g| {
+        if (self._gooey) |g| {
             if (g.widgets.scrollContainer(id)) |sc| {
                 scroll_offset_y = sc.state.offset_y;
             }
@@ -1430,11 +1407,6 @@ test "spacer primitive" {
 
     const s2 = spacerMin(50);
     try std.testing.expectEqual(@as(f32, 50), s2.min_size);
-}
-
-test "button primitive" {
-    const b = button("Click", null);
-    try std.testing.expectEqualStrings("Click", b.label);
 }
 
 test "empty primitive" {

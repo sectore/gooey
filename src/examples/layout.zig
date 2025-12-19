@@ -16,30 +16,30 @@ const Button = gooey.Button;
 // State
 // =============================================================================
 
-var state = struct {
+const AppState = struct {
     show_dropdown: bool = false,
     window_width: f32 = 800,
-}{};
+};
 
 // =============================================================================
 // Main Entry
 // =============================================================================
+var state = AppState{};
 
 pub fn main() !void {
-    try gooey.run(.{
+    try gooey.runCx(AppState, &state, render, .{
         .title = "Layout Demo - Phase 1 Features",
         .width = 800,
         .height = 600,
-        .render = render,
         .on_event = onEvent,
     });
 }
 
-fn render(g: *gooey.UI) void {
-    const size = g.windowSize();
+fn render(cx: *gooey.Cx) void {
+    const size = cx.windowSize();
     state.window_width = size.width;
 
-    g.box(.{
+    cx.box(.{
         .width = size.width,
         .height = size.height,
         .background = ui.Color.rgb(0.95, 0.95, 0.95),
@@ -371,7 +371,7 @@ const PercentBar = struct {
 // Event Handling
 // =============================================================================
 
-fn onEvent(_: *gooey.UI, event: gooey.InputEvent) bool {
+fn onEvent(_: *gooey.Cx, event: gooey.InputEvent) bool {
     if (event == .key_down) {
         const key = event.key_down;
 

@@ -15,7 +15,7 @@ const Color = ui.Color;
 const AppState = struct {
     glass_style: GlassStyle = .glass_regular,
     opacity: f32 = 0.7,
-    corner_radius: f32 = 20.0,
+    corner_radius: f32 = 10.0,
 
     const GlassStyle = enum {
         none,
@@ -56,14 +56,6 @@ const AppState = struct {
         g.window.setGlassStyle(win_style, self.opacity, self.corner_radius);
     }
 
-    pub fn increaseOpacity(self: *AppState) void {
-        self.opacity = @min(1.0, self.opacity + 0.1);
-    }
-
-    pub fn decreaseOpacity(self: *AppState) void {
-        self.opacity = @max(0.1, self.opacity - 0.1);
-    }
-
     pub fn increaseRadius(self: *AppState) void {
         self.corner_radius = @min(50.0, self.corner_radius + 5.0);
     }
@@ -83,7 +75,7 @@ pub fn main() !void {
 
     try gooey.runCx(AppState, &state, render, .{
         .title = "Glass Demo",
-        .width = 500,
+        .width = 600,
         .height = 400,
         // Dark background color - RGB values become the glass tint
         .background_color = gooey.Color.init(0.1, 0.1, 0.15, 1.0),
@@ -124,7 +116,6 @@ fn render(cx: *Cx) void {
         // Use component structs for nested layouts!
         StyleDisplay{},
         StyleControls{},
-        RadiusControls{},
 
         ui.spacer(),
 
@@ -169,33 +160,6 @@ const StyleControls = struct {
             Button{
                 .label = "Cycle Style",
                 .on_click_handler = cx.command(AppState, AppState.cycleStyleCmd),
-            },
-            Button{
-                .label = "- Opacity",
-                .variant = .secondary,
-                .on_click_handler = cx.update(AppState, AppState.decreaseOpacity),
-            },
-            Button{
-                .label = "+ Opacity",
-                .variant = .secondary,
-                .on_click_handler = cx.update(AppState, AppState.increaseOpacity),
-            },
-        });
-    }
-};
-
-const RadiusControls = struct {
-    pub fn render(_: @This(), cx: *Cx) void {
-        cx.hstack(.{ .gap = 8 }, .{
-            Button{
-                .label = "- Radius",
-                .variant = .secondary,
-                .on_click_handler = cx.update(AppState, AppState.decreaseRadius),
-            },
-            Button{
-                .label = "+ Radius",
-                .variant = .secondary,
-                .on_click_handler = cx.update(AppState, AppState.increaseRadius),
             },
         });
     }

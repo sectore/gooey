@@ -79,9 +79,6 @@ pub const TextArea = components.TextArea;
 
 pub const app = @import("app.zig");
 
-/// UI context passed to render callbacks
-pub const UI = app.UI;
-
 // =============================================================================
 // Convenience Exports (backward compatible, for quick prototyping)
 // =============================================================================
@@ -160,10 +157,6 @@ pub const App = app.App;
 
 /// Configuration for runCx
 pub const CxConfig = app.CxConfig;
-
-/// Simple run API (for stateless apps)
-pub const run = app.run;
-pub const RunConfig = app.RunConfig;
 
 // Entity system
 pub const Entity = core.Entity;

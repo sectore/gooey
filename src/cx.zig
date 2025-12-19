@@ -113,13 +113,13 @@ pub const Color = ui_mod.Color;
 /// - Window operations: `cx.windowSize()`, `cx.scaleFactor()`, etc.
 /// - Focus management: `cx.focusNext()`, `cx.blurAll()`, etc.
 pub const Cx = struct {
-    allocator: std.mem.Allocator,
+    _allocator: std.mem.Allocator,
 
     /// Internal runtime coordinator (manages scene, layout, widgets, etc.)
-    gooey: *Gooey,
+    _gooey: *Gooey,
 
     /// Layout builder
-    builder: *Builder,
+    _builder: *Builder,
 
     /// Type-erased state pointer (set at app init)
     state_ptr: *anyopaque,
@@ -156,19 +156,19 @@ pub const Cx = struct {
     /// Get the current window size in logical pixels.
     pub fn windowSize(self: *Self) struct { width: f32, height: f32 } {
         return .{
-            .width = self.gooey.width,
-            .height = self.gooey.height,
+            .width = self._gooey.width,
+            .height = self._gooey.height,
         };
     }
 
     /// Get the display scale factor (e.g., 2.0 for Retina).
     pub fn scaleFactor(self: *Self) f32 {
-        return self.gooey.scale_factor;
+        return self._gooey.scale_factor;
     }
 
     /// Set the window title.
     pub fn setTitle(self: *Self, title: [:0]const u8) void {
-        self.gooey.window.setTitle(title);
+        self._gooey.window.setTitle(title);
     }
 
     /// Set the glass/blur effect style for the window.
@@ -189,7 +189,7 @@ pub const Cx = struct {
             // _ = corner_radius;
         } else {
             const mac_window = platform.mac.window;
-            const window: *mac_window.Window = @ptrCast(@alignCast(self.gooey.window.ptr));
+            const window: *mac_window.Window = @ptrCast(@alignCast(self._gooey.window.ptr));
             window.setGlassStyle(@enumFromInt(@intFromEnum(style)), opacity, corner_radius);
         }
     }
@@ -205,7 +205,7 @@ pub const Cx = struct {
         } else {
             // Get the mac window and request close
             const mac_window = platform.mac.window;
-            const window: *mac_window.Window = @ptrCast(@alignCast(self.gooey.window.ptr));
+            const window: *mac_window.Window = @ptrCast(@alignCast(self._gooey.window.ptr));
             window.performClose();
         }
     }
@@ -226,12 +226,12 @@ pub const Cx = struct {
         _ = self;
 
         const Wrapper = struct {
-            fn invoke(gooey: *Gooey, _: EntityId) void {
+            fn invoke(g: *Gooey, _: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
                     return;
                 };
                 method(state_ptr);
-                gooey.requestRender();
+                g.requestRender();
             }
         };
 
@@ -265,13 +265,13 @@ pub const Cx = struct {
         const packed_entity_id = packArg(Arg, arg);
 
         const Wrapper = struct {
-            fn invoke(gooey: *Gooey, packed_arg: EntityId) void {
+            fn invoke(g: *Gooey, packed_arg: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
                     return;
                 };
                 const unpacked = unpackArg(Arg, packed_arg);
                 method(state_ptr, unpacked);
-                gooey.requestRender();
+                g.requestRender();
             }
         };
 
@@ -300,12 +300,12 @@ pub const Cx = struct {
         _ = self;
 
         const Wrapper = struct {
-            fn invoke(gooey: *Gooey, _: EntityId) void {
+            fn invoke(g: *Gooey, _: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
                     return;
                 };
-                method(state_ptr, gooey);
-                gooey.requestRender();
+                method(state_ptr, g);
+                g.requestRender();
             }
         };
 
@@ -338,13 +338,13 @@ pub const Cx = struct {
         const packed_entity_id = packArg(Arg, arg);
 
         const Wrapper = struct {
-            fn invoke(gooey: *Gooey, packed_arg: EntityId) void {
+            fn invoke(g: *Gooey, packed_arg: EntityId) void {
                 const state_ptr = handler_mod.getRootState(State) orelse {
                     return;
                 };
                 const unpacked = unpackArg(Arg, packed_arg);
-                method(state_ptr, gooey, unpacked);
-                gooey.requestRender();
+                method(state_ptr, g, unpacked);
+                g.requestRender();
             }
         };
 
@@ -360,27 +360,27 @@ pub const Cx = struct {
 
     /// Create a new entity with the given initial value.
     pub fn createEntity(self: *Self, comptime T: type, value: T) !Entity(T) {
-        return self.gooey.entities.new(T, value);
+        return self._gooey.entities.new(T, value);
     }
 
     /// Read an entity's data (immutable).
     pub fn readEntity(self: *Self, comptime T: type, entity: Entity(T)) ?*const T {
-        return self.gooey.readEntity(T, entity);
+        return self._gooey.readEntity(T, entity);
     }
 
     /// Write to an entity's data (mutable).
     pub fn writeEntity(self: *Self, comptime T: type, entity: Entity(T)) ?*T {
-        return self.gooey.writeEntity(T, entity);
+        return self._gooey.writeEntity(T, entity);
     }
 
     /// Get an entity-scoped context for handlers.
     ///
     /// Returns null if the entity doesn't exist.
     pub fn entityCx(self: *Self, comptime T: type, entity: Entity(T)) ?EntityContext(T) {
-        if (!self.gooey.entities.exists(entity.id)) return null;
+        if (!self._gooey.entities.exists(entity.id)) return null;
         return EntityContext(T){
-            .gooey = self.gooey,
-            .entities = &self.gooey.entities,
+            .gooey = self._gooey,
+            .entities = &self._gooey.entities,
             .entity_id = entity.id,
         };
     }
@@ -391,7 +391,7 @@ pub const Cx = struct {
 
     /// Request a UI re-render.
     pub fn notify(self: *Self) void {
-        self.gooey.requestRender();
+        self._gooey.requestRender();
     }
 
     // =========================================================================
@@ -400,32 +400,32 @@ pub const Cx = struct {
 
     /// Move focus to the next focusable element.
     pub fn focusNext(self: *Self) void {
-        self.gooey.focusNext();
+        self._gooey.focusNext();
     }
 
     /// Move focus to the previous focusable element.
     pub fn focusPrev(self: *Self) void {
-        self.gooey.focusPrev();
+        self._gooey.focusPrev();
     }
 
     /// Remove focus from all elements.
     pub fn blurAll(self: *Self) void {
-        self.gooey.blurAll();
+        self._gooey.blurAll();
     }
 
     /// Focus a specific text field by ID.
     pub fn focusTextField(self: *Self, id: []const u8) void {
-        self.gooey.focusTextInput(id);
+        self._gooey.focusTextInput(id);
     }
 
     /// Focus a specific text area by ID.
     pub fn focusTextArea(self: *Self, id: []const u8) void {
-        self.gooey.focusTextArea(id);
+        self._gooey.focusTextArea(id);
     }
 
     /// Check if a specific element is focused.
     pub fn isElementFocused(self: *Self, id: []const u8) bool {
-        return self.gooey.isElementFocused(id);
+        return self._gooey.isElementFocused(id);
     }
 
     // =========================================================================
@@ -434,17 +434,17 @@ pub const Cx = struct {
 
     /// Get a text field widget by ID.
     pub fn textField(self: *Self, id: []const u8) ?*text_field_mod.TextInput {
-        return self.gooey.textInput(id);
+        return self._gooey.textInput(id);
     }
 
     /// Get a text area widget by ID.
     pub fn textAreaWidget(self: *Self, id: []const u8) ?*text_area_mod.TextArea {
-        return self.gooey.textArea(id);
+        return self._gooey.textArea(id);
     }
 
     /// Get a scroll view widget by ID.
     pub fn scrollView(self: *Self, id: []const u8) ?*scroll_view_mod.ScrollContainer {
-        return self.gooey.widgets.scrollContainer(id);
+        return self._gooey.widgets.scrollContainer(id);
     }
 
     // =========================================================================
@@ -453,32 +453,32 @@ pub const Cx = struct {
 
     /// Create a box container with the given style and children.
     pub fn box(self: *Self, style: Box, children: anytype) void {
-        self.builder.box(style, children);
+        self._builder.box(style, children);
     }
 
     /// Create a box container with an explicit ID.
     pub fn boxWithId(self: *Self, id: []const u8, style: Box, children: anytype) void {
-        self.builder.boxWithId(id, style, children);
+        self._builder.boxWithId(id, style, children);
     }
 
     /// Create a vertical stack (column).
     pub fn vstack(self: *Self, style: StackStyle, children: anytype) void {
-        self.builder.vstack(style, children);
+        self._builder.vstack(style, children);
     }
 
     /// Create a horizontal stack (row).
     pub fn hstack(self: *Self, style: StackStyle, children: anytype) void {
-        self.builder.hstack(style, children);
+        self._builder.hstack(style, children);
     }
 
     /// Center children in available space.
     pub fn center(self: *Self, style: CenterStyle, children: anytype) void {
-        self.builder.center(style, children);
+        self._builder.center(style, children);
     }
 
     /// Create a scrollable container.
     pub fn scroll(self: *Self, id: []const u8, style: ScrollStyle, children: anytype) void {
-        self.builder.scroll(id, style, children);
+        self._builder.scroll(id, style, children);
     }
 
     // =========================================================================
@@ -487,17 +487,17 @@ pub const Cx = struct {
 
     /// Render children only if condition is true.
     pub fn when(self: *Self, condition: bool, children: anytype) void {
-        self.builder.when(condition, children);
+        self._builder.when(condition, children);
     }
 
     /// Render with value if optional is non-null.
     pub fn maybe(self: *Self, optional: anytype, comptime render_fn: anytype) void {
-        self.builder.maybe(optional, render_fn);
+        self._builder.maybe(optional, render_fn);
     }
 
     /// Render for each item in a slice.
     pub fn each(self: *Self, items: anytype, comptime render_fn: anytype) void {
-        self.builder.each(items, render_fn);
+        self._builder.each(items, render_fn);
     }
 
     // =========================================================================
@@ -505,18 +505,18 @@ pub const Cx = struct {
     // =========================================================================
 
     /// Get the underlying Gooey runtime.
-    pub fn getGooey(self: *Self) *Gooey {
-        return self.gooey;
+    pub fn gooey(self: *Self) *Gooey {
+        return self._gooey;
     }
 
     /// Get the underlying Builder.
-    pub fn getBuilder(self: *Self) *Builder {
-        return self.builder;
+    pub fn builder(self: *Self) *Builder {
+        return self._builder;
     }
 
     /// Get the allocator.
-    pub fn getAllocator(self: *Self) std.mem.Allocator {
-        return self.allocator;
+    pub fn allocator(self: *Self) std.mem.Allocator {
+        return self._allocator;
     }
 
     // =========================================================================
@@ -526,23 +526,23 @@ pub const Cx = struct {
     /// Animate with compile-time string hashing (most efficient for literals)
     pub fn animateComptime(self: *Self, comptime id: []const u8, config: Animation) AnimationHandle {
         const anim_id = comptime animation_mod.hashString(id);
-        return self.gooey.widgets.animateById(anim_id, config);
+        return self._gooey.widgets.animateById(anim_id, config);
     }
 
     /// Runtime string API (for dynamic IDs)
     pub fn animate(self: *Self, id: []const u8, config: Animation) AnimationHandle {
-        return self.gooey.widgets.animate(id, config);
+        return self._gooey.widgets.animate(id, config);
     }
 
     /// Restart with comptime hashing
     pub fn restartAnimationComptime(self: *Self, comptime id: []const u8, config: Animation) AnimationHandle {
         const anim_id = comptime animation_mod.hashString(id);
-        return self.gooey.widgets.restartAnimationById(anim_id, config);
+        return self._gooey.widgets.restartAnimationById(anim_id, config);
     }
 
     /// Runtime restart API
     pub fn restartAnimation(self: *Self, id: []const u8, config: Animation) AnimationHandle {
-        return self.gooey.widgets.restartAnimation(id, config);
+        return self._gooey.widgets.restartAnimation(id, config);
     }
 
     /// animateOn with comptime ID hashing
@@ -554,7 +554,7 @@ pub const Cx = struct {
     ) AnimationHandle {
         const anim_id = comptime animation_mod.hashString(id);
         const trigger_hash = computeTriggerHash(@TypeOf(trigger), trigger);
-        return self.gooey.widgets.animateOnById(anim_id, trigger_hash, config);
+        return self._gooey.widgets.animateOnById(anim_id, trigger_hash, config);
     }
 
     /// Runtime animateOn API
@@ -565,7 +565,7 @@ pub const Cx = struct {
         config: Animation,
     ) AnimationHandle {
         const trigger_hash = computeTriggerHash(@TypeOf(trigger), trigger);
-        return self.gooey.widgets.animateOn(id, trigger_hash, config);
+        return self._gooey.widgets.animateOn(id, trigger_hash, config);
     }
 };
 
