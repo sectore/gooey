@@ -4,72 +4,129 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Get the zig-objc dependency
-    const objc_dep = b.dependency("zig_objc", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    // Only load zig-objc dependency and setup native module on macOS
+    const is_native_macos = target.result.os.tag == .macos;
 
-    // Create the gooey module
-    const mod = b.addModule("gooey", .{
-        .root_source_file = b.path("src/root.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    mod.addImport("objc", objc_dep.module("objc"));
-
-    // Link macOS frameworks to the module (needed for tests too)
-    mod.linkFramework("AppKit", .{});
-    mod.linkFramework("Metal", .{});
-    mod.linkFramework("QuartzCore", .{});
-    mod.linkFramework("CoreFoundation", .{});
-    mod.linkFramework("CoreVideo", .{});
-    mod.linkFramework("CoreText", .{});
-    mod.linkFramework("CoreGraphics", .{});
-    mod.link_libc = true;
-
-    // =========================================================================
-    // Main Demo (Showcase)
-    // =========================================================================
-
-    const exe = b.addExecutable(.{
-        .name = "gooey",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/examples/showcase.zig"),
+    if (is_native_macos) {
+        // Get the zig-objc dependency
+        const objc_dep = b.dependency("zig_objc", .{
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "gooey", .module = mod },
-                .{ .name = "objc", .module = objc_dep.module("objc") },
-            },
-        }),
-    });
+        });
 
-    // Run step (default demo)
-    const run_step = b.step("run", "Run the login form demo");
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
-    run_cmd.step.dependOn(b.getInstallStep());
+        // Create the gooey module
+        const mod = b.addModule("gooey", .{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        mod.addImport("objc", objc_dep.module("objc"));
 
-    // Enable Metal HUD for FPS/GPU stats
-    run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
+        // Link macOS frameworks to the module (needed for tests too)
+        mod.linkFramework("AppKit", .{});
+        mod.linkFramework("Metal", .{});
+        mod.linkFramework("QuartzCore", .{});
+        mod.linkFramework("CoreFoundation", .{});
+        mod.linkFramework("CoreVideo", .{});
+        mod.linkFramework("CoreText", .{});
+        mod.linkFramework("CoreGraphics", .{});
+        mod.link_libc = true;
 
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+        // =========================================================================
+        // Main Demo (Showcase)
+        // =========================================================================
+
+        const exe = b.addExecutable(.{
+            .name = "gooey",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/showcase.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "gooey", .module = mod },
+                    .{ .name = "objc", .module = objc_dep.module("objc") },
+                },
+            }),
+        });
+
+        // Run step (default demo)
+        const run_step = b.step("run", "Run the login form demo");
+        const run_cmd = b.addRunArtifact(exe);
+        run_step.dependOn(&run_cmd.step);
+        run_cmd.step.dependOn(b.getInstallStep());
+
+        // Enable Metal HUD for FPS/GPU stats
+        run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
+
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
+
+        // =========================================================================
+        // Native Mac Examples
+        // =========================================================================
+
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "pomodoro", "src/examples/pomodoro.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "animation", "src/examples/animation.zig", true);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "spaceship", "src/examples/spaceship.zig", true);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "glass", "src/examples/glass.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "counter", "src/examples/counter.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "layout", "src/examples/layout.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "dynamic-counters", "src/examples/dynamic_counters.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "actions", "src/examples/actions.zig", false);
+
+        // =====================================================================
+        // Tests
+        // =====================================================================
+
+        const mod_tests = b.addTest(.{
+            .root_module = mod,
+        });
+        const run_mod_tests = b.addRunArtifact(mod_tests);
+
+        const exe_tests = b.addTest(.{
+            .root_module = exe.root_module,
+        });
+        const run_exe_tests = b.addRunArtifact(exe_tests);
+
+        const test_step = b.step("test", "Run tests");
+        test_step.dependOn(&run_mod_tests.step);
+        test_step.dependOn(&run_exe_tests.step);
+
+        // =====================================================================
+        // Hot Reload Watcher
+        // =====================================================================
+
+        const watcher_exe = b.addExecutable(.{
+            .name = "gooey-hot",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/hot/watcher.zig"),
+                .target = target,
+                .optimize = .Debug,
+            }),
+        });
+
+        b.installArtifact(watcher_exe);
+
+        const hot_step = b.step("hot", "Run with hot reload (watches src/ for changes)");
+
+        const watcher_cmd = b.addRunArtifact(watcher_exe);
+        watcher_cmd.addArg("src");
+
+        if (b.args) |args| {
+            watcher_cmd.addArg("zig");
+            watcher_cmd.addArg("build");
+            for (args) |arg| {
+                watcher_cmd.addArg(arg);
+            }
+        } else {
+            watcher_cmd.addArg("zig");
+            watcher_cmd.addArg("build");
+            watcher_cmd.addArg("run");
+        }
+
+        hot_step.dependOn(&watcher_cmd.step);
     }
-
-    // =========================================================================
-    // Native Mac Examples
-    // =========================================================================
-
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "pomodoro", "src/examples/pomodoro.zig", false);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "animation", "src/examples/animation.zig", true);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "spaceship", "src/examples/spaceship.zig", true);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "glass", "src/examples/glass.zig", false);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "counter", "src/examples/counter.zig", false);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "layout", "src/examples/layout.zig", false);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "dynamic-counters", "src/examples/dynamic_counters.zig", false);
-    addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "actions", "src/examples/actions.zig", false);
 
     // =============================================================================
     // WebAssembly Builds
@@ -127,62 +184,6 @@ pub fn build(b: *std.Build) void {
     addWasmExample(b, gooey_wasm_module, wasm_target, "dynamic-counters", "src/examples/dynamic_counters.zig", "web/dynamic");
     addWasmExample(b, gooey_wasm_module, wasm_target, "pomodoro", "src/examples/pomodoro.zig", "web/pomodoro");
     addWasmExample(b, gooey_wasm_module, wasm_target, "spaceship", "src/examples/spaceship.zig", "web/spaceship");
-
-    // =========================================================================
-    // Hot Reload Watcher
-    // =========================================================================
-
-    const watcher_exe = b.addExecutable(.{
-        .name = "gooey-hot",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/hot/watcher.zig"),
-            .target = target,
-            .optimize = .Debug,
-        }),
-    });
-
-    b.installArtifact(watcher_exe);
-
-    // Default target to run (can be overridden with -- args)
-    const hot_step = b.step("hot", "Run with hot reload (watches src/ for changes)");
-
-    const watcher_cmd = b.addRunArtifact(watcher_exe);
-    watcher_cmd.addArg("src"); // Watch directory
-
-    // Check if user provided custom args like "run-counter"
-    if (b.args) |args| {
-        // User provided args: zig build hot -- run-counter
-        watcher_cmd.addArg("zig");
-        watcher_cmd.addArg("build");
-        for (args) |arg| {
-            watcher_cmd.addArg(arg);
-        }
-    } else {
-        // Default: zig build run
-        watcher_cmd.addArg("zig");
-        watcher_cmd.addArg("build");
-        watcher_cmd.addArg("run");
-    }
-
-    hot_step.dependOn(&watcher_cmd.step);
-
-    // =========================================================================
-    // Tests
-    // =========================================================================
-
-    const mod_tests = b.addTest(.{
-        .root_module = mod,
-    });
-    const run_mod_tests = b.addRunArtifact(mod_tests);
-
-    const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
-    });
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_exe_tests.step);
 }
 
 /// Helper to add a native macOS example with minimal boilerplate.
