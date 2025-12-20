@@ -72,6 +72,11 @@ pub const Button = components.Button;
 pub const Checkbox = components.Checkbox;
 pub const TextInput = components.TextInput;
 pub const TextArea = components.TextArea;
+pub const ProgressBar = components.ProgressBar;
+pub const RadioGroup = components.RadioGroup;
+pub const RadioButton = components.RadioButton;
+pub const Tab = components.Tab;
+pub const TabBar = components.TabBar;
 
 // =============================================================================
 // App Entry Point (most common usage)

@@ -22,6 +22,10 @@ const Button = gooey.Button;
 const Checkbox = gooey.Checkbox;
 const TextInput = gooey.TextInput;
 const TextArea = gooey.TextArea;
+const Tab = gooey.Tab;
+const RadioButton = gooey.RadioButton;
+const RadioGroup = gooey.RadioGroup;
+const ProgressBar = gooey.ProgressBar;
 
 // =============================================================================
 // Theme
@@ -86,6 +90,13 @@ const AppState = struct {
     subscribe_newsletter: bool = false,
     enable_notifications: bool = true,
 
+    // Radio button state
+    contact_method: u8 = 0, // 0=Email, 1=Phone, 2=Mail
+    priority: u8 = 1, // 0=Low, 1=Medium, 2=High
+
+    // Progress bar state
+    form_progress: f32 = 0.0,
+
     // Stats (for home page)
     click_count: u32 = 0,
 
@@ -128,6 +139,13 @@ const AppState = struct {
         }
     }
 
+    pub fn goToPageByIndex(self: *AppState, index: u8) void {
+        self.page = @enumFromInt(index);
+        if (self.page == .forms) {
+            self.form_initialized = false;
+        }
+    }
+
     pub fn increment(self: *AppState) void {
         self.click_count +|= 1;
     }
@@ -146,6 +164,29 @@ const AppState = struct {
 
     pub fn toggleNotifications(self: *AppState) void {
         self.enable_notifications = !self.enable_notifications;
+    }
+
+    pub fn setContactMethod(self: *AppState, index: u8) void {
+        self.contact_method = index;
+        self.updateFormProgress();
+    }
+
+    pub fn setPriority(self: *AppState, index: u8) void {
+        self.priority = index;
+        self.updateFormProgress();
+    }
+
+    fn updateFormProgress(self: *AppState) void {
+        var filled: f32 = 0;
+        const total: f32 = 5;
+
+        if (self.name.len > 0) filled += 1;
+        if (self.email.len > 0) filled += 1;
+        if (self.message.len > 0) filled += 1;
+        if (self.agree_terms) filled += 1;
+        filled += 1; // contact_method and priority always have a value
+
+        self.form_progress = filled / total;
     }
 
     pub fn toggleTask(self: *AppState, index: usize) void {
@@ -243,8 +284,11 @@ const ThemeToggle = struct {
 
 /// Navigation bar with tabs
 const NavBar = struct {
+    const tab_labels = [_][]const u8{ "Home", "Forms", "Scroll", "About" };
+
     pub fn render(_: @This(), cx: *Cx) void {
-        const t = cx.state(AppState).theme;
+        const s = cx.state(AppState);
+        const t = s.theme;
 
         cx.box(.{
             .direction = .row,
@@ -254,35 +298,59 @@ const NavBar = struct {
             .fill_width = true,
             .alignment = .{ .cross = .center },
         }, .{
-            NavTab{ .label = "Home", .page = .home, .key = "1" },
-            NavTab{ .label = "Forms", .page = .forms, .key = "2" },
-            NavTab{ .label = "Scroll", .page = .scroll_demo, .key = "3" },
-            NavTab{ .label = "About", .page = .about, .key = "4" },
+            NavTabs{},
             ui.spacer(),
             ThemeToggle{},
         });
     }
 };
 
-const NavTab = struct {
-    label: []const u8,
-    page: AppState.Page,
-    key: []const u8,
-
-    pub fn render(self: @This(), cx: *Cx) void {
+const NavTabs = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
         const s = cx.state(AppState);
         const t = s.theme;
-        const is_active = s.page == self.page;
 
-        cx.box(.{
-            .padding = .{ .symmetric = .{ .x = 16, .y = 8 } },
-            .corner_radius = 6,
-            .background = if (is_active) t.primary else ui.Color.transparent,
-        }, .{
-            ui.textFmt("[{s}] {s}", .{ self.key, self.label }, .{
-                .size = 14,
-                .color = if (is_active) ui.Color.white else t.text,
-            }),
+        cx.hstack(.{ .gap = 4 }, .{
+            Tab{
+                .label = "Home",
+                .is_active = s.page == .home,
+                .on_click_handler = cx.updateWith(AppState, @as(u8, 0), AppState.goToPageByIndex),
+                .active_background = t.primary,
+                .inactive_background = ui.Color.transparent,
+                .active_text_color = ui.Color.white,
+                .inactive_text_color = t.text,
+                .hover_background = t.primary.withAlpha(0.2),
+            },
+            Tab{
+                .label = "Forms",
+                .is_active = s.page == .forms,
+                .on_click_handler = cx.updateWith(AppState, @as(u8, 1), AppState.goToPageByIndex),
+                .active_background = t.primary,
+                .inactive_background = ui.Color.transparent,
+                .active_text_color = ui.Color.white,
+                .inactive_text_color = t.text,
+                .hover_background = t.primary.withAlpha(0.2),
+            },
+            Tab{
+                .label = "Scroll",
+                .is_active = s.page == .scroll_demo,
+                .on_click_handler = cx.updateWith(AppState, @as(u8, 2), AppState.goToPageByIndex),
+                .active_background = t.primary,
+                .inactive_background = ui.Color.transparent,
+                .active_text_color = ui.Color.white,
+                .inactive_text_color = t.text,
+                .hover_background = t.primary.withAlpha(0.2),
+            },
+            Tab{
+                .label = "About",
+                .is_active = s.page == .about,
+                .on_click_handler = cx.updateWith(AppState, @as(u8, 3), AppState.goToPageByIndex),
+                .active_background = t.primary,
+                .inactive_background = ui.Color.transparent,
+                .active_text_color = ui.Color.white,
+                .inactive_text_color = t.text,
+                .hover_background = t.primary.withAlpha(0.2),
+            },
         });
     }
 };
@@ -381,8 +449,35 @@ const FormsPage = struct {
                 .size = 14,
                 .color = if (std.mem.indexOf(u8, s.form_status, "success") != null) t.accent else t.muted,
             }),
+            FormProgressSection{},
             FormCard{},
             ui.text("[Tab] to move between fields", .{ .size = 12, .color = t.muted }),
+        });
+    }
+};
+
+const FormProgressSection = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const s = cx.state(AppState);
+        const t = s.theme;
+
+        cx.box(.{
+            .direction = .column,
+            .gap = 6,
+            .alignment = .{ .cross = .center },
+        }, .{
+            ProgressBar{
+                .progress = s.form_progress,
+                .width = 280,
+                .height = 8,
+                .background = t.card,
+                .fill = t.primary,
+                .corner_radius = 4,
+            },
+            ui.textFmt("Form completion: {d}%", .{@as(u32, @intFromFloat(s.form_progress * 100))}, .{
+                .size = 12,
+                .color = t.muted,
+            }),
         });
     }
 };
@@ -437,6 +532,85 @@ const CheckboxSection = struct {
                 .checkmark_color = ui.Color.white,
                 .label_color = t.text,
             },
+        });
+    }
+};
+
+const RadioSection = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const s = cx.state(AppState);
+        const t = s.theme;
+
+        cx.box(.{
+            .direction = .row,
+            .gap = 24,
+            .alignment = .{ .cross = .start },
+        }, .{
+            // Contact Method card - vertical layout
+            cx.box(.{
+                .padding = .{ .all = 16 },
+                .gap = 10,
+                .background = t.card,
+                .corner_radius = 8,
+                .direction = .column,
+                .alignment = .{ .cross = .start },
+            }, .{
+                ui.text("Contact Method", .{ .size = 14, .color = t.muted }),
+                RadioButton{
+                    .label = "Email",
+                    .is_selected = s.contact_method == 0,
+                    .on_click_handler = cx.updateWith(AppState, @as(u8, 0), AppState.setContactMethod),
+                    .selected_color = t.primary,
+                    .unselected_color = t.bg,
+                    .border_color = t.muted,
+                    .label_color = t.text,
+                },
+                RadioButton{
+                    .label = "Phone",
+                    .is_selected = s.contact_method == 1,
+                    .on_click_handler = cx.updateWith(AppState, @as(u8, 1), AppState.setContactMethod),
+                    .selected_color = t.primary,
+                    .unselected_color = t.bg,
+                    .border_color = t.muted,
+                    .label_color = t.text,
+                },
+                RadioButton{
+                    .label = "Mail",
+                    .is_selected = s.contact_method == 2,
+                    .on_click_handler = cx.updateWith(AppState, @as(u8, 2), AppState.setContactMethod),
+                    .selected_color = t.primary,
+                    .unselected_color = t.bg,
+                    .border_color = t.muted,
+                    .label_color = t.text,
+                },
+            }),
+            // Priority card - using RadioGroup component
+            cx.box(.{
+                .padding = .{ .all = 16 },
+                .gap = 10,
+                .background = t.card,
+                .corner_radius = 8,
+                .direction = .column,
+                .alignment = .{ .cross = .start },
+            }, .{
+                ui.text("Priority", .{ .size = 14, .color = t.muted }),
+                RadioGroup{
+                    .id = "priority",
+                    .options = &.{ "Low", "Medium", "High" },
+                    .selected = s.priority,
+                    .handlers = &.{
+                        cx.updateWith(AppState, @as(u8, 0), AppState.setPriority),
+                        cx.updateWith(AppState, @as(u8, 1), AppState.setPriority),
+                        cx.updateWith(AppState, @as(u8, 2), AppState.setPriority),
+                    },
+                    .direction = .row,
+                    .gap = 16,
+                    .selected_color = t.accent,
+                    .unselected_color = t.bg,
+                    .border_color = t.muted,
+                    .label_color = t.text,
+                },
+            }),
         });
     }
 };
@@ -503,6 +677,7 @@ const FormCard = struct {
                 .placeholder_color = t.muted,
                 .corner_radius = 8,
             },
+            RadioSection{},
             CheckboxSection{},
             Button{ .label = "Submit", .on_click_handler = cx.command(AppState, AppState.submitFormAndBlur) },
         });

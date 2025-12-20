@@ -28,7 +28,10 @@ const action_mod = @import("../core/action.zig");
 const actionTypeId = action_mod.actionTypeId;
 const handler_mod = @import("../core/handler.zig");
 const entity_mod = @import("../core/entity.zig");
+const gooey_mod = @import("../core/gooey.zig");
 pub const HandlerRef = handler_mod.HandlerRef;
+pub const EntityId = entity_mod.EntityId;
+pub const Gooey = gooey_mod.Gooey;
 const layout_types = @import("../layout/types.zig");
 const BorderConfig = layout_types.BorderConfig;
 const layout_mod = @import("../layout/layout.zig");
@@ -49,9 +52,6 @@ const BoundingBox = layout_mod.BoundingBox;
 const scene_mod = @import("../core/scene.zig");
 const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
-
-const gooey_mod = @import("../core/gooey.zig");
-const Gooey = gooey_mod.Gooey;
 
 // Re-export for convenience
 pub const Color = @import("../layout/types.zig").Color;
