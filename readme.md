@@ -138,6 +138,11 @@ Gooey includes ready-to-use components:
 - **Checkbox** - Toggle with customizable colors
 - **TextInput** - Single-line text entry with placeholder, bindable
 - **TextArea** - Multi-line text with scrolling
+- **RadioButton** - Single radio button for custom layouts
+- **RadioGroup** - Grouped radio buttons with row/column layout
+- **ProgressBar** - Horizontal progress indicator
+- **Tab** - Individual tab button for navigation
+- **TabBar** - Horizontal tab bar container
 
 ```zig
 // Button variants
@@ -159,6 +164,50 @@ Checkbox{
     .checked = s.agreed_to_terms,
     .on_click_handler = cx.update(State, State.toggleTerms),
 }
+
+// RadioButton - individual buttons for custom layouts
+RadioButton{
+    .label = "Email",
+    .is_selected = s.contact_method == 0,
+    .on_click_handler = cx.updateWith(State, @as(u8, 0), State.setContactMethod),
+}
+
+// RadioGroup - grouped buttons with handlers array
+RadioGroup{
+    .id = "priority",
+    .options = &.{ "Low", "Medium", "High" },
+    .selected = s.priority,
+    .handlers = &.{
+        cx.updateWith(State, @as(u8, 0), State.setPriority),
+        cx.updateWith(State, @as(u8, 1), State.setPriority),
+        cx.updateWith(State, @as(u8, 2), State.setPriority),
+    },
+    .direction = .row,  // or .column
+    .gap = 16,
+}
+
+// ProgressBar
+ProgressBar{
+    .progress = s.completion,  // 0.0 to 1.0
+    .width = 200,
+    .height = 8,
+    .corner_radius = 4,
+}
+
+// Tab - individual tabs for custom navigation
+cx.hstack(.{ .gap = 4 }, .{
+    Tab{
+        .label = "Home",
+        .is_active = s.tab == 0,
+        .on_click_handler = cx.updateWith(State, @as(u8, 0), State.setTab),
+    },
+    Tab{
+        .label = "Settings",
+        .is_active = s.tab == 1,
+        .on_click_handler = cx.updateWith(State, @as(u8, 1), State.setTab),
+        .style = .underline,  // .pills (default), .underline, .segmented
+    },
+})
 ```
 
 ## Animation System
