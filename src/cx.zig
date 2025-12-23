@@ -809,7 +809,6 @@ test "Cx.update creates valid HandlerRef" {
 
     // Create a minimal Cx (we only need it for the update() method)
     var cx = Cx{
-        .allocator = std.testing.allocator,
         .gooey = undefined, // Not used by update()
         .builder = undefined, // Not used by update()
         .state_ptr = @ptrCast(&state),
@@ -837,7 +836,6 @@ test "Cx.updateWith creates handler with packed argument" {
     defer handler_mod.clearRootState();
 
     var cx = Cx{
-        .allocator = std.testing.allocator,
         .gooey = undefined,
         .builder = undefined,
         .state_ptr = @ptrCast(&state),

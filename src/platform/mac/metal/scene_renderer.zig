@@ -10,6 +10,7 @@ const scene_mod = @import("../../../core/scene.zig");
 const text_pipeline = @import("text.zig");
 const render_stats = @import("../../../core/render_stats.zig");
 const unified = @import("unified.zig");
+const svg_pipeline = @import("svg_pipeline.zig");
 
 /// Draw all scene primitives using the unified pipeline (single draw call)
 pub fn drawScenePrimitives(
@@ -117,5 +118,18 @@ pub fn drawText(
     const glyphs = scene.getGlyphs();
     if (glyphs.len > 0) {
         tp.render(encoder, glyphs, viewport_size) catch {};
+    }
+}
+
+/// Draw SVG instances
+pub fn drawSvgInstances(
+    sp: *svg_pipeline.SvgPipeline,
+    encoder: objc.Object,
+    scene: *const scene_mod.Scene,
+    viewport_size: [2]f32,
+) void {
+    const svg_instances = scene.getSvgInstances();
+    if (svg_instances.len > 0) {
+        sp.render(encoder, svg_instances, viewport_size);
     }
 }

@@ -77,6 +77,8 @@ pub const RadioGroup = components.RadioGroup;
 pub const RadioButton = components.RadioButton;
 pub const Tab = components.Tab;
 pub const TabBar = components.TabBar;
+pub const Svg = components.Svg;
+pub const Icons = components.Icons;
 
 // =============================================================================
 // App Entry Point (most common usage)
@@ -115,6 +117,9 @@ pub const Quad = core.Quad;
 pub const Shadow = core.Shadow;
 pub const Hsla = core.Hsla;
 pub const GlyphInstance = core.GlyphInstance;
+
+// SVG support
+pub const svg = core.svg;
 
 // Render bridge
 pub const render_bridge = core.render_bridge;

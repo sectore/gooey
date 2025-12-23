@@ -11,3 +11,5 @@ pub const RadioGroup = @import("radio_group.zig").RadioGroup;
 pub const RadioButton = @import("radio_group.zig").RadioButton;
 pub const Tab = @import("tabs.zig").Tab;
 pub const TabBar = @import("tabs.zig").TabBar;
+pub const Svg = @import("svg.zig").Svg;
+pub const Icons = @import("svg.zig").Icons;

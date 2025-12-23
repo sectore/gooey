@@ -54,7 +54,7 @@ const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
 
 // Re-export for convenience
-pub const Color = @import("../layout/types.zig").Color;
+pub const Color = @import("../core/geometry.zig").Color;
 pub const ShadowConfig = @import("../layout/types.zig").ShadowConfig;
 
 // =============================================================================
@@ -253,6 +253,7 @@ pub const PrimitiveType = enum {
     key_context,
     action_handler,
     action_handler_ref,
+    svg,
 };
 
 pub const CheckboxStyle = struct {
@@ -363,6 +364,29 @@ pub const Empty = struct {
     pub const primitive_type: PrimitiveType = .empty;
 };
 
+/// SVG element descriptor - renders a pre-loaded SVG mesh
+pub const SvgPrimitive = struct {
+    path: []const u8,
+    /// Mesh ID (from svg_mesh.meshId())
+    mesh_id: u64 = 0,
+    /// Width of the SVG element
+    width: f32 = 24,
+    /// Height of the SVG element
+    height: f32 = 24,
+    /// Fill color
+    color: Color = Color.black,
+    /// Stroke color (null = no stroke)
+    stroke_color: ?Color = null,
+    /// Stroke width in logical pixels
+    stroke_width: f32 = 1.0,
+    /// Whether to fill the path
+    has_fill: bool = true,
+    /// Source viewbox size (for proper scaling)
+    viewbox: f32 = 24,
+
+    pub const primitive_type: PrimitiveType = .svg;
+};
+
 // =============================================================================
 // Free Functions (return descriptors)
 // =============================================================================
@@ -397,6 +421,21 @@ pub fn spacer() Spacer {
 /// Create a spacer with minimum size
 pub fn spacerMin(min_size: f32) Spacer {
     return .{ .min_size = min_size };
+}
+
+/// Create an SVG element with the given size and color
+pub fn svg(mesh_id: u64, width: f32, height: f32, color: Color) SvgPrimitive {
+    return .{ .mesh_id = mesh_id, .width = width, .height = height, .color = color };
+}
+
+pub fn svgIcon(mesh_id: u64, width: f32, height: f32, color: Color, viewbox: f32) SvgPrimitive {
+    return .{
+        .mesh_id = mesh_id,
+        .width = width,
+        .height = height,
+        .color = color,
+        .viewbox = viewbox,
+    };
 }
 
 /// Set key context for dispatch (use inside box children)
@@ -479,6 +518,7 @@ pub const Builder = struct {
     pending_inputs: std.ArrayList(PendingInput),
     pending_text_areas: std.ArrayList(PendingTextArea),
     pending_scrolls: std.ArrayListUnmanaged(PendingScroll),
+    pending_svgs: std.ArrayListUnmanaged(PendingSvg),
 
     const PendingInput = struct {
         id: []const u8,
@@ -503,6 +543,16 @@ pub const Builder = struct {
         content_layout_id: LayoutId,
     };
 
+    const PendingSvg = struct {
+        layout_id: LayoutId,
+        path: []const u8,
+        color: Hsla,
+        stroke_color: ?Hsla,
+        stroke_width: f32,
+        has_fill: bool,
+        viewbox: f32,
+    };
+
     const Self = @This();
 
     pub fn init(
@@ -519,6 +569,7 @@ pub const Builder = struct {
             .pending_inputs = .{},
             .pending_scrolls = .{},
             .pending_text_areas = .{},
+            .pending_svgs = .{},
         };
     }
 
@@ -526,6 +577,7 @@ pub const Builder = struct {
         self.pending_inputs.deinit(self.allocator);
         self.pending_text_areas.deinit(self.allocator);
         self.pending_scrolls.deinit(self.allocator);
+        self.pending_svgs.deinit(self.allocator);
     }
 
     // =========================================================================
@@ -969,6 +1021,10 @@ pub const Builder = struct {
         }
     }
 
+    pub fn getPendingSvgs(self: *const Self) []const PendingSvg {
+        return self.pending_svgs.items;
+    }
+
     // =========================================================================
     // Internal: Child Processing
     // =========================================================================
@@ -1020,6 +1076,7 @@ pub const Builder = struct {
                 .action_handler => self.renderActionHandler(child),
                 .button_handler => self.renderButtonHandler(child),
                 .action_handler_ref => self.renderActionHandlerRef(child),
+                .svg => self.renderSvg(child),
                 .empty => {}, // Do nothing
 
             }
@@ -1367,6 +1424,41 @@ pub const Builder = struct {
         }
 
         self.dispatch.popNode();
+    }
+
+    fn renderSvg(self: *Self, prim: SvgPrimitive) void {
+        // Generate a unique layout ID for this SVG instance
+        const layout_id = self.generateId();
+
+        // Create a fixed-size element for layout
+        self.layout.openElement(.{
+            .id = layout_id,
+            .layout = .{
+                .sizing = .{
+                    .width = SizingAxis.fixed(prim.width),
+                    .height = SizingAxis.fixed(prim.height),
+                },
+            },
+        }) catch return;
+        self.layout.closeElement();
+
+        // Convert Colors to Hsla
+        const fill_hsla = Hsla.fromRgba(prim.color.r, prim.color.g, prim.color.b, prim.color.a);
+        const stroke_hsla: ?Hsla = if (prim.stroke_color) |sc|
+            Hsla.fromRgba(sc.r, sc.g, sc.b, sc.a)
+        else
+            null;
+
+        // Store for later rendering (after layout is computed)
+        self.pending_svgs.append(self.allocator, .{
+            .layout_id = layout_id,
+            .path = prim.path,
+            .color = fill_hsla,
+            .stroke_color = stroke_hsla,
+            .stroke_width = prim.stroke_width,
+            .has_fill = prim.has_fill,
+            .viewbox = prim.viewbox,
+        }) catch {};
     }
 
     fn renderActionHandlerRef(self: *Self, ah: ActionHandlerRefPrimitive) void {

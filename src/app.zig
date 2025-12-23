@@ -43,6 +43,7 @@ const geometry_mod = @import("core/geometry.zig");
 const shader_mod = @import("core/shader.zig");
 const ui_mod = @import("ui/ui.zig");
 const dispatch_mod = @import("core/dispatch.zig");
+const svg_instance_mod = @import("core/svg_instance.zig");
 const scroll_mod = @import("widgets/scroll_container.zig");
 const text_input_mod = @import("widgets/text_input.zig");
 const text_area_mod = @import("widgets/text_area.zig");
@@ -227,6 +228,7 @@ pub fn runCx(
     window.setRenderCallback(CallbackState.onRender);
     window.setInputCallback(CallbackState.onInput);
     window.setTextAtlas(gooey_ctx.text_system.getAtlas());
+    window.setSvgAtlas(gooey_ctx.svg_atlas.getAtlas());
     window.setScene(gooey_ctx.scene);
 
     // Run the event loop
@@ -245,6 +247,7 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     cx.builder().pending_inputs.clearRetainingCapacity();
     cx.builder().pending_text_areas.clearRetainingCapacity();
     cx.builder().pending_scrolls.clearRetainingCapacity();
+    cx.builder().pending_svgs.clearRetainingCapacity();
 
     // Call user's render function with Cx
     render_fn(cx);
@@ -268,6 +271,61 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     // Render all commands
     for (commands) |cmd| {
         try renderCommand(cx.gooey(), cmd);
+    }
+
+    // Render pending SVGs (after layout is computed)
+    const pending_svgs = cx.builder().getPendingSvgs();
+    for (pending_svgs) |pending| {
+        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
+        if (bounds) |b| {
+            const scale_factor = cx.gooey().scale_factor;
+
+            // Determine stroke width for caching
+            const stroke_w: ?f32 = if (pending.stroke_color != null)
+                pending.stroke_width
+            else
+                null;
+
+            // Get from atlas (rasterizes if not cached)
+            const cached = try cx.gooey().svg_atlas.getOrRasterize(
+                pending.path,
+                pending.viewbox,
+                @max(b.width, b.height), // Use larger dimension for size
+                pending.has_fill,
+                stroke_w,
+            );
+
+            if (cached.region.width == 0) continue;
+
+            // Get UV coordinates
+            const atlas = cx.gooey().svg_atlas.getAtlas();
+            const uv = cached.region.uv(atlas.size);
+
+            // Snap to device pixel grid (like text rendering)
+            const device_x = b.x * scale_factor;
+            const device_y = b.y * scale_factor;
+            const snapped_x = @floor(device_x) / scale_factor;
+            const snapped_y = @floor(device_y) / scale_factor;
+
+            // Get fill and stroke colors
+            const fill_color = if (pending.has_fill) pending.color else Hsla.transparent;
+            const stroke_col = if (pending.stroke_color) |sc| sc else Hsla.transparent;
+
+            const instance = svg_instance_mod.SvgInstance.init(
+                snapped_x,
+                snapped_y,
+                b.width,
+                b.height,
+                uv.u0,
+                uv.v0,
+                uv.u1,
+                uv.v1,
+                fill_color,
+                stroke_col,
+            );
+
+            try cx.gooey().scene.insertSvgClipped(instance);
+        }
     }
 
     // Render text inputs
@@ -572,6 +630,7 @@ fn renderFrameWithContext(
     ctx.builder.pending_inputs.clearRetainingCapacity();
     ctx.builder.pending_text_areas.clearRetainingCapacity();
     ctx.builder.pending_scrolls.clearRetainingCapacity();
+    ctx.builder.pending_svgs.clearRetainingCapacity();
 
     // Call user's render function with typed context
     render_fn(ctx);

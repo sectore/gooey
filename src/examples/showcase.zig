@@ -26,6 +26,8 @@ const Tab = gooey.Tab;
 const RadioButton = gooey.RadioButton;
 const RadioGroup = gooey.RadioGroup;
 const ProgressBar = gooey.ProgressBar;
+const Svg = gooey.Svg;
+const Icons = gooey.Icons;
 
 // =============================================================================
 // Theme
@@ -361,7 +363,8 @@ const NavTabs = struct {
 
 const HomePage = struct {
     pub fn render(_: @This(), cx: *Cx) void {
-        const t = cx.state(AppState).theme;
+        const s = cx.state(AppState);
+        const t = s.theme;
 
         cx.box(.{
             .padding = .{ .all = 32 },
@@ -372,9 +375,116 @@ const HomePage = struct {
         }, .{
             ui.text("Welcome to Gooey", .{ .size = 32, .color = t.text }),
             ui.text("A GPU-accelerated UI framework for Zig", .{ .size = 16, .color = t.muted }),
+            SvgRow{},
             StatsRow{},
             ButtonRow{},
             ui.text("Use arrow keys or [1-4] to navigate", .{ .size = 12, .color = t.muted }),
+        });
+    }
+};
+
+const SvgRow = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const t = cx.state(AppState).theme;
+
+        cx.box(.{
+            .gap = 24,
+            .padding = .{ .all = 16 },
+            .background = t.card,
+            .corner_radius = 12,
+            .alignment = .{ .main = .center, .cross = .center },
+        }, .{
+            ui.text("SVG Icons", .{ .size = 14, .color = t.muted }),
+
+            cx.hstack(.{ .gap = 16, .alignment = .center }, .{
+                // Filled icons (original behavior)
+                Svg{
+                    .path = Icons.arrow_back,
+                    .size = 24,
+                    .color = null, // no fill (Lucide uses fill="none")
+                    .stroke_color = t.text,
+                    .stroke_width = 1.5,
+                },
+                Svg{ .path = Icons.favorite, .size = 32, .color = ui.Color.red },
+                Svg{ .path = Icons.check, .size = 32, .color = t.accent },
+                // Stroke-only icons (new!)
+                Svg{
+                    .path = Icons.star_outline,
+                    .size = 32,
+                    .color = null,
+                    .stroke_color = t.primary,
+                    .stroke_width = 1.5,
+                },
+                Svg{
+                    .path = Icons.search,
+                    .size = 32,
+                    .color = null,
+                    .stroke_color = t.text,
+                    .stroke_width = 2,
+                },
+                // Fill + stroke combined
+                Svg{
+                    .path = Icons.folder,
+                    .size = 32,
+                    .color = ui.Color.rgb(1.0, 0.85, 0.4),
+                    .stroke_color = ui.Color.rgb(0.8, 0.6, 0.0),
+                    .stroke_width = 1,
+                },
+            }),
+
+            SvgAdvancedRow{},
+        });
+    }
+};
+
+const SvgAdvancedRow = struct {
+    // Circle using arc commands (A)
+    const circle_path = "M12 2 A10 10 0 1 1 12 22 A10 10 0 1 1 12 2";
+
+    // Smooth wave using quadratic beziers (Q/T)
+    const wave_path = "M2 12 Q6 6 12 12 T22 12";
+
+    // Rounded rectangle using arcs
+    const rounded_rect_path = "M6 2 L18 2 A4 4 0 0 1 22 6 L22 18 A4 4 0 0 1 18 22 L6 22 A4 4 0 0 1 2 18 L2 6 A4 4 0 0 1 6 2 Z";
+
+    pub fn render(_: @This(), cx: *Cx) void {
+        const t = cx.state(AppState).theme;
+
+        cx.box(.{ .gap = 8, .alignment = .{ .main = .center, .cross = .center } }, .{
+            ui.text("Arcs & Beziers", .{ .size = 12, .color = t.muted }),
+
+            cx.hstack(.{ .gap = 16, .alignment = .center }, .{
+                // Circle (arc command)
+                Svg{
+                    .path = circle_path,
+                    .size = 28,
+                    .color = null,
+                    .stroke_color = t.primary,
+                    .stroke_width = 2,
+                },
+                // Heart with fill
+                Svg{
+                    .path = Icons.favorite,
+                    .size = 28,
+                    .color = ui.Color.rgb(1.0, 0.4, 0.5),
+                },
+                // Wave (quadratic bezier)
+                Svg{
+                    .path = wave_path,
+                    .size = 28,
+                    .color = null,
+                    .stroke_color = t.accent,
+                    .stroke_width = 2,
+                },
+                // Rounded rect (arcs for corners)
+                Svg{
+                    .path = rounded_rect_path,
+                    .size = 28,
+                    .color = t.card,
+                    .stroke_color = t.text,
+                    .stroke_width = 1.5,
+                },
+            }),
         });
     }
 };
@@ -871,6 +981,8 @@ const FeatureCard = struct {
             FeatureItem{ .text = "Metal GPU rendering" },
             FeatureItem{ .text = "Pure state pattern" },
             FeatureItem{ .text = "Component system (Button, Checkbox, TextInput)" },
+            FeatureItem{ .text = "SVG icons with fill & stroke" },
+            FeatureItem{ .text = "SVG arcs & quadratic beziers" },
             FeatureItem{ .text = "Text styles (underline, strikethrough)" },
             FeatureItem{ .text = "CoreText font shaping" },
             FeatureItem{ .text = "Scroll containers" },
@@ -898,6 +1010,8 @@ const FeatureItem = struct {
 // =============================================================================
 // Render & Events
 // =============================================================================
+
+const star_path = "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
 
 fn render(cx: *Cx) void {
     const s = cx.state(AppState);
