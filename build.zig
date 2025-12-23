@@ -50,13 +50,13 @@ pub fn build(b: *std.Build) void {
         });
 
         // Run step (default demo)
-        const run_step = b.step("run", "Run the login form demo");
+        const run_step = b.step("run", "Run the showcase demo");
         const run_cmd = b.addRunArtifact(exe);
         run_step.dependOn(&run_cmd.step);
         run_cmd.step.dependOn(b.getInstallStep());
 
         // Enable Metal HUD for FPS/GPU stats
-        run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
+        // run_cmd.setEnvironmentVariable("MTL_HUD_ENABLED", "1");
 
         if (b.args) |args| {
             run_cmd.addArgs(args);
