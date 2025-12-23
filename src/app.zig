@@ -40,8 +40,10 @@ const engine_mod = @import("layout/engine.zig");
 const text_mod = @import("text/mod.zig");
 const input_mod = @import("core/input.zig");
 const geometry_mod = @import("core/geometry.zig");
+const shader_mod = @import("core/shader.zig");
 const ui_mod = @import("ui/ui.zig");
 const dispatch_mod = @import("core/dispatch.zig");
+const svg_instance_mod = @import("core/svg_instance.zig");
 const scroll_mod = @import("widgets/scroll_container.zig");
 const text_input_mod = @import("widgets/text_input.zig");
 const text_area_mod = @import("widgets/text_area.zig");
@@ -65,199 +67,6 @@ const ScrollContainer = scroll_mod.ScrollContainer;
 const InputEvent = input_mod.InputEvent;
 const Builder = ui_mod.Builder;
 
-/// UI context passed to render callbacks (alias for Gooey with Builder integrated)
-pub const UI = struct {
-    gooey: *Gooey,
-    builder: *Builder,
-
-    const Self = @This();
-
-    // =========================================================================
-    // Layout shortcuts (delegate to builder)
-    // =========================================================================
-
-    pub fn vstack(self: *Self, style: ui_mod.StackStyle, children: anytype) void {
-        self.builder.vstack(style, children);
-    }
-
-    pub fn hstack(self: *Self, style: ui_mod.StackStyle, children: anytype) void {
-        self.builder.hstack(style, children);
-    }
-
-    pub fn box(self: *Self, props: ui_mod.Box, children: anytype) void {
-        self.builder.box(props, children);
-    }
-
-    pub fn boxWithId(self: *Self, id: []const u8, props: ui_mod.Box, children: anytype) void {
-        self.builder.boxWithId(id, props, children);
-    }
-
-    pub fn center(self: *Self, style: ui_mod.CenterStyle, children: anytype) void {
-        self.builder.center(style, children);
-    }
-
-    pub fn when(self: *Self, condition: bool, children: anytype) void {
-        self.builder.when(condition, children);
-    }
-
-    pub fn maybe(self: *Self, optional: anytype, comptime render_fn: anytype) void {
-        self.builder.maybe(optional, render_fn);
-    }
-
-    pub fn each(self: *Self, items: anytype, comptime render_fn: anytype) void {
-        self.builder.each(items, render_fn);
-    }
-
-    // =========================================================================
-    // Widget access
-    // =========================================================================
-
-    pub fn textInput(self: *Self, id: []const u8) ?*TextInput {
-        return self.gooey.textInput(id);
-    }
-
-    /// Get a TextArea widget by ID
-    pub fn textArea(self: *Self, id: []const u8) ?*TextArea {
-        return self.gooey.textArea(id);
-    }
-
-    pub fn focusTextInput(self: *Self, id: []const u8) void {
-        self.gooey.focusTextInput(id);
-    }
-
-    /// Focus a TextArea by ID
-    pub fn focusTextArea(self: *Self, id: []const u8) void {
-        self.gooey.focusTextArea(id);
-    }
-
-    /// Focus next element in tab order
-    pub fn focusNext(self: *Self) void {
-        self.gooey.focusNext();
-    }
-
-    /// Focus previous element in tab order
-    pub fn focusPrev(self: *Self) void {
-        self.gooey.focusPrev();
-    }
-
-    /// Clear all focus
-    pub fn blurAll(self: *Self) void {
-        self.gooey.blurAll();
-    }
-
-    /// Check if an element is focused
-    pub fn isElementFocused(self: *Self, id: []const u8) bool {
-        return self.gooey.isElementFocused(id);
-    }
-
-    // =========================================================================
-    // Scrolling
-    // =========================================================================
-
-    pub fn scroll(self: *Self, id: []const u8, style: ui_mod.ScrollStyle, children: anytype) void {
-        self.builder.scroll(id, style, children);
-    }
-
-    pub fn scrollContainer(self: *Self, id: []const u8) ?*ScrollContainer {
-        return self.gooey.widgets.scrollContainer(id);
-    }
-
-    // =========================================================================
-    // Render control
-    // =========================================================================
-
-    pub fn requestRender(self: *Self) void {
-        self.gooey.requestRender();
-    }
-
-    /// Get window dimensions
-    pub fn windowSize(self: *Self) struct { width: f32, height: f32 } {
-        return .{
-            .width = self.gooey.width,
-            .height = self.gooey.height,
-        };
-    }
-};
-
-/// Configuration for the simple run() API
-pub const RunConfig = struct {
-    title: []const u8 = "Gooey App",
-    width: f64 = 800,
-    height: f64 = 600,
-    background_color: ?geometry_mod.Color = null,
-
-    /// Called each frame to build the UI
-    render: *const fn (*UI) void,
-
-    /// Called for input events (optional). Return true if handled.
-    on_event: ?*const fn (*UI, InputEvent) bool = null,
-
-    /// Custom shader sources (Shadertoy-compatible MSL)
-    custom_shaders: []const []const u8 = &.{},
-};
-
-/// Run a Gooey application with minimal boilerplate.
-///
-/// This is the simplest API for apps that don't need typed state management.
-/// For stateful apps, use `runCx()` instead.
-///
-/// Example:
-/// ```zig
-/// pub fn main() !void {
-///     try gooey.run(.{
-///         .title = "My App",
-///         .render = render,
-///     });
-/// }
-///
-/// fn render(g: *gooey.UI) void {
-///     g.box(.{}, .{ ui.text("Hello!", .{}) });
-/// }
-/// ```
-pub fn run(config: RunConfig) !void {
-    // Wrapper state that holds the original callbacks
-    const WrapperState = struct {
-        render_fn: *const fn (*UI) void,
-        event_fn: ?*const fn (*UI, InputEvent) bool,
-    };
-
-    var wrapper_state = WrapperState{
-        .render_fn = config.render,
-        .event_fn = config.on_event,
-    };
-
-    // Use runCx internally with a wrapper render function
-    try runCx(WrapperState, &wrapper_state, struct {
-        fn render(cx: *Cx) void {
-            const ws = cx.state(WrapperState);
-            var ui_wrapper = UI{
-                .gooey = cx.getGooey(),
-                .builder = cx.getBuilder(),
-            };
-            ws.render_fn(&ui_wrapper);
-        }
-    }.render, .{
-        .title = config.title,
-        .width = config.width,
-        .height = config.height,
-        .background_color = config.background_color,
-        .on_event = if (config.on_event) |_| struct {
-            fn on_event(cx: *Cx, event: InputEvent) bool {
-                const ws = cx.state(WrapperState);
-                if (ws.event_fn) |handler| {
-                    var ui_wrapper = UI{
-                        .gooey = cx.getGooey(),
-                        .builder = cx.getBuilder(),
-                    };
-                    return handler(&ui_wrapper, event);
-                }
-                return false;
-            }
-        }.on_event else null,
-        .custom_shaders = config.custom_shaders,
-    });
-}
-
 // =============================================================================
 // Cx API - New Unified Context
 // =============================================================================
@@ -274,8 +83,8 @@ pub fn CxConfig(comptime State: type) type {
         /// Called for input events (optional). Return true if handled.
         on_event: ?*const fn (*Cx, input_mod.InputEvent) bool = null,
 
-        /// Custom shader sources (Shadertoy-compatible MSL)
-        custom_shaders: []const []const u8 = &.{},
+        /// Custom shader sources (cross-platform - MSL for macOS, WGSL for web)
+        custom_shaders: []const shader_mod.CustomShader = &.{},
 
         // === Glass/Transparency Options ===
 
@@ -374,9 +183,9 @@ pub fn runCx(
 
     // Create unified Cx context
     var cx = Cx{
-        .allocator = allocator,
-        .gooey = &gooey_ctx,
-        .builder = &builder,
+        ._allocator = allocator,
+        ._gooey = &gooey_ctx,
+        ._builder = &builder,
         .state_ptr = @ptrCast(state),
         .state_type_id = cx_mod.typeId(State),
     };
@@ -419,6 +228,7 @@ pub fn runCx(
     window.setRenderCallback(CallbackState.onRender);
     window.setInputCallback(CallbackState.onInput);
     window.setTextAtlas(gooey_ctx.text_system.getAtlas());
+    window.setSvgAtlas(gooey_ctx.svg_atlas.getAtlas());
     window.setScene(gooey_ctx.scene);
 
     // Run the event loop
@@ -428,45 +238,101 @@ pub fn runCx(
 /// Internal: render a single frame with Cx context
 pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     // Reset dispatch tree for new frame
-    cx.gooey.dispatch.reset();
+    cx.gooey().dispatch.reset();
 
-    cx.gooey.beginFrame();
+    cx.gooey().beginFrame();
 
     // Reset builder state
-    cx.builder.id_counter = 0;
-    cx.builder.pending_inputs.clearRetainingCapacity();
-    cx.builder.pending_text_areas.clearRetainingCapacity();
-    cx.builder.pending_scrolls.clearRetainingCapacity();
+    cx.builder().id_counter = 0;
+    cx.builder().pending_inputs.clearRetainingCapacity();
+    cx.builder().pending_text_areas.clearRetainingCapacity();
+    cx.builder().pending_scrolls.clearRetainingCapacity();
+    cx.builder().pending_svgs.clearRetainingCapacity();
 
     // Call user's render function with Cx
     render_fn(cx);
 
     // End frame and get render commands
-    const commands = try cx.gooey.endFrame();
+    const commands = try cx.gooey().endFrame();
 
     // Sync bounds from layout to dispatch tree
-    for (cx.gooey.dispatch.nodes.items) |*node| {
+    for (cx.gooey().dispatch.nodes.items) |*node| {
         if (node.layout_id) |layout_id| {
-            node.bounds = cx.gooey.layout.getBoundingBox(layout_id);
+            node.bounds = cx.gooey().layout.getBoundingBox(layout_id);
         }
     }
 
     // Register hit regions
-    cx.builder.registerPendingScrollRegions();
+    cx.builder().registerPendingScrollRegions();
 
     // Clear scene
-    cx.gooey.scene.clear();
+    cx.gooey().scene.clear();
 
     // Render all commands
     for (commands) |cmd| {
-        try renderCommand(cx.gooey, cmd);
+        try renderCommand(cx.gooey(), cmd);
+    }
+
+    // Render pending SVGs (after layout is computed)
+    const pending_svgs = cx.builder().getPendingSvgs();
+    for (pending_svgs) |pending| {
+        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
+        if (bounds) |b| {
+            const scale_factor = cx.gooey().scale_factor;
+
+            // Determine stroke width for caching
+            const stroke_w: ?f32 = if (pending.stroke_color != null)
+                pending.stroke_width
+            else
+                null;
+
+            // Get from atlas (rasterizes if not cached)
+            const cached = try cx.gooey().svg_atlas.getOrRasterize(
+                pending.path,
+                pending.viewbox,
+                @max(b.width, b.height), // Use larger dimension for size
+                pending.has_fill,
+                stroke_w,
+            );
+
+            if (cached.region.width == 0) continue;
+
+            // Get UV coordinates
+            const atlas = cx.gooey().svg_atlas.getAtlas();
+            const uv = cached.region.uv(atlas.size);
+
+            // Snap to device pixel grid (like text rendering)
+            const device_x = b.x * scale_factor;
+            const device_y = b.y * scale_factor;
+            const snapped_x = @floor(device_x) / scale_factor;
+            const snapped_y = @floor(device_y) / scale_factor;
+
+            // Get fill and stroke colors
+            const fill_color = if (pending.has_fill) pending.color else Hsla.transparent;
+            const stroke_col = if (pending.stroke_color) |sc| sc else Hsla.transparent;
+
+            const instance = svg_instance_mod.SvgInstance.init(
+                snapped_x,
+                snapped_y,
+                b.width,
+                b.height,
+                uv.u0,
+                uv.v0,
+                uv.u1,
+                uv.v1,
+                fill_color,
+                stroke_col,
+            );
+
+            try cx.gooey().scene.insertSvgClipped(instance);
+        }
     }
 
     // Render text inputs
-    for (cx.builder.pending_inputs.items) |pending| {
-        const bounds = cx.gooey.layout.getBoundingBox(pending.layout_id.id);
+    for (cx.builder().pending_inputs.items) |pending| {
+        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
         if (bounds) |b| {
-            if (cx.gooey.textInput(pending.id)) |input_widget| {
+            if (cx.gooey().textInput(pending.id)) |input_widget| {
                 const inset = pending.style.padding + pending.style.border_width;
                 input_widget.bounds = .{
                     .x = b.x + inset,
@@ -479,16 +345,16 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
                 input_widget.style.placeholder_color = render_bridge.colorToHsla(pending.style.placeholder_color);
                 input_widget.style.selection_color = render_bridge.colorToHsla(pending.style.selection_color);
                 input_widget.style.cursor_color = render_bridge.colorToHsla(pending.style.cursor_color);
-                try input_widget.render(cx.gooey.scene, cx.gooey.text_system, cx.gooey.scale_factor);
+                try input_widget.render(cx.gooey().scene, cx.gooey().text_system, cx.gooey().scale_factor);
             }
         }
     }
 
     // Render text areas
-    for (cx.builder.pending_text_areas.items) |pending| {
-        const bounds = cx.gooey.layout.getBoundingBox(pending.layout_id.id);
+    for (cx.builder().pending_text_areas.items) |pending| {
+        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
         if (bounds) |b| {
-            if (cx.gooey.textArea(pending.id)) |ta_widget| {
+            if (cx.gooey().textArea(pending.id)) |ta_widget| {
                 ta_widget.bounds = .{
                     .x = b.x + pending.style.padding + pending.style.border_width,
                     .y = b.y + pending.style.padding + pending.style.border_width,
@@ -500,19 +366,19 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
                 ta_widget.style.selection_color = render_bridge.colorToHsla(pending.style.selection_color);
                 ta_widget.style.cursor_color = render_bridge.colorToHsla(pending.style.cursor_color);
                 ta_widget.setPlaceholder(pending.style.placeholder);
-                try ta_widget.render(cx.gooey.scene, cx.gooey.text_system, cx.gooey.scale_factor);
+                try ta_widget.render(cx.gooey().scene, cx.gooey().text_system, cx.gooey().scale_factor);
             }
         }
     }
 
     // Render scrollbars
-    for (cx.builder.pending_scrolls.items) |pending| {
-        if (cx.gooey.widgets.scrollContainer(pending.id)) |scroll_widget| {
-            try scroll_widget.renderScrollbars(cx.gooey.scene);
+    for (cx.builder().pending_scrolls.items) |pending| {
+        if (cx.gooey().widgets.scrollContainer(pending.id)) |scroll_widget| {
+            try scroll_widget.renderScrollbars(cx.gooey().scene);
         }
     }
 
-    cx.gooey.scene.finish();
+    cx.gooey().scene.finish();
 }
 
 /// Internal: handle input with Cx context
@@ -528,11 +394,11 @@ pub fn handleInputCx(
         const y: f32 = @floatCast(scroll_ev.position.y);
 
         // Check TextAreas for scroll
-        for (cx.builder.pending_text_areas.items) |pending| {
-            const bounds = cx.gooey.layout.getBoundingBox(pending.layout_id.id);
+        for (cx.builder().pending_text_areas.items) |pending| {
+            const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
             if (bounds) |b| {
                 if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
-                    if (cx.gooey.textArea(pending.id)) |ta| {
+                    if (cx.gooey().textArea(pending.id)) |ta| {
                         if (ta.line_height > 0 and ta.viewport_height > 0) {
                             const delta_y: f32 = @floatCast(scroll_ev.delta.y);
                             const content_height: f32 = @as(f32, @floatFromInt(ta.lineCount())) * ta.line_height;
@@ -548,11 +414,11 @@ pub fn handleInputCx(
         }
 
         // Check scroll containers
-        for (cx.builder.pending_scrolls.items) |pending| {
-            const bounds = cx.gooey.layout.getBoundingBox(pending.layout_id.id);
+        for (cx.builder().pending_scrolls.items) |pending| {
+            const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
             if (bounds) |b| {
                 if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
-                    if (cx.gooey.widgets.getScrollContainer(pending.id)) |sc| {
+                    if (cx.gooey().widgets.getScrollContainer(pending.id)) |sc| {
                         if (sc.handleScroll(scroll_ev.delta.x, scroll_ev.delta.y)) {
                             cx.notify();
                             return true;
@@ -573,14 +439,14 @@ pub fn handleInputCx(
         const x: f32 = @floatCast(pos.x);
         const y: f32 = @floatCast(pos.y);
 
-        if (cx.gooey.updateHover(x, y)) {
+        if (cx.gooey().updateHover(x, y)) {
             cx.notify();
         }
     }
 
     // Handle mouse_exited to clear hover
     if (event == .mouse_exited) {
-        cx.gooey.clearHover();
+        cx.gooey().clearHover();
         cx.notify();
     }
 
@@ -591,27 +457,27 @@ pub fn handleInputCx(
         const y: f32 = @floatCast(pos.y);
 
         // Check if click is in a TextArea
-        for (cx.builder.pending_text_areas.items) |pending| {
-            const bounds = cx.gooey.layout.getBoundingBox(pending.layout_id.id);
+        for (cx.builder().pending_text_areas.items) |pending| {
+            const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
             if (bounds) |b| {
                 if (x >= b.x and x < b.x + b.width and y >= b.y and y < b.y + b.height) {
-                    cx.gooey.focusTextArea(pending.id);
+                    cx.gooey().focusTextArea(pending.id);
                     cx.notify();
                     return true;
                 }
             }
         }
 
-        if (cx.gooey.dispatch.hitTest(x, y)) |target| {
-            if (cx.gooey.dispatch.getNodeConst(target)) |node| {
+        if (cx.gooey().dispatch.hitTest(x, y)) |target| {
+            if (cx.gooey().dispatch.getNodeConst(target)) |node| {
                 if (node.focus_id) |focus_id| {
-                    if (cx.gooey.focus.getHandleById(focus_id)) |handle| {
-                        cx.gooey.focusElement(handle.string_id);
+                    if (cx.gooey().focus.getHandleById(focus_id)) |handle| {
+                        cx.gooey().focusElement(handle.string_id);
                     }
                 }
             }
 
-            if (cx.gooey.dispatch.dispatchClick(target, cx.gooey)) {
+            if (cx.gooey().dispatch.dispatchClick(target, cx.gooey())) {
                 cx.notify();
                 return true;
             }
@@ -628,37 +494,37 @@ pub fn handleInputCx(
         .key_down => |k| {
             if (k.key == .tab) {
                 if (k.modifiers.shift) {
-                    cx.gooey.focusPrev();
+                    cx.gooey().focusPrev();
                 } else {
-                    cx.gooey.focusNext();
+                    cx.gooey().focusNext();
                 }
                 return true;
             }
 
             // Try action dispatch through focus path
-            if (cx.gooey.focus.getFocused()) |focus_id| {
+            if (cx.gooey().focus.getFocused()) |focus_id| {
                 var path_buf: [64]dispatch_mod.DispatchNodeId = undefined;
-                if (cx.gooey.dispatch.focusPath(focus_id, &path_buf)) |path| {
+                if (cx.gooey().dispatch.focusPath(focus_id, &path_buf)) |path| {
                     var ctx_buf: [64][]const u8 = undefined;
-                    const contexts = cx.gooey.dispatch.contextStack(path, &ctx_buf);
+                    const contexts = cx.gooey().dispatch.contextStack(path, &ctx_buf);
 
-                    if (cx.gooey.keymap.match(k.key, k.modifiers, contexts)) |binding| {
-                        if (cx.gooey.dispatch.dispatchAction(binding.action_type, path, cx.gooey)) {
+                    if (cx.gooey().keymap.match(k.key, k.modifiers, contexts)) |binding| {
+                        if (cx.gooey().dispatch.dispatchAction(binding.action_type, path, cx.gooey())) {
                             cx.notify();
                             return true;
                         }
                     }
 
-                    if (cx.gooey.dispatch.dispatchKeyDown(focus_id, k)) {
+                    if (cx.gooey().dispatch.dispatchKeyDown(focus_id, k)) {
                         cx.notify();
                         return true;
                     }
                 }
             } else {
                 var path_buf: [64]dispatch_mod.DispatchNodeId = undefined;
-                if (cx.gooey.dispatch.rootPath(&path_buf)) |path| {
-                    if (cx.gooey.keymap.match(k.key, k.modifiers, &.{})) |binding| {
-                        if (cx.gooey.dispatch.dispatchAction(binding.action_type, path, cx.gooey)) {
+                if (cx.gooey().dispatch.rootPath(&path_buf)) |path| {
+                    if (cx.gooey().keymap.match(k.key, k.modifiers, &.{})) |binding| {
+                        if (cx.gooey().dispatch.dispatchAction(binding.action_type, path, cx.gooey())) {
                             cx.notify();
                             return true;
                         }
@@ -667,7 +533,7 @@ pub fn handleInputCx(
             }
 
             // Handle focused TextInput
-            if (cx.gooey.getFocusedTextInput()) |input| {
+            if (cx.gooey().getFocusedTextInput()) |input| {
                 if (isControlKey(k.key, k.modifiers)) {
                     input.handleKey(k) catch {};
                     syncBoundVariablesCx(cx);
@@ -677,7 +543,7 @@ pub fn handleInputCx(
             }
 
             // Handle focused TextArea
-            if (cx.gooey.getFocusedTextArea()) |ta| {
+            if (cx.gooey().getFocusedTextArea()) |ta| {
                 if (isControlKey(k.key, k.modifiers)) {
                     ta.handleKey(k) catch {};
                     syncTextAreaBoundVariablesCx(cx);
@@ -687,13 +553,13 @@ pub fn handleInputCx(
             }
         },
         .text_input => |t| {
-            if (cx.gooey.getFocusedTextInput()) |input| {
+            if (cx.gooey().getFocusedTextInput()) |input| {
                 input.insertText(t.text) catch {};
                 syncBoundVariablesCx(cx);
                 cx.notify();
                 return true;
             }
-            if (cx.gooey.getFocusedTextArea()) |ta| {
+            if (cx.gooey().getFocusedTextArea()) |ta| {
                 ta.insertText(t.text) catch {};
                 syncTextAreaBoundVariablesCx(cx);
                 cx.notify();
@@ -701,12 +567,12 @@ pub fn handleInputCx(
             }
         },
         .composition => |c| {
-            if (cx.gooey.getFocusedTextInput()) |input| {
+            if (cx.gooey().getFocusedTextInput()) |input| {
                 input.setComposition(c.text) catch {};
                 cx.notify();
                 return true;
             }
-            if (cx.gooey.getFocusedTextArea()) |ta| {
+            if (cx.gooey().getFocusedTextArea()) |ta| {
                 ta.setComposition(c.text) catch {};
                 cx.notify();
                 return true;
@@ -724,9 +590,9 @@ pub fn handleInputCx(
 
 /// Internal: sync bound variables for text inputs (Cx version)
 fn syncBoundVariablesCx(cx: *Cx) void {
-    for (cx.builder.pending_inputs.items) |pending| {
+    for (cx.builder().pending_inputs.items) |pending| {
         if (pending.style.bind) |bind_ptr| {
-            if (cx.gooey.textInput(pending.id)) |input| {
+            if (cx.gooey().textInput(pending.id)) |input| {
                 bind_ptr.* = input.getText();
             }
         }
@@ -735,9 +601,9 @@ fn syncBoundVariablesCx(cx: *Cx) void {
 
 /// Internal: sync bound variables for text areas (Cx version)
 fn syncTextAreaBoundVariablesCx(cx: *Cx) void {
-    for (cx.builder.pending_text_areas.items) |pending| {
+    for (cx.builder().pending_text_areas.items) |pending| {
         if (pending.style.bind) |bind_ptr| {
-            if (cx.gooey.textArea(pending.id)) |ta| {
+            if (cx.gooey().textArea(pending.id)) |ta| {
                 bind_ptr.* = ta.getText();
             }
         }
@@ -764,6 +630,7 @@ fn renderFrameWithContext(
     ctx.builder.pending_inputs.clearRetainingCapacity();
     ctx.builder.pending_text_areas.clearRetainingCapacity();
     ctx.builder.pending_scrolls.clearRetainingCapacity();
+    ctx.builder.pending_svgs.clearRetainingCapacity();
 
     // Call user's render function with typed context
     render_fn(ctx);
@@ -1218,6 +1085,24 @@ fn isControlKey(key: input_mod.KeyCode, mods: input_mod.Modifiers) bool {
 ///     .height = 600,
 /// });
 /// ```
+fn coerceShaders(comptime shaders: anytype) []const shader_mod.CustomShader {
+    const len = shaders.len;
+    if (len == 0) return &.{};
+
+    const result = comptime blk: {
+        var r: [len]shader_mod.CustomShader = undefined;
+        for (0..len) |i| {
+            const s = shaders[i];
+            r[i] = .{
+                .msl = if (@hasField(@TypeOf(s), "msl")) s.msl else null,
+                .wgsl = if (@hasField(@TypeOf(s), "wgsl")) s.wgsl else null,
+            };
+        }
+        break :blk r;
+    };
+    return &result;
+}
+
 pub fn App(
     comptime State: type,
     state: *State,
@@ -1235,8 +1120,8 @@ pub fn App(
                     .height = if (@hasField(@TypeOf(config), "height")) config.height else 600,
                     .background_color = if (@hasField(@TypeOf(config), "background_color")) config.background_color else null,
                     .on_event = if (@hasField(@TypeOf(config), "on_event")) config.on_event else null,
-                    // Custom shaders (native only - Shadertoy-compatible MSL)
-                    .custom_shaders = if (@hasField(@TypeOf(config), "custom_shaders")) config.custom_shaders else &.{},
+                    // Custom shaders (cross-platform - MSL for macOS, WGSL for web)
+                    .custom_shaders = if (@hasField(@TypeOf(config), "custom_shaders")) coerceShaders(config.custom_shaders) else &.{},
                     // Glass/transparency options
                     .background_opacity = if (@hasField(@TypeOf(config), "background_opacity")) config.background_opacity else 1.0,
                     .glass_style = if (@hasField(@TypeOf(config), "glass_style")) config.glass_style else .none,
@@ -1344,9 +1229,9 @@ pub fn WebApp(
 
             // Create Cx context
             g_cx = Cx{
-                .allocator = allocator,
-                .gooey = g_gooey.?,
-                .builder = g_builder.?,
+                ._allocator = allocator,
+                ._gooey = g_gooey.?,
+                ._builder = g_builder.?,
                 .state_ptr = @ptrCast(state),
                 .state_type_id = cx_mod.typeId(State),
             };
@@ -1358,7 +1243,23 @@ pub fn WebApp(
             handler_mod.setRootState(State, state);
 
             // Initialize GPU renderer
-            g_renderer = try WebRenderer.init();
+            g_renderer = try WebRenderer.init(allocator);
+
+            // Load custom shaders (WGSL for web)
+            const custom_shaders = if (@hasField(@TypeOf(config), "custom_shaders"))
+                coerceShaders(config.custom_shaders)
+            else
+                &[_]shader_mod.CustomShader{};
+
+            for (custom_shaders, 0..) |shader, i| {
+                if (shader.wgsl) |wgsl_source| {
+                    var name_buf: [32]u8 = undefined;
+                    const name = std.fmt.bufPrint(&name_buf, "custom_{d}", .{i}) catch "custom";
+                    g_renderer.?.addCustomShader(wgsl_source, name) catch |err| {
+                        web_imports.err("Failed to load custom shader {d}: {}", .{ i, err });
+                    };
+                }
+            }
 
             // Upload initial atlas
             g_renderer.?.uploadAtlas(g_gooey.?.text_system);
@@ -1369,11 +1270,6 @@ pub fn WebApp(
             // Start the animation loop
             if (g_platform) |*p| p.run();
         }
-
-        // Track previous mouse state for click detection
-        var g_prev_mouse_down: bool = false;
-        var g_prev_mouse_x: f32 = 0;
-        var g_prev_mouse_y: f32 = 0;
 
         pub fn frame(timestamp: f64) callconv(.c) void {
             _ = timestamp;
@@ -1410,50 +1306,21 @@ pub fn WebApp(
                 }
             }.handler);
 
-            // 3. Process mouse input (existing polling code)
-            const mouse_x = web_imports.getMouseX();
-            const mouse_y = web_imports.getMouseY();
-            const mouse_buttons = web_imports.getMouseButtons();
-            const mouse_down = (mouse_buttons & 1) != 0;
+            // 3. Process scroll events
+            const scroll_events_mod = @import("platform/wgpu/web/scroll_events.zig");
+            _ = scroll_events_mod.processEvents(struct {
+                fn handler(event: input_mod.InputEvent) bool {
+                    return handleInputCx(&g_cx.?, on_event, event);
+                }
+            }.handler);
 
-            // Generate mouse events
-            if (mouse_x != g_prev_mouse_x or mouse_y != g_prev_mouse_y) {
-                const move_event = input_mod.InputEvent{
-                    .mouse_moved = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 0,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, move_event);
-                g_prev_mouse_x = mouse_x;
-                g_prev_mouse_y = mouse_y;
-            }
-
-            // Detect click (mouse up after mouse down)
-            if (g_prev_mouse_down and !mouse_down) {
-                const up_event = input_mod.InputEvent{
-                    .mouse_up = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 1,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, up_event);
-            } else if (!g_prev_mouse_down and mouse_down) {
-                const down_event = input_mod.InputEvent{
-                    .mouse_down = .{
-                        .position = .{ .x = mouse_x, .y = mouse_y },
-                        .button = .left,
-                        .click_count = 1,
-                        .modifiers = .{},
-                    },
-                };
-                _ = handleInputCx(cx, on_event, down_event);
-            }
-            g_prev_mouse_down = mouse_down;
+            // 4. Process mouse events (new ring buffer approach)
+            const mouse_events_mod = @import("platform/wgpu/web/mouse_events.zig");
+            _ = mouse_events_mod.processEvents(struct {
+                fn handler(event: input_mod.InputEvent) bool {
+                    return handleInputCx(&g_cx.?, on_event, event);
+                }
+            }.handler);
 
             // =========================================================
             // RENDER

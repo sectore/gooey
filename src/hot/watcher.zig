@@ -7,9 +7,14 @@
 //! Usage: zig build hot -- run-counter  (to run a specific target)
 
 const std = @import("std");
+const posix = std.posix;
 
 const poll_interval_ms = 300;
 const debounce_ms = 100;
+
+// Global flag for signal handling
+var should_quit: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+var global_watcher: ?*Watcher = null;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -40,7 +45,36 @@ pub fn main() !void {
     var watcher = Watcher.init(allocator, watch_path, build_cmd);
     defer watcher.deinit();
 
-    try watcher.run();
+    // Set up global pointer for signal handler
+    global_watcher = &watcher;
+    defer {
+        global_watcher = null;
+    }
+
+    // Install signal handlers for clean shutdown
+    const handler = posix.Sigaction{
+        .handler = .{ .handler = handleSignal },
+        .mask = 0,
+        .flags = 0,
+    };
+    _ = posix.sigaction(posix.SIG.INT, &handler, null);
+    _ = posix.sigaction(posix.SIG.TERM, &handler, null);
+
+    watcher.run();
+
+    std.debug.print("\n👋 Goodbye!\n", .{});
+}
+
+fn handleSignal(sig: i32) callconv(.c) void {
+    _ = sig;
+    should_quit.store(true, .release);
+
+    // Also kill the child immediately from the signal handler
+    if (global_watcher) |w| {
+        if (w.child) |*child| {
+            _ = posix.kill(-child.id, posix.SIG.TERM) catch {};
+        }
+    }
 }
 
 const Watcher = struct {
@@ -72,19 +106,21 @@ const Watcher = struct {
         self.file_times.deinit();
     }
 
-    fn run(self: *Watcher) !void {
+    fn run(self: *Watcher) void {
         // Initial scan to populate file times
-        _ = try self.scanForChanges();
+        _ = self.scanForChanges() catch return;
 
         // Initial build and run
         std.debug.print("🔨 Building...\n", .{});
         self.spawnChild();
 
         // Watch loop
-        while (true) {
+        while (!should_quit.load(.acquire)) {
             std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
 
-            if (try self.scanForChanges()) {
+            if (should_quit.load(.acquire)) break;
+
+            if (self.scanForChanges() catch false) {
                 const now = std.time.milliTimestamp();
 
                 // Debounce rapid changes (editors often write multiple times)
@@ -150,6 +186,12 @@ const Watcher = struct {
 
     fn spawnChild(self: *Watcher) void {
         var child = std.process.Child.init(self.build_cmd, self.allocator);
+
+        // Make child its own process group leader (pgid = 0 means use child's pid).
+        // This allows us to kill the entire process tree on reload, including
+        // any grandchild processes (like the actual app spawned by `zig build run`).
+        child.pgid = 0;
+
         child.spawn() catch |err| {
             std.debug.print("⚠️  Failed to spawn build: {}\n", .{err});
             return;
@@ -160,7 +202,20 @@ const Watcher = struct {
 
     fn killChild(self: *Watcher) void {
         if (self.child) |*child| {
-            _ = child.kill() catch {};
+            // Kill the entire process group (negative pid = process group).
+            // Since we set pgid=0 when spawning, the child's pid IS the pgid.
+            // This ensures we kill both zig AND the spawned application.
+            const pid = child.id;
+
+            // Send SIGTERM to entire process group
+            _ = posix.kill(-pid, posix.SIG.TERM) catch {};
+
+            // Give processes a moment to clean up
+            std.Thread.sleep(100 * std.time.ns_per_ms);
+
+            // Force kill if still running
+            _ = posix.kill(-pid, posix.SIG.KILL) catch {};
+
             _ = child.wait() catch {};
             self.child = null;
         }

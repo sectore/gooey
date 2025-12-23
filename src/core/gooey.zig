@@ -24,6 +24,7 @@ const std = @import("std");
 // Layout
 const layout_mod = @import("../layout/layout.zig");
 const engine_mod = @import("../layout/engine.zig");
+const svg_mod = @import("../svg/mod.zig");
 const LayoutEngine = layout_mod.LayoutEngine;
 const LayoutId = layout_mod.LayoutId;
 const ElementDeclaration = layout_mod.ElementDeclaration;
@@ -87,6 +88,8 @@ pub const Gooey = struct {
     text_system: *TextSystem,
     text_system_owned: bool = false,
 
+    svg_atlas: svg_mod.SvgAtlas,
+
     // Widgets (retained across frames)
     widgets: WidgetStore,
 
@@ -122,35 +125,6 @@ pub const Gooey = struct {
     scale_factor: f32 = 1.0,
 
     const Self = @This();
-
-    /// Initialize Gooey with existing resources (non-owning)
-    /// Use this when you already have LayoutEngine, Scene, TextSystem created
-    pub fn init(
-        allocator: std.mem.Allocator,
-        window: *Window,
-        layout_engine: *LayoutEngine,
-        scene: *Scene,
-        text_system: *TextSystem,
-    ) Self {
-        const dispatch = try allocator.create(DispatchTree);
-        errdefer allocator.destroy(dispatch);
-        dispatch.* = DispatchTree.init(allocator);
-        return .{
-            .allocator = allocator,
-            .layout = layout_engine,
-            .scene = scene,
-            .dispatch = dispatch,
-            .entities = EntityMap.init(allocator),
-            .keymap = Keymap.init(allocator),
-            .focus = FocusManager.init(allocator),
-            .text_system = text_system,
-            .widgets = WidgetStore.init(allocator),
-            .window = window,
-            .width = @floatCast(window.size.width),
-            .height = @floatCast(window.size.height),
-            .scale_factor = @floatCast(window.scale_factor),
-        };
-    }
 
     /// Initialize Gooey creating and owning all resources
     pub fn initOwned(allocator: std.mem.Allocator, window: *Window) !Self {
@@ -207,6 +181,7 @@ pub const Gooey = struct {
             .focus = FocusManager.init(allocator),
             .text_system = text_system,
             .text_system_owned = true,
+            .svg_atlas = try svg_mod.SvgAtlas.init(allocator, window.scale_factor),
             .widgets = WidgetStore.init(allocator),
             .window = window,
             .width = @floatCast(window.size.width),
@@ -219,6 +194,8 @@ pub const Gooey = struct {
         self.widgets.deinit();
         self.focus.deinit();
         self.entities.deinit();
+
+        self.svg_atlas.deinit();
 
         // Clean up dispatch tree
         self.dispatch.deinit();

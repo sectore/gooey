@@ -176,7 +176,7 @@ const StepButton = struct {
 
     pub fn render(self: @This(), cx: *Cx) void {
         const is_active = self.value == self.current;
-        const b = cx.getBuilder();
+        const b = cx.builder();
 
         const btn = Button{
             .label = switch (self.value) {

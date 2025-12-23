@@ -46,34 +46,27 @@
   <body>
     <div id="container">
       <canvas id="canvas" width="800" height="600"></canvas>
-      <div id="container">
-        <canvas id="canvas" width="800" height="600"></canvas>
-        <input
-          id="hiddenInput"
-          type="text"
-          autocomplete="off"
-          autocorrect="off"
-          autocapitalize="off"
-          spellcheck="false"
-          style="
-            position: absolute;
-            left: -9999px;
-            top: 0;
-            width: 1px;
-            height: 1px;
-            opacity: 0;
-            pointer-events: none;
-          "
-        />
-        <div id="status">Initializing WebGPU...</div>
-      </div>
-
-      <div id="status">Initializing WebGPU...</div>
+      <input
+        id="hiddenInput"
+        type="text"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
+        style="
+          position: absolute;
+          left: -9999px;
+          top: 0;
+          width: 1px;
+          height: 1px;
+          opacity: 0;
+          pointer-events: none;
+        "
+      />
     </div>
 
     <script type="module">
       const canvas = document.getElementById("canvas");
-      const status = document.getElementById("status");
 
       // Handle high-DPI displays
       const dpr = window.devicePixelRatio || 1;
@@ -131,30 +124,283 @@
         return textDecoder.decode(new Uint8Array(memory.buffer, ptr, len));
       }
 
-      // Mouse state
+      // =========================================================
+      // Mouse Input System (Shared Memory Ring Buffer)
+      // =========================================================
+
+      const MOUSE_RING_SIZE = 32;
+      let mouseRingPtr = 0;
+
+      // Current mouse state (for polling fallback and drag detection)
       let mouseX = 0,
         mouseY = 0,
         mouseButtons = 0,
         mouseInCanvas = false;
 
-      canvas.addEventListener("mousemove", (e) => {
+      // Multi-click detection state
+      let lastClickTime = 0;
+      let lastClickX = 0;
+      let lastClickY = 0;
+      let clickCount = 0;
+      const DOUBLE_CLICK_TIME = 400; // ms
+      const DOUBLE_CLICK_RADIUS = 5; // pixels
+
+      // Current modifier state (tracked from keyboard events)
+      let currentModifiers = 0;
+
+      function initMouse() {
+        mouseRingPtr = wasmInstance.exports.getMouseRingPtr();
+        console.log("[Gooey] Mouse initialized, mouseRingPtr:", mouseRingPtr);
+
+        // Mouse button events
+        canvas.addEventListener("mousedown", handleMouseDown);
+        canvas.addEventListener("mouseup", handleMouseUp);
+        canvas.addEventListener("mousemove", handleMouseMove);
+        canvas.addEventListener("mouseenter", handleMouseEnter);
+        canvas.addEventListener("mouseleave", handleMouseLeave);
+
+        // Prevent context menu on right-click
+        canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+        // Track modifiers from keyboard
+        window.addEventListener("keydown", updateModifiers);
+        window.addEventListener("keyup", updateModifiers);
+      }
+
+      function updateModifiers(e) {
+        currentModifiers =
+          (e.shiftKey ? 1 : 0) |
+          (e.ctrlKey ? 2 : 0) |
+          (e.altKey ? 4 : 0) |
+          (e.metaKey ? 8 : 0);
+      }
+
+      function getModifiersFromEvent(e) {
+        return (
+          (e.shiftKey ? 1 : 0) |
+          (e.ctrlKey ? 2 : 0) |
+          (e.altKey ? 4 : 0) |
+          (e.metaKey ? 8 : 0)
+        );
+      }
+
+      function getClickCount(x, y, now) {
+        const timeDelta = now - lastClickTime;
+        const distSq =
+          (x - lastClickX) * (x - lastClickX) +
+          (y - lastClickY) * (y - lastClickY);
+
+        if (
+          timeDelta < DOUBLE_CLICK_TIME &&
+          distSq < DOUBLE_CLICK_RADIUS * DOUBLE_CLICK_RADIUS
+        ) {
+          clickCount = Math.min(clickCount + 1, 3); // Cap at triple-click
+        } else {
+          clickCount = 1;
+        }
+
+        lastClickTime = now;
+        lastClickX = x;
+        lastClickY = y;
+
+        return clickCount;
+      }
+
+      function handleMouseDown(e) {
         const rect = canvas.getBoundingClientRect();
-        mouseX = e.clientX - rect.left;
-        mouseY = e.clientY - rect.top;
-      });
-      canvas.addEventListener("mousedown", (e) => {
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
         mouseButtons |= 1 << e.button;
-      });
-      canvas.addEventListener("mouseup", (e) => {
+        mouseX = x;
+        mouseY = y;
+
+        const count = getClickCount(x, y, performance.now());
+        const modifiers = getModifiersFromEvent(e);
+        currentModifiers = modifiers;
+
+        pushMouseEvent(0, e.button, x, y, count, modifiers); // 0 = mouse_down
+      }
+
+      function handleMouseUp(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
         mouseButtons &= ~(1 << e.button);
-      });
-      canvas.addEventListener("mouseenter", () => {
+        mouseX = x;
+        mouseY = y;
+
+        const modifiers = getModifiersFromEvent(e);
+        currentModifiers = modifiers;
+
+        pushMouseEvent(1, e.button, x, y, clickCount, modifiers); // 1 = mouse_up
+      }
+
+      function handleMouseMove(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        mouseX = x;
+        mouseY = y;
+
+        const modifiers = getModifiersFromEvent(e);
+        currentModifiers = modifiers;
+
+        // Determine if this is a drag (any button pressed) or just a move
+        const eventType = mouseButtons !== 0 ? 3 : 2; // 3 = mouse_dragged, 2 = mouse_moved
+
+        // For drags, use the primary button that's pressed
+        const button =
+          mouseButtons & 1
+            ? 0
+            : mouseButtons & 2
+              ? 1
+              : mouseButtons & 4
+                ? 2
+                : 0;
+
+        pushMouseEvent(eventType, button, x, y, 0, modifiers);
+      }
+
+      function handleMouseEnter(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
         mouseInCanvas = true;
-      });
-      canvas.addEventListener("mouseleave", () => {
+        const modifiers = getModifiersFromEvent(e);
+
+        pushMouseEvent(4, 0, x, y, 0, modifiers); // 4 = mouse_entered
+      }
+
+      function handleMouseLeave(e) {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
         mouseInCanvas = false;
-        mouseButtons = 0;
-      });
+        mouseButtons = 0; // Clear buttons on leave
+
+        const modifiers = getModifiersFromEvent(e);
+
+        pushMouseEvent(5, 0, x, y, 0, modifiers); // 5 = mouse_exited
+      }
+
+      function pushMouseEvent(
+        eventType,
+        button,
+        posX,
+        posY,
+        clickCount,
+        modifiers,
+      ) {
+        if (!mouseRingPtr) return;
+
+        const mem = wasmInstance.exports.memory.buffer;
+        const header = new Uint32Array(mem, mouseRingPtr, 2);
+
+        const writeHead = header[0];
+        const readHead = header[1];
+
+        // Check if ring is full
+        if (
+          ((writeHead + 1) & (MOUSE_RING_SIZE - 1)) ===
+          (readHead & (MOUSE_RING_SIZE - 1))
+        ) {
+          console.warn("[Gooey] Mouse event buffer full, dropping event");
+          return;
+        }
+
+        // Calculate slot address: 8-byte header + slot * 24 bytes per event
+        const slot = writeHead & (MOUSE_RING_SIZE - 1);
+        const eventOffset = mouseRingPtr + 8 + slot * 24;
+
+        const view = new DataView(mem, eventOffset, 24);
+        view.setFloat64(0, posX, true); // position_x
+        view.setFloat64(8, posY, true); // position_y
+        view.setUint8(16, eventType); // event_type
+        view.setUint8(17, button); // button (0=left, 1=right, 2=middle)
+        view.setUint8(18, clickCount); // click_count
+        view.setUint8(19, modifiers); // modifiers
+        view.setUint32(20, 0, true); // reserved
+
+        // Advance write head
+        header[0] = writeHead + 1;
+      }
+
+      // =========================================================
+      // Scroll/Wheel Input System (Shared Memory Ring Buffer)
+      // =========================================================
+
+      const SCROLL_RING_SIZE = 16;
+      let scrollRingPtr = 0;
+
+      function initScroll() {
+        scrollRingPtr = wasmInstance.exports.getScrollRingPtr();
+        console.log(
+          "[Gooey] Scroll initialized, scrollRingPtr:",
+          scrollRingPtr,
+        );
+
+        canvas.addEventListener("wheel", handleWheel, { passive: false });
+      }
+
+      function handleWheel(e) {
+        e.preventDefault(); // Prevent page scrolling
+
+        if (!scrollRingPtr) return;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // deltaMode: 0 = pixels, 1 = lines, 2 = pages
+        let deltaX = e.deltaX;
+        let deltaY = e.deltaY;
+
+        // Normalize line/page deltas to pixels
+        if (e.deltaMode === 1) {
+          deltaX *= 20; // ~1 line = 20px
+          deltaY *= 20;
+        } else if (e.deltaMode === 2) {
+          deltaX *= canvas.clientHeight;
+          deltaY *= canvas.clientHeight;
+        }
+
+        pushScrollEvent(x, y, deltaX, deltaY);
+      }
+
+      function pushScrollEvent(posX, posY, deltaX, deltaY) {
+        const mem = wasmInstance.exports.memory.buffer;
+        const header = new Uint32Array(mem, scrollRingPtr, 2);
+
+        const writeHead = header[0];
+        const readHead = header[1];
+
+        // Check if ring is full
+        if (
+          ((writeHead + 1) & (SCROLL_RING_SIZE - 1)) ===
+          (readHead & (SCROLL_RING_SIZE - 1))
+        ) {
+          console.warn("[Gooey] Scroll event buffer full, dropping event");
+          return;
+        }
+
+        // Calculate slot address: 8-byte header + slot * 24 bytes per event
+        const slot = writeHead & (SCROLL_RING_SIZE - 1);
+        const eventOffset = scrollRingPtr + 8 + slot * 24;
+
+        const view = new DataView(mem, eventOffset, 24);
+        view.setFloat64(0, posX, true); // position_x
+        view.setFloat64(8, posY, true); // position_y
+        view.setFloat32(16, deltaX, true); // delta_x
+        view.setFloat32(20, deltaY, true); // delta_y
+
+        // Advance write head
+        header[0] = writeHead + 1;
+      }
 
       // =========================================================
       // Keyboard Input System (Shared Memory Ring Buffers)
@@ -807,21 +1053,171 @@
           });
           return allocHandle(handles.bindGroups, bindGroup);
         },
+
+        // =====================================================================
+        // Post-Processing Support
+        // =====================================================================
+
+        // Create a render texture (can be rendered to and sampled from)
+        createRenderTexture: (width, height) => {
+          const texture = device.createTexture({
+            size: { width, height },
+            format: format, // Use the same format as the canvas
+            usage:
+              GPUTextureUsage.TEXTURE_BINDING |
+              GPUTextureUsage.RENDER_ATTACHMENT |
+              GPUTextureUsage.COPY_SRC |
+              GPUTextureUsage.COPY_DST,
+          });
+          return allocHandle(handles.textures, texture);
+        },
+
+        // Create a texture view from a texture handle
+        createTextureView: (textureHandle) => {
+          const texture = handles.textures.get(textureHandle);
+          if (!texture) {
+            console.error(
+              "createTextureView: invalid texture handle",
+              textureHandle,
+            );
+            return 0;
+          }
+          const view = texture.createView();
+          return allocHandle(handles.textureViews, view);
+        },
+
+        // Create a post-process render pipeline (fullscreen shader)
+        createPostProcessPipeline: (shaderHandle) => {
+          const module = handles.shaderModules.get(shaderHandle);
+          if (!module) {
+            console.error(
+              "createPostProcessPipeline: invalid shader handle",
+              shaderHandle,
+            );
+            return 0;
+          }
+
+          const pipeline = device.createRenderPipeline({
+            layout: "auto",
+            vertex: {
+              module,
+              entryPoint: "vs_main",
+            },
+            fragment: {
+              module,
+              entryPoint: "fs_main",
+              targets: [
+                {
+                  format: format,
+                  blend: {
+                    color: {
+                      srcFactor: "src-alpha",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                    alpha: {
+                      srcFactor: "one",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                  },
+                },
+              ],
+            },
+            primitive: {
+              topology: "triangle-list",
+            },
+          });
+          return allocHandle(handles.pipelines, pipeline);
+        },
+
+        // Create a bind group for post-process shader
+        createPostProcessBindGroup: (
+          pipelineHandle,
+          uniformBuffer,
+          textureHandle,
+          samplerHandle,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const texture = handles.textures.get(textureHandle);
+          const sampler = handles.samplers.get(samplerHandle);
+
+          if (!pipeline || !texture || !sampler) {
+            console.error("createPostProcessBindGroup: invalid handles", {
+              pipeline: !!pipeline,
+              texture: !!texture,
+              sampler: !!sampler,
+            });
+            return 0;
+          }
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(0),
+            entries: [
+              {
+                binding: 0,
+                resource: { buffer: handles.buffers.get(uniformBuffer) },
+              },
+              {
+                binding: 1,
+                resource: texture.createView(),
+              },
+              {
+                binding: 2,
+                resource: sampler,
+              },
+            ],
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // Begin a render pass to a texture (not the screen)
+        beginTextureRenderPass: (textureViewHandle, r, g, b, a) => {
+          const view = handles.textureViews.get(textureViewHandle);
+          if (!view) {
+            console.error(
+              "beginTextureRenderPass: invalid texture view handle",
+              textureViewHandle,
+            );
+            return;
+          }
+          env.currentEncoder = device.createCommandEncoder();
+          env.currentPass = env.currentEncoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view,
+                clearValue: { r, g, b, a },
+                loadOp: "clear",
+                storeOp: "store",
+              },
+            ],
+          });
+        },
+
+        // Copy the current screen to a texture for post-processing
+        copyToTexture: (srcViewHandle, dstTextureHandle, width, height) => {
+          const srcView = handles.textureViews.get(srcViewHandle);
+          const dstTexture = handles.textures.get(dstTextureHandle);
+          if (!srcView || !dstTexture) {
+            console.error("copyToTexture: invalid handles");
+            return;
+          }
+          // Note: This would need a blit operation or render pass
+          // For now, we use render-to-texture approach instead
+        },
       };
 
       async function init() {
         // Check WebGPU support
         if (!navigator.gpu) {
-          status.textContent = "WebGPU not supported in this browser";
-          status.className = "error";
+          console.error("WebGPU not supported in this browser");
           return;
         }
 
         // Request adapter and device
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) {
-          status.textContent = "Failed to get WebGPU adapter";
-          status.className = "error";
+          console.error("Failed to get WebGPU adapter");
           return;
         }
 
@@ -834,7 +1230,6 @@
         context.configure({ device, format, alphaMode: "premultiplied" });
 
         // Load WASM
-        status.textContent = "Loading WASM...";
         const response = await fetch("app.wasm");
         const wasmBytes = await response.arrayBuffer();
         const { instance } = await WebAssembly.instantiate(wasmBytes, { env });
@@ -854,18 +1249,16 @@
         resizeObserver.observe(canvas);
 
         // Initialize and start
-        status.textContent = "Running!";
-        status.className = "success";
         wasmInstance.exports.init();
 
-        // Initialize keyboard input after WASM is ready
+        // Initialize after WASM is ready
         initKeyboard();
+        initScroll();
+        initMouse();
       }
 
       init().catch((err) => {
         console.error(err);
-        status.textContent = `Error: ${err.message}`;
-        status.className = "error";
       });
     </script>
   </body>

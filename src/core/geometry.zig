@@ -359,17 +359,56 @@ pub const Color = struct {
         return .{ .r = r, .g = g, .b = b, .a = 1.0 };
     }
 
+    pub fn rgba(r: f32, g: f32, b: f32, a: f32) Color {
+        return .{ .r = r, .g = g, .b = b, .a = a };
+    }
+
+    pub fn rgb8(r: u8, g: u8, b: u8) Color {
+        return .{
+            .r = @as(f32, @floatFromInt(r)) / 255.0,
+            .g = @as(f32, @floatFromInt(g)) / 255.0,
+            .b = @as(f32, @floatFromInt(b)) / 255.0,
+            .a = 1,
+        };
+    }
+
+    pub fn hex(value: u32) Color {
+        if (value > 0xFFFFFF) {
+            return .{
+                .r = @as(f32, @floatFromInt((value >> 24) & 0xFF)) / 255.0,
+                .g = @as(f32, @floatFromInt((value >> 16) & 0xFF)) / 255.0,
+                .b = @as(f32, @floatFromInt((value >> 8) & 0xFF)) / 255.0,
+                .a = @as(f32, @floatFromInt(value & 0xFF)) / 255.0,
+            };
+        } else {
+            return .{
+                .r = @as(f32, @floatFromInt((value >> 16) & 0xFF)) / 255.0,
+                .g = @as(f32, @floatFromInt((value >> 8) & 0xFF)) / 255.0,
+                .b = @as(f32, @floatFromInt(value & 0xFF)) / 255.0,
+                .a = 1.0,
+            };
+        }
+    }
+
     pub fn withAlpha(self: Color, a: f32) Color {
         return .{ .r = self.r, .g = self.g, .b = self.b, .a = a };
     }
 
+    pub const transparent = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
+    pub const clear = transparent;
     pub const white = Color{ .r = 1, .g = 1, .b = 1, .a = 1 };
     pub const black = Color{ .r = 0, .g = 0, .b = 0, .a = 1 };
     pub const red = Color{ .r = 1, .g = 0, .b = 0, .a = 1 };
     pub const green = Color{ .r = 0, .g = 1, .b = 0, .a = 1 };
     pub const blue = Color{ .r = 0, .g = 0, .b = 1, .a = 1 };
-    pub const transparent = Color{ .r = 0, .g = 0, .b = 0, .a = 0 };
-    pub const clear = transparent;
+    pub const yellow = Color{ .r = 1, .g = 1, .b = 0, .a = 1 };
+    pub const cyan = Color{ .r = 0, .g = 1, .b = 1, .a = 1 };
+    pub const magenta = Color{ .r = 1, .g = 0, .b = 1, .a = 1 };
+    pub const orange = Color{ .r = 1, .g = 0.65, .b = 0, .a = 1 };
+    pub const gold = Color{ .r = 1, .g = 0.84, .b = 0, .a = 1 };
+    pub const purple = Color{ .r = 0.5, .g = 0, .b = 0.5, .a = 1 };
+    pub const pink = Color{ .r = 1, .g = 0.75, .b = 0.8, .a = 1 };
+    pub const gray = Color{ .r = 0.5, .g = 0.5, .b = 0.5, .a = 1 };
 };
 
 // =============================================================================

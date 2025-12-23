@@ -7,6 +7,7 @@ const std = @import("std");
 const objc = @import("objc");
 const geometry = @import("../../core/geometry.zig");
 const scene_mod = @import("../../core/scene.zig");
+const shader_mod = @import("../../core/shader.zig");
 const text_mod = @import("../../text/mod.zig");
 const Atlas = text_mod.Atlas;
 const platform = @import("platform.zig");
@@ -35,6 +36,7 @@ pub const Window = struct {
     needs_render: std.atomic.Value(bool),
     scene: ?*const scene_mod.Scene,
     text_atlas: ?*const Atlas = null,
+    svg_atlas: ?*const Atlas = null,
     delegate: ?objc.Object = null,
     // Custom shader animation flag
     custom_shader_animation: bool,
@@ -106,6 +108,14 @@ pub const Window = struct {
         };
     }
 
+    pub fn setSvgAtlas(self: *Self, atlas: *const Atlas) void {
+        if (!self.render_in_progress.load(.acquire)) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+        }
+        self.svg_atlas = atlas;
+    }
+
     /// Window width in logical pixels
     pub fn width(self: *const Self) u32 {
         return @intFromFloat(self.size.width);
@@ -144,7 +154,7 @@ pub const Window = struct {
         height: f64 = 600,
         background_color: geometry.Color = geometry.Color.transparent,
         use_display_link: bool = true,
-        custom_shaders: []const []const u8 = &.{},
+        custom_shaders: []const shader_mod.CustomShader = &.{},
         /// Background opacity (0.0 = fully transparent, 1.0 = opaque)
         /// Values < 1.0 enable transparency effects
         background_opacity: f64 = 1.0,
@@ -252,10 +262,15 @@ pub const Window = struct {
 
         // Load custom shaders
         if (options.custom_shaders.len > 0) {
-            for (options.custom_shaders, 0..) |shader_source, i| {
+            for (options.custom_shaders, 0..) |shader, i| {
+                // Extract MSL source for macOS
+                const msl_source = shader.msl orelse {
+                    std.debug.print("Custom shader {d} has no MSL source, skipping\n", .{i});
+                    continue;
+                };
                 var name_buf: [32]u8 = undefined;
                 const name = std.fmt.bufPrint(&name_buf, "custom_{d}", .{i}) catch "custom";
-                self.renderer.addCustomShader(shader_source, name) catch |err| {
+                self.renderer.addCustomShader(msl_source, name) catch |err| {
                     std.debug.print("Failed to load custom shader {d}: {}\n", .{ i, err });
                 };
             }
@@ -513,6 +528,9 @@ pub const Window = struct {
 
             if (self.text_atlas) |atlas| {
                 self.renderer.updateTextAtlas(atlas) catch {};
+            }
+            if (self.svg_atlas) |atlas| {
+                self.renderer.prepareSvgAtlas(atlas);
             }
 
             if (self.scene) |s| {
@@ -985,6 +1003,11 @@ fn displayLinkCallback(
     // Update text atlas if set
     if (window.text_atlas) |atlas| {
         window.renderer.updateTextAtlas(atlas) catch {};
+    }
+
+    // Update SVG atlas if set
+    if (window.svg_atlas) |atlas| {
+        window.renderer.prepareSvgAtlas(atlas);
     }
 
     // Use post-process rendering if shaders are active

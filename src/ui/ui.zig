@@ -28,7 +28,10 @@ const action_mod = @import("../core/action.zig");
 const actionTypeId = action_mod.actionTypeId;
 const handler_mod = @import("../core/handler.zig");
 const entity_mod = @import("../core/entity.zig");
+const gooey_mod = @import("../core/gooey.zig");
 pub const HandlerRef = handler_mod.HandlerRef;
+pub const EntityId = entity_mod.EntityId;
+pub const Gooey = gooey_mod.Gooey;
 const layout_types = @import("../layout/types.zig");
 const BorderConfig = layout_types.BorderConfig;
 const layout_mod = @import("../layout/layout.zig");
@@ -50,11 +53,8 @@ const scene_mod = @import("../core/scene.zig");
 const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
 
-const gooey_mod = @import("../core/gooey.zig");
-const Gooey = gooey_mod.Gooey;
-
 // Re-export for convenience
-pub const Color = @import("../layout/types.zig").Color;
+pub const Color = @import("../core/geometry.zig").Color;
 pub const ShadowConfig = @import("../layout/types.zig").ShadowConfig;
 
 // =============================================================================
@@ -98,6 +98,8 @@ pub const Box = struct {
     grow_height: bool = false, // Grow height only
     fill_width: bool = false, // 100% of parent width
     fill_height: bool = false, // 100% of parent height
+    width_percent: ?f32 = null, // Percentage of parent width (0.0-1.0)
+    height_percent: ?f32 = null, // Percentage of parent height (0.0-1.0)
 
     // Spacing
     padding: PaddingValue = .{ .all = 0 },
@@ -251,6 +253,7 @@ pub const PrimitiveType = enum {
     key_context,
     action_handler,
     action_handler_ref,
+    svg,
 };
 
 pub const CheckboxStyle = struct {
@@ -361,29 +364,32 @@ pub const Empty = struct {
     pub const primitive_type: PrimitiveType = .empty;
 };
 
+/// SVG element descriptor - renders a pre-loaded SVG mesh
+pub const SvgPrimitive = struct {
+    path: []const u8,
+    /// Mesh ID (from svg_mesh.meshId())
+    mesh_id: u64 = 0,
+    /// Width of the SVG element
+    width: f32 = 24,
+    /// Height of the SVG element
+    height: f32 = 24,
+    /// Fill color
+    color: Color = Color.black,
+    /// Stroke color (null = no stroke)
+    stroke_color: ?Color = null,
+    /// Stroke width in logical pixels
+    stroke_width: f32 = 1.0,
+    /// Whether to fill the path
+    has_fill: bool = true,
+    /// Source viewbox size (for proper scaling)
+    viewbox: f32 = 24,
+
+    pub const primitive_type: PrimitiveType = .svg;
+};
+
 // =============================================================================
 // Free Functions (return descriptors)
 // =============================================================================
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click_handler = ... }` instead
-pub fn buttonHandler(label: []const u8, ref: HandlerRef) ButtonHandler {
-    return .{ .label = label, .handler = ref };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click_handler = ... }` instead
-pub fn buttonHandlerStyled(label: []const u8, style: ButtonStyle, ref: HandlerRef) ButtonHandler {
-    return .{ .label = label, .style = style, .handler = ref };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .on_click = ... }` instead
-pub fn button(label: []const u8, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .on_click = on_click };
-}
-
-/// DEPRECATED: Use `gooey.Button{ .label = "...", .variant = ..., .on_click = ... }` instead
-pub fn buttonStyled(label: []const u8, style: ButtonStyle, on_click: ?*const fn () void) Button {
-    return .{ .label = label, .style = style, .on_click = on_click };
-}
 
 /// Register an action handler using HandlerRef (new pattern)
 pub fn onActionHandler(comptime Action: type, ref: HandlerRef) ActionHandlerRefPrimitive {
@@ -415,6 +421,21 @@ pub fn spacer() Spacer {
 /// Create a spacer with minimum size
 pub fn spacerMin(min_size: f32) Spacer {
     return .{ .min_size = min_size };
+}
+
+/// Create an SVG element with the given size and color
+pub fn svg(mesh_id: u64, width: f32, height: f32, color: Color) SvgPrimitive {
+    return .{ .mesh_id = mesh_id, .width = width, .height = height, .color = color };
+}
+
+pub fn svgIcon(mesh_id: u64, width: f32, height: f32, color: Color, viewbox: f32) SvgPrimitive {
+    return .{
+        .mesh_id = mesh_id,
+        .width = width,
+        .height = height,
+        .color = color,
+        .viewbox = viewbox,
+    };
 }
 
 /// Set key context for dispatch (use inside box children)
@@ -452,9 +473,6 @@ pub fn When(comptime ChildrenType: type) type {
 pub fn empty() Empty {
     return .{};
 }
-
-/// Buffer for textFmt (thread-local static)
-var fmt_buffer: [1024]u8 = undefined;
 
 /// Rotating buffer pool for textFmt (allows multiple calls per frame)
 var fmt_buffers: [16][256]u8 = undefined;
@@ -500,6 +518,7 @@ pub const Builder = struct {
     pending_inputs: std.ArrayList(PendingInput),
     pending_text_areas: std.ArrayList(PendingTextArea),
     pending_scrolls: std.ArrayListUnmanaged(PendingScroll),
+    pending_svgs: std.ArrayListUnmanaged(PendingSvg),
 
     const PendingInput = struct {
         id: []const u8,
@@ -524,6 +543,16 @@ pub const Builder = struct {
         content_layout_id: LayoutId,
     };
 
+    const PendingSvg = struct {
+        layout_id: LayoutId,
+        path: []const u8,
+        color: Hsla,
+        stroke_color: ?Hsla,
+        stroke_width: f32,
+        has_fill: bool,
+        viewbox: f32,
+    };
+
     const Self = @This();
 
     pub fn init(
@@ -540,6 +569,7 @@ pub const Builder = struct {
             .pending_inputs = .{},
             .pending_scrolls = .{},
             .pending_text_areas = .{},
+            .pending_svgs = .{},
         };
     }
 
@@ -547,6 +577,7 @@ pub const Builder = struct {
         self.pending_inputs.deinit(self.allocator);
         self.pending_text_areas.deinit(self.allocator);
         self.pending_scrolls.deinit(self.allocator);
+        self.pending_svgs.deinit(self.allocator);
     }
 
     // =========================================================================
@@ -700,6 +731,8 @@ pub const Builder = struct {
             const min_w = props.min_width orelse 0;
             const max_w = props.max_width orelse std.math.floatMax(f32);
             sizing.width = SizingAxis.fitMinMax(min_w, max_w);
+        } else if (props.width_percent) |p| {
+            sizing.width = SizingAxis.percent(p);
         } else if (props.fill_width) {
             sizing.width = SizingAxis.percent(1.0);
         }
@@ -722,6 +755,8 @@ pub const Builder = struct {
             const min_h = props.min_height orelse 0;
             const max_h = props.max_height orelse std.math.floatMax(f32);
             sizing.height = SizingAxis.fitMinMax(min_h, max_h);
+        } else if (props.height_percent) |p| {
+            sizing.height = SizingAxis.percent(p);
         } else if (props.fill_height) {
             sizing.height = SizingAxis.percent(1.0);
         }
@@ -986,6 +1021,10 @@ pub const Builder = struct {
         }
     }
 
+    pub fn getPendingSvgs(self: *const Self) []const PendingSvg {
+        return self.pending_svgs.items;
+    }
+
     // =========================================================================
     // Internal: Child Processing
     // =========================================================================
@@ -1037,6 +1076,7 @@ pub const Builder = struct {
                 .action_handler => self.renderActionHandler(child),
                 .button_handler => self.renderButtonHandler(child),
                 .action_handler_ref => self.renderActionHandlerRef(child),
+                .svg => self.renderSvg(child),
                 .empty => {}, // Do nothing
 
             }
@@ -1386,6 +1426,41 @@ pub const Builder = struct {
         self.dispatch.popNode();
     }
 
+    fn renderSvg(self: *Self, prim: SvgPrimitive) void {
+        // Generate a unique layout ID for this SVG instance
+        const layout_id = self.generateId();
+
+        // Create a fixed-size element for layout
+        self.layout.openElement(.{
+            .id = layout_id,
+            .layout = .{
+                .sizing = .{
+                    .width = SizingAxis.fixed(prim.width),
+                    .height = SizingAxis.fixed(prim.height),
+                },
+            },
+        }) catch return;
+        self.layout.closeElement();
+
+        // Convert Colors to Hsla
+        const fill_hsla = Hsla.fromRgba(prim.color.r, prim.color.g, prim.color.b, prim.color.a);
+        const stroke_hsla: ?Hsla = if (prim.stroke_color) |sc|
+            Hsla.fromRgba(sc.r, sc.g, sc.b, sc.a)
+        else
+            null;
+
+        // Store for later rendering (after layout is computed)
+        self.pending_svgs.append(self.allocator, .{
+            .layout_id = layout_id,
+            .path = prim.path,
+            .color = fill_hsla,
+            .stroke_color = stroke_hsla,
+            .stroke_width = prim.stroke_width,
+            .has_fill = prim.has_fill,
+            .viewbox = prim.viewbox,
+        }) catch {};
+    }
+
     fn renderActionHandlerRef(self: *Self, ah: ActionHandlerRefPrimitive) void {
         self.dispatch.onActionHandlerRaw(ah.action_type, ah.handler);
     }
@@ -1430,11 +1505,6 @@ test "spacer primitive" {
 
     const s2 = spacerMin(50);
     try std.testing.expectEqual(@as(f32, 50), s2.min_size);
-}
-
-test "button primitive" {
-    const b = button("Click", null);
-    try std.testing.expectEqualStrings("Click", b.label);
 }
 
 test "empty primitive" {

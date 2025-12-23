@@ -72,15 +72,19 @@ pub const Button = components.Button;
 pub const Checkbox = components.Checkbox;
 pub const TextInput = components.TextInput;
 pub const TextArea = components.TextArea;
+pub const ProgressBar = components.ProgressBar;
+pub const RadioGroup = components.RadioGroup;
+pub const RadioButton = components.RadioButton;
+pub const Tab = components.Tab;
+pub const TabBar = components.TabBar;
+pub const Svg = components.Svg;
+pub const Icons = components.Icons;
 
 // =============================================================================
 // App Entry Point (most common usage)
 // =============================================================================
 
 pub const app = @import("app.zig");
-
-/// UI context passed to render callbacks
-pub const UI = app.UI;
 
 // =============================================================================
 // Convenience Exports (backward compatible, for quick prototyping)
@@ -113,6 +117,9 @@ pub const Quad = core.Quad;
 pub const Shadow = core.Shadow;
 pub const Hsla = core.Hsla;
 pub const GlyphInstance = core.GlyphInstance;
+
+// SVG support
+pub const svg = core.svg;
 
 // Render bridge
 pub const render_bridge = core.render_bridge;
@@ -161,9 +168,8 @@ pub const App = app.App;
 /// Configuration for runCx
 pub const CxConfig = app.CxConfig;
 
-/// Simple run API (for stateless apps)
-pub const run = app.run;
-pub const RunConfig = app.RunConfig;
+// Custom shaders
+pub const CustomShader = core.CustomShader;
 
 // Entity system
 pub const Entity = core.Entity;

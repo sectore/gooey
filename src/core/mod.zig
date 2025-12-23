@@ -77,6 +77,12 @@ pub const Hsla = scene.Hsla;
 pub const GlyphInstance = scene.GlyphInstance;
 
 // =============================================================================
+// SVG Support
+// =============================================================================
+
+pub const svg = @import("svg.zig");
+
+// =============================================================================
 // Render Bridge (layout -> scene conversion)
 // =============================================================================
 
@@ -178,6 +184,13 @@ pub const Duration = animation.Duration;
 pub const lerp = animation.lerp;
 pub const lerpInt = animation.lerpInt;
 pub const lerpColor = animation.lerpColor;
+
+// =============================================================================
+// Custom Shaders
+// =============================================================================
+
+pub const shader = @import("shader.zig");
+pub const CustomShader = shader.CustomShader;
 
 // =============================================================================
 // Tests

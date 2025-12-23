@@ -27,9 +27,79 @@ const Cx = gooey.Cx;
 const Button = gooey.Button;
 const TextInput = gooey.TextInput;
 const Easing = gooey.Easing;
+const Svg = gooey.Svg;
 
-/// Holographic scanline + chromatic aberration shader
-pub const hologram_shader =
+// =============================================================================
+// Custom Spaceship SVG Icons (24x24 viewbox)
+// =============================================================================
+
+const SpaceIcons = struct {
+    // Ship hull - spaceship silhouette
+    const ship = "M12 2L4 12l2 8h12l2-8L12 2zm0 3l5 7H7l5-7zm-4 9h8v2H8v-2z";
+
+    // Shield - protective barrier
+    const shield = "M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3zm0 3.18l5 1.88v4.94c0 3.72-2.38 7.14-5 8.56-2.62-1.42-5-4.84-5-8.56V7.06l5-1.88z";
+
+    // Fuel tank - energy container
+    const fuel = "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z";
+
+    // Oxygen - air/life support
+    const oxygen = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z";
+
+    // Reactor core - nuclear/power
+    const reactor = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5-9h10v2H7v-2zm3-3h4v8h-4V8z";
+
+    // Navigation compass - direction
+    const navigation = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13l-4 8h4v4l4-8h-4V7z";
+
+    // Controls gear - settings
+    const controls = "M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
+
+    // Jump drive - warp/hyperspace
+    const jump_drive = "M12 2l-5.5 9h11L12 2zm0 3.84L14.11 9H9.89L12 5.84zM17.5 13c-2.49 0-4.5 2.01-4.5 4.5s2.01 4.5 4.5 4.5 4.5-2.01 4.5-4.5-2.01-4.5-4.5-4.5zm0 7c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5zM6.5 13C4.01 13 2 15.01 2 17.5S4.01 22 6.5 22 11 19.99 11 17.5 8.99 13 6.5 13zm0 7C5.12 20 4 18.88 4 17.5S5.12 15 6.5 15 9 16.12 9 17.5 7.88 20 6.5 20z";
+
+    // Alert warning - danger triangle
+    const alert = "M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z";
+
+    // Autopilot - AI control
+    const autopilot = "M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.5H17V9.5h2.5zm-1.5 9c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z";
+
+    // Boost - rocket flame
+    const boost = "M13 2.05v2.02c3.95.49 7 3.85 7 7.93 0 1.62-.49 3.13-1.32 4.39l1.47 1.47C21.32 16.12 22 14.15 22 12c0-5.18-3.95-9.45-9-9.95zM12 6c-3.31 0-6 2.69-6 6 0 1.3.42 2.5 1.12 3.48l4.38-4.38-1.06-1.06L12 8.6l4.88 4.88-1.06 1.06-4.38-4.38-4.38 4.38c.98.7 2.18 1.12 3.48 1.12 3.31 0 6-2.69 6-6s-2.69-6-6-6zm-8.66 8.61l-1.47 1.47C2.68 17.88 2 15.85 2 14c0-5.18 3.95-9.45 9-9.95v2.02C7.05 6.56 4 9.92 4 14c0 .55.05 1.09.14 1.61l-.8-.8z";
+
+    // Emergency stop - power off
+    const emergency = "M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z";
+
+    // Target lock - crosshair
+    const target = "M12 8c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4zm8.94 3c-.46-4.17-3.77-7.48-7.94-7.94V1h-2v2.06C6.83 3.52 3.52 6.83 3.06 11H1v2h2.06c.46 4.17 3.77 7.48 7.94 7.94V23h2v-2.06c4.17-.46 7.48-3.77 7.94-7.94H23v-2h-2.06zM12 19c-3.87 0-7-3.13-7-7s3.13-7 7-7 7 3.13 7 7-3.13 7-7 7z";
+
+    // Velocity speedometer
+    const velocity = "M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z";
+
+    // Coordinates - location pin
+    const coords = "M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z";
+
+    // Heading compass arrow
+    const heading = "M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z";
+
+    // Status indicator dot
+    const status_dot = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z";
+
+    // Power on
+    const power_on = "M16.01 7L16 3h-2v4h-4V3H8v4h-.01C7 6.99 6 7.99 6 8.99v5.49L9.5 18v3h5v-3l3.5-3.51v-5.5c0-1-1-2-1.99-1.99z";
+
+    // Power off
+    const power_off = "M16 7V3h-2v4h-4V3H8v4H6v5l4 4v5h4v-5l4-4V7h-2z";
+
+    // Dashboard grid
+    const dashboard = "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z";
+
+    // Star/celestial
+    const star = "M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z";
+};
+
+/// Holographic scanline + chromatic aberration shader (MSL - macOS)
+pub const hologram_shader_msl =
     \\void mainImage(thread float4& fragColor, float2 fragCoord,
     \\               constant ShaderUniforms& uniforms,
     \\               texture2d<float> iChannel0,
@@ -69,8 +139,8 @@ pub const hologram_shader =
     \\}
 ;
 
-/// Subtle warp speed distortion at edges
-pub const warp_shader =
+/// Subtle warp speed distortion at edges (MSL - macOS)
+pub const warp_shader_msl =
     \\void mainImage(thread float4& fragColor, float2 fragCoord,
     \\               constant ShaderUniforms& uniforms,
     \\               texture2d<float> iChannel0,
@@ -107,6 +177,92 @@ pub const warp_shader =
     \\    scene += float3(0.0, 0.5, 1.0) * edgeGlow * (sin(time * 2.0) * 0.3 + 0.7);
     \\
     \\    fragColor = float4(scene, 1.0);
+    \\}
+;
+
+/// Holographic scanline + chromatic aberration shader (WGSL - Web)
+pub const hologram_shader_wgsl =
+    \\fn mainImage(
+    \\    fragCoord: vec2<f32>,
+    \\    u: ShaderUniforms,
+    \\    tex: texture_2d<f32>,
+    \\    samp: sampler
+    \\) -> vec4<f32> {
+    \\    let uv = fragCoord / u.iResolution.xy;
+    \\    let time = u.iTime;
+    \\
+    \\    // Subtle chromatic aberration
+    \\    let aberration = 0.002 * sin(time * 2.0);
+    \\    let r = textureSample(tex, samp, uv + vec2<f32>(aberration, 0.0)).r;
+    \\    let g = textureSample(tex, samp, uv).g;
+    \\    let b = textureSample(tex, samp, uv - vec2<f32>(aberration, 0.0)).b;
+    \\    var scene = vec3<f32>(r, g, b);
+    \\
+    \\    // Scanlines
+    \\    let scanline = sin(fragCoord.y * 1.5 + time * 3.0) * 0.03 + 0.97;
+    \\    scene = scene * scanline;
+    \\
+    \\    // Subtle vignette
+    \\    let center = uv - 0.5;
+    \\    let vignette = 1.0 - dot(center, center) * 0.5;
+    \\    scene = scene * vignette;
+    \\
+    \\    // Occasional glitch line
+    \\    let glitch = step(0.998, fract(sin(floor(time * 10.0) * 12.9898) * 43758.5453));
+    \\    let glitchY = fract(sin(floor(time * 10.0) * 78.233) * 43758.5453);
+    \\    if (glitch > 0.5 && abs(uv.y - glitchY) < 0.01) {
+    \\        scene = scene.bgr * 1.5;
+    \\    }
+    \\
+    \\    // Cyan/magenta tint at edges
+    \\    let edgeDist = max(abs(center.x), abs(center.y)) * 2.0;
+    \\    let edgeTint = mix(vec3<f32>(0.0, 1.0, 1.0), vec3<f32>(1.0, 0.0, 1.0), uv.x);
+    \\    scene = mix(scene, scene + edgeTint * 0.1, smoothstep(0.7, 1.0, edgeDist));
+    \\
+    \\    return vec4<f32>(scene, 1.0);
+    \\}
+;
+
+/// Subtle warp speed distortion at edges (WGSL - Web)
+pub const warp_shader_wgsl =
+    \\fn mainImage(
+    \\    fragCoord: vec2<f32>,
+    \\    u: ShaderUniforms,
+    \\    tex: texture_2d<f32>,
+    \\    samp: sampler
+    \\) -> vec4<f32> {
+    \\    let uv = fragCoord / u.iResolution.xy;
+    \\    let time = u.iTime * 0.3;
+    \\
+    \\    // Distance from center
+    \\    let center = uv - 0.5;
+    \\    let dist = length(center);
+    \\    let angle = atan2(center.y, center.x);
+    \\
+    \\    // Warp intensity increases toward edges
+    \\    let warpStrength = smoothstep(0.3, 0.8, dist) * 0.02;
+    \\
+    \\    // Spiral warp motion
+    \\    let spiral = sin(angle * 3.0 + time * 2.0 + dist * 10.0);
+    \\    let radialPulse = sin(dist * 20.0 - time * 4.0) * 0.5 + 0.5;
+    \\
+    \\    // Apply distortion
+    \\    let warpOffset = center * warpStrength * spiral * radialPulse;
+    \\    let distortedUV = uv + warpOffset;
+    \\
+    \\    // Sample with distortion
+    \\    var scene = textureSample(tex, samp, distortedUV).rgb;
+    \\
+    \\    // Add streaking light at edges (warp stars effect)
+    \\    let streak = pow(radialPulse, 3.0) * smoothstep(0.5, 0.9, dist);
+    \\    let streakColor = mix(vec3<f32>(0.0, 0.8, 1.0), vec3<f32>(1.0, 0.0, 0.8), angle * 0.3 + 0.5);
+    \\    scene = scene + streakColor * streak * 0.15;
+    \\
+    \\    // Subtle edge glow
+    \\    let edgeGlow = smoothstep(0.6, 1.0, dist) * 0.3;
+    \\    scene = scene + vec3<f32>(0.0, 0.5, 1.0) * edgeGlow * (sin(time * 2.0) * 0.3 + 0.7);
+    \\
+    \\    return vec4<f32>(scene, 1.0);
     \\}
 ;
 
@@ -288,6 +444,11 @@ const ShipName = struct {
 
     pub fn render(self: @This(), cx: *Cx) void {
         cx.hstack(.{ .gap = 12, .alignment = .center }, .{
+            Svg{
+                .path = SpaceIcons.ship,
+                .size = 28,
+                .color = Colors.cyan.withAlpha(self.opacity),
+            },
             ui.text("USS AURORA", .{ .size = 22, .color = Colors.text.withAlpha(self.opacity) }),
             ui.text("NCC-1701-G", .{ .size = 12, .color = Colors.text_dim.withAlpha(self.opacity) }),
         });
@@ -345,9 +506,16 @@ const AlertBadge = struct {
                 .background = Colors.red.withAlpha(glow_alpha),
                 .corner_radius = 10,
             }, .{
-                ui.textFmt("{} ALERT", .{s.active_alerts}, .{
-                    .size = 10,
-                    .color = ui.Color.white,
+                cx.hstack(.{ .gap = 4, .alignment = .center }, .{
+                    Svg{
+                        .path = SpaceIcons.alert,
+                        .size = 12,
+                        .color = ui.Color.white,
+                    },
+                    ui.textFmt("{} ALERT", .{s.active_alerts}, .{
+                        .size = 10,
+                        .color = ui.Color.white,
+                    }),
                 }),
             });
         }
@@ -379,11 +547,11 @@ const LeftPanel = struct {
             .gap = 12,
             .direction = .column,
         }, .{
-            PanelHeader{ .title = "SHIP SYSTEMS", .icon = "x" },
-            SystemGauge{ .label = "HULL", .value = cx.stateConst(AppState).hull_integrity, .color = Colors.cyan },
-            SystemGauge{ .label = "SHIELDS", .value = cx.stateConst(AppState).shield_power, .color = Colors.magenta },
-            SystemGauge{ .label = "FUEL", .value = cx.stateConst(AppState).fuel_level, .color = Colors.orange },
-            SystemGauge{ .label = "O2", .value = cx.stateConst(AppState).oxygen_level, .color = Colors.green },
+            PanelHeader{ .title = "SHIP SYSTEMS", .icon = SpaceIcons.ship },
+            SystemGauge{ .label = "HULL", .value = cx.stateConst(AppState).hull_integrity, .color = Colors.cyan, .icon = SpaceIcons.ship },
+            SystemGauge{ .label = "SHIELDS", .value = cx.stateConst(AppState).shield_power, .color = Colors.magenta, .icon = SpaceIcons.shield },
+            SystemGauge{ .label = "FUEL", .value = cx.stateConst(AppState).fuel_level, .color = Colors.orange, .icon = SpaceIcons.fuel },
+            SystemGauge{ .label = "O2", .value = cx.stateConst(AppState).oxygen_level, .color = Colors.green, .icon = SpaceIcons.oxygen },
             ReactorStatus{},
         });
     }
@@ -396,7 +564,7 @@ const CenterPanel = struct {
             .gap = 12,
             .direction = .column,
         }, .{
-            PanelHeader{ .title = "NAVIGATION", .icon = "◎" },
+            PanelHeader{ .title = "NAVIGATION", .icon = SpaceIcons.navigation },
             NavigationDisplay{},
             CoordinatesPanel{},
             VelocityDisplay{},
@@ -412,7 +580,7 @@ const RightPanel = struct {
             .gap = 12,
             .direction = .column,
         }, .{
-            PanelHeader{ .title = "CONTROLS", .icon = "⚙" },
+            PanelHeader{ .title = "CONTROLS", .icon = SpaceIcons.controls },
             ShipControls{},
             JumpDrive{},
         });
@@ -433,7 +601,13 @@ const PanelHeader = struct {
             .gap = 8,
             .alignment = .{ .cross = .center },
         }, .{
-            ui.text(self.icon, .{ .size = 14, .color = Colors.cyan }),
+            Svg{
+                .path = self.icon,
+                .size = 16,
+                .color = null,
+                .stroke_color = Colors.cyan,
+                .stroke_width = 1.5,
+            },
             ui.text(self.title, .{ .size = 12, .color = Colors.text_dim }),
         });
     }
@@ -455,7 +629,16 @@ const JumpDrive = struct {
             .direction = .column,
             .alignment = .{ .cross = .center },
         }, .{
-            ui.text("JUMP DRIVE", .{ .size = 10, .color = Colors.magenta_dim }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.jump_drive,
+                    .size = 14,
+                    .color = null,
+                    .stroke_color = Colors.magenta_dim,
+                    .stroke_width = 1.5,
+                },
+                ui.text("JUMP DRIVE", .{ .size = 10, .color = Colors.magenta_dim }),
+            }),
             JumpChargeRing{},
             ui.text(status_text, .{ .size = 11, .color = status_color }),
             JumpButtons{},
@@ -497,6 +680,9 @@ const JumpChargeRing = struct {
         // Scale pop when ready
         const scale: f32 = if (is_ready) 1.0 + (1.0 - ready_glow.progress) * 0.1 else 1.0;
 
+        // Choose icon based on state
+        const ring_icon = if (is_ready) SpaceIcons.star else if (is_charging) SpaceIcons.target else SpaceIcons.jump_drive;
+
         cx.box(.{
             .width = 80 * scale,
             .height = 80 * scale,
@@ -506,7 +692,14 @@ const JumpChargeRing = struct {
             .direction = .column,
             .gap = 2,
         }, .{
-            ui.textFmt("{}%", .{s.jump_charge}, .{ .size = 22, .color = base_color }),
+            Svg{
+                .path = ring_icon,
+                .size = 18,
+                .color = if (is_ready) Colors.green else null,
+                .stroke_color = if (is_ready) null else base_color,
+                .stroke_width = 1.5,
+            },
+            ui.textFmt("{}%", .{s.jump_charge}, .{ .size = 18, .color = base_color }),
             JumpDestLabel{},
         });
     }
@@ -537,6 +730,7 @@ const JumpButtons = struct {
                 NeonButton{
                     .label = "INITIATE JUMP",
                     .color = Colors.green,
+                    .icon = SpaceIcons.jump_drive,
                     .handler = cx.update(AppState, AppState.initiateJump),
                 },
             });
@@ -545,6 +739,7 @@ const JumpButtons = struct {
                 NeonButton{
                     .label = "LOCK DESTINATION",
                     .color = Colors.magenta,
+                    .icon = SpaceIcons.target,
                     .handler = cx.update(AppState, AppState.lockDestination),
                 },
             });
@@ -563,8 +758,12 @@ const SystemGauge = struct {
     label: []const u8,
     value: u8,
     color: ui.Color,
+    icon: []const u8 = SpaceIcons.dashboard,
 
     pub fn render(self: @This(), cx: *Cx) void {
+        const is_critical = self.value <= 30;
+        const display_color = if (is_critical) Colors.red else self.color;
+
         cx.box(.{
             .fill_width = true,
             .padding = .{ .all = 12 },
@@ -574,10 +773,17 @@ const SystemGauge = struct {
             .direction = .column,
         }, .{
             cx.box(.{ .direction = .row, .fill_width = true, .alignment = .{ .main = .space_between, .cross = .center } }, .{
-                ui.text(self.label, .{ .size = 11, .color = Colors.text_dim }),
+                cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                    Svg{
+                        .path = self.icon,
+                        .size = 14,
+                        .color = display_color.withAlpha(0.8),
+                    },
+                    ui.text(self.label, .{ .size = 11, .color = Colors.text_dim }),
+                }),
                 ui.textFmt("{}%", .{self.value}, .{
                     .size = 14,
-                    .color = if (self.value > 30) self.color else Colors.red,
+                    .color = display_color,
                 }),
             }),
             GaugeBar{ .value = self.value, .color = self.color, .id = self.label },
@@ -611,7 +817,7 @@ const GaugeBar = struct {
             .corner_radius = 3,
         }, .{
             cx.box(.{
-                .width = fill_width,
+                .width_percent = fill_width,
                 .height = 6,
                 .background = bar_color,
                 .corner_radius = 3,
@@ -640,11 +846,18 @@ const ReactorStatus = struct {
             .padding = .{ .all = 12 },
             .background = Colors.bg_card,
             .corner_radius = 6,
-            .gap = 4,
+            .gap = 6,
             .direction = .column,
             .alignment = .{ .cross = .center },
         }, .{
-            ui.text("REACTOR CORE", .{ .size = 10, .color = Colors.text_dim }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.reactor,
+                    .size = 14,
+                    .color = temp_color.withAlpha(glow_intensity * 0.7),
+                },
+                ui.text("REACTOR CORE", .{ .size = 10, .color = Colors.text_dim }),
+            }),
             ui.textFmt("{}K", .{s.reactor_temp}, .{
                 .size = 28,
                 .color = temp_color.withAlpha(glow_intensity),
@@ -682,9 +895,9 @@ const CircleRow = struct {
         const s = cx.stateConst(AppState);
 
         cx.box(.{ .direction = .row, .gap = 24, .alignment = .{ .cross = .center } }, .{
-            CircleGauge{ .label = "HDG", .value = s.heading, .color = Colors.cyan, .unit = "deg" },
-            CircleGauge{ .label = "VEL", .value = @as(u16, @intCast(s.velocity / 100)), .color = Colors.magenta, .unit = "x100" },
-            CircleGauge{ .label = "FUEL", .value = s.fuel_level, .color = Colors.orange, .unit = "%" },
+            CircleGauge{ .label = "HDG", .value = s.heading, .color = Colors.cyan, .unit = "deg", .icon = SpaceIcons.heading },
+            CircleGauge{ .label = "VEL", .value = @as(u16, @intCast(s.velocity / 100)), .color = Colors.magenta, .unit = "x100", .icon = SpaceIcons.velocity },
+            CircleGauge{ .label = "FUEL", .value = s.fuel_level, .color = Colors.orange, .unit = "%", .icon = SpaceIcons.fuel },
         });
     }
 };
@@ -694,10 +907,11 @@ const AutopilotStatus = struct {
         const s = cx.stateConst(AppState);
 
         cx.hstack(.{ .gap = 8, .alignment = .center }, .{
-            ui.text("-", .{
-                .size = 12,
+            Svg{
+                .path = SpaceIcons.autopilot,
+                .size = 16,
                 .color = if (s.autopilot_engaged) Colors.green else Colors.red,
-            }),
+            },
             ui.text(if (s.autopilot_engaged) "AUTOPILOT ENGAGED" else "MANUAL CONTROL", .{
                 .size = 11,
                 .color = if (s.autopilot_engaged) Colors.green else Colors.text_dim,
@@ -711,6 +925,7 @@ const CircleGauge = struct {
     value: u16,
     color: ui.Color,
     unit: ?[]const u8 = null,
+    icon: []const u8 = SpaceIcons.dashboard,
 
     pub fn render(self: @This(), cx: *Cx) void {
         // All gauges share the same breathing animation - that's fine!
@@ -731,7 +946,13 @@ const CircleGauge = struct {
             .direction = .column,
             .gap = 2,
         }, .{
-            ui.text(self.label, .{ .size = 10, .color = Colors.text_dim }),
+            Svg{
+                .path = self.icon,
+                .size = 16,
+                .color = null,
+                .stroke_color = self.color.withAlpha(0.6),
+                .stroke_width = 1.5,
+            },
             ui.textFmt("{}", .{self.value}, .{ .size = 24, .color = self.color }),
             CircleUnit{ .unit = self.unit },
         });
@@ -759,12 +980,24 @@ const CoordinatesPanel = struct {
             .padding = .{ .all = 16 },
             .background = Colors.bg_card,
             .corner_radius = 6,
-            .direction = .row,
-            .alignment = .{ .main = .space_around },
+            .gap = 12,
+            .direction = .column,
         }, .{
-            CoordDisplay{ .axis = "X", .value = s.coordinates[0] },
-            CoordDisplay{ .axis = "Y", .value = s.coordinates[1] },
-            CoordDisplay{ .axis = "Z", .value = s.coordinates[2] },
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.coords,
+                    .size = 14,
+                    .color = null,
+                    .stroke_color = Colors.magenta_dim,
+                    .stroke_width = 1.5,
+                },
+                ui.text("COORDINATES", .{ .size = 10, .color = Colors.text_dim }),
+            }),
+            cx.box(.{ .direction = .row, .alignment = .{ .main = .space_around } }, .{
+                CoordDisplay{ .axis = "X", .value = s.coordinates[0] },
+                CoordDisplay{ .axis = "Y", .value = s.coordinates[1] },
+                CoordDisplay{ .axis = "Z", .value = s.coordinates[2] },
+            }),
         });
     }
 };
@@ -798,7 +1031,16 @@ const VelocityDisplay = struct {
             .direction = .row,
             .alignment = .{ .main = .space_between, .cross = .center },
         }, .{
-            ui.text("VELOCITY", .{ .size = 11, .color = Colors.text_dim }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.velocity,
+                    .size = 16,
+                    .color = null,
+                    .stroke_color = Colors.cyan_dim,
+                    .stroke_width = 1.5,
+                },
+                ui.text("VELOCITY", .{ .size = 11, .color = Colors.text_dim }),
+            }),
             cx.hstack(.{ .gap = 4, .alignment = .center }, .{
                 ui.textFmt("{}", .{s.velocity}, .{ .size = 24, .color = vel_color }),
                 ui.text("km/s", .{ .size = 11, .color = Colors.text_dim }),
@@ -819,7 +1061,16 @@ const ShipControls = struct {
             .gap = 12,
             .direction = .column,
         }, .{
-            ui.text("DESTINATION", .{ .size = 10, .color = Colors.text_dim }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.target,
+                    .size = 12,
+                    .color = null,
+                    .stroke_color = Colors.cyan_dim,
+                    .stroke_width = 1.5,
+                },
+                ui.text("DESTINATION", .{ .size = 10, .color = Colors.text_dim }),
+            }),
             TextInput{
                 .id = "destination",
                 .placeholder = "Enter coordinates...",
@@ -876,7 +1127,14 @@ const AutopilotToggle = struct {
             .alignment = .{ .cross = .center },
             .on_click_handler = cx.update(AppState, AppState.toggleAutopilot),
         }, .{
-            ui.text("AUTOPILOT", .{ .size = 11, .color = target_color }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.autopilot,
+                    .size = 14,
+                    .color = target_color,
+                },
+                ui.text("AUTOPILOT", .{ .size = 11, .color = target_color }),
+            }),
             ui.spacer(),
             ToggleStatus{ .active = self.active },
         });
@@ -905,7 +1163,14 @@ const ShieldsToggle = struct {
             .alignment = .{ .cross = .center },
             .on_click_handler = cx.update(AppState, AppState.toggleShields),
         }, .{
-            ui.text("SHIELDS", .{ .size = 11, .color = target_color }),
+            cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+                Svg{
+                    .path = SpaceIcons.shield,
+                    .size = 14,
+                    .color = target_color,
+                },
+                ui.text("SHIELDS", .{ .size = 11, .color = target_color }),
+            }),
             ui.spacer(),
             ToggleStatus{ .active = self.active },
         });
@@ -928,6 +1193,7 @@ const ToggleStatus = struct {
 const NeonButton = struct {
     label: []const u8,
     color: ui.Color = Colors.cyan,
+    icon: ?[]const u8 = null,
     handler: ?gooey.core.handler.HandlerRef = null,
 
     pub fn render(self: @This(), cx: *Cx) void {
@@ -940,16 +1206,40 @@ const NeonButton = struct {
 
         const bg_alpha = gooey.lerp(0.12, 0.18, pulse.progress);
 
-        cx.box(.{
-            .fill_width = true,
-            .padding = .{ .symmetric = .{ .x = 16, .y = 10 } },
-            .background = self.color.withAlpha(bg_alpha),
-            .corner_radius = 4,
-            .alignment = .{ .main = .center, .cross = .center },
-            .on_click_handler = self.handler,
-        }, .{
-            ui.text(self.label, .{ .size = 11, .color = self.color }),
-        });
+        if (self.icon) |icon_path| {
+            // Button with icon
+            cx.box(.{
+                .fill_width = true,
+                .padding = .{ .symmetric = .{ .x = 16, .y = 10 } },
+                .background = self.color.withAlpha(bg_alpha),
+                .corner_radius = 4,
+                .direction = .row,
+                .gap = 6,
+                .alignment = .{ .main = .center, .cross = .center },
+                .on_click_handler = self.handler,
+            }, .{
+                Svg{
+                    .path = icon_path,
+                    .size = 12,
+                    .color = null,
+                    .stroke_color = self.color,
+                    .stroke_width = 1.5,
+                },
+                ui.text(self.label, .{ .size = 11, .color = self.color }),
+            });
+        } else {
+            // Button without icon
+            cx.box(.{
+                .fill_width = true,
+                .padding = .{ .symmetric = .{ .x = 16, .y = 10 } },
+                .background = self.color.withAlpha(bg_alpha),
+                .corner_radius = 4,
+                .alignment = .{ .main = .center, .cross = .center },
+                .on_click_handler = self.handler,
+            }, .{
+                ui.text(self.label, .{ .size = 11, .color = self.color }),
+            });
+        }
     }
 };
 
@@ -963,11 +1253,13 @@ const QuickActions = struct {
             NeonButton{
                 .label = "BOOST SHIELDS",
                 .color = Colors.cyan,
+                .icon = SpaceIcons.boost,
                 .handler = cx.update(AppState, AppState.boostShields),
             },
             NeonButton{
                 .label = "EMERGENCY STOP",
                 .color = Colors.red,
+                .icon = SpaceIcons.emergency,
                 .handler = cx.update(AppState, AppState.emergencyStop),
             },
         });
@@ -994,7 +1286,14 @@ const Footer = struct {
 
 const FooterVersion = struct {
     pub fn render(_: @This(), cx: *Cx) void {
-        cx.box(.{}, .{
+        cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+            Svg{
+                .path = SpaceIcons.dashboard,
+                .size = 12,
+                .color = null,
+                .stroke_color = Colors.text_dim,
+                .stroke_width = 1.5,
+            },
             ui.text("v2.4.7", .{ .size = 10, .color = Colors.text_dim }),
         });
     }
@@ -1002,8 +1301,18 @@ const FooterVersion = struct {
 
 const FooterBrand = struct {
     pub fn render(_: @This(), cx: *Cx) void {
-        cx.box(.{}, .{
+        cx.hstack(.{ .gap = 6, .alignment = .center }, .{
+            Svg{
+                .path = SpaceIcons.star,
+                .size = 12,
+                .color = Colors.cyan_dim,
+            },
             ui.text("GOOEY AEROSPACE SYSTEMS", .{ .size = 10, .color = Colors.text_dim }),
+            Svg{
+                .path = SpaceIcons.star,
+                .size = 12,
+                .color = Colors.cyan_dim,
+            },
         });
     }
 };
@@ -1028,7 +1337,10 @@ const App = gooey.App(AppState, &app_state, render, .{
     .title = "Spaceship Dashboard",
     .width = 900,
     .height = 650,
-    .custom_shaders = &.{ hologram_shader, warp_shader },
+    .custom_shaders = &.{
+        .{ .msl = hologram_shader_msl, .wgsl = hologram_shader_wgsl },
+        .{ .msl = warp_shader_msl, .wgsl = warp_shader_wgsl },
+    },
 });
 
 comptime {
