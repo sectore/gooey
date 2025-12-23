@@ -1,7 +1,8 @@
 //! SVG Rasterizer - CoreGraphics-based SVG path rendering
 //!
 //! Rasterizes SVG path data to RGBA bitmaps at device resolution.
-//! Produces white-on-transparent alpha masks for shader tinting.
+//! Uses two-channel encoding: R = fill alpha, G = stroke alpha.
+//! This allows the shader to apply different colors to fill and stroke.
 
 const std = @import("std");
 const svg_mod = @import("../core/svg.zig");
@@ -41,7 +42,8 @@ pub fn rasterize(
     return rasterizeWithOptions(allocator, path_data, viewbox, device_size, buffer, true, .{});
 }
 
-/// Rasterize SVG path data with fill and stroke options
+/// Rasterize SVG path data with fill and stroke options.
+/// Output format: R = fill alpha, G = stroke alpha, B = unused, A = combined alpha
 pub fn rasterizeWithOptions(
     allocator: std.mem.Allocator,
     path_data: []const u8,
@@ -79,66 +81,169 @@ pub fn rasterizeWithOptions(
     // For stroke-only, we need at least 2 points (a line)
     if (fill and (points.items.len < 3 or polygons.items.len == 0)) return error.EmptyPath;
 
-    // Create CoreGraphics context
+    // Create color space
     const color_space = cg.CGColorSpaceCreateDeviceRGB();
     if (color_space == null) return error.GraphicsError;
     defer cg.CGColorSpaceRelease(color_space);
 
-    const context = cg.CGBitmapContextCreate(
-        buffer.ptr,
-        device_size,
-        device_size,
-        8,
-        device_size * 4,
-        color_space,
-        cg.kCGImageAlphaPremultipliedLast,
-    );
-    if (context == null) return error.GraphicsError;
-    defer cg.CGContextRelease(context);
-
-    // Enable antialiasing
-    cg.CGContextSetAllowsAntialiasing(context, true);
-    cg.CGContextSetShouldAntialias(context, true);
-
-    // Transform: flip Y, scale viewbox to device size
     const scale: f64 = @as(f64, @floatFromInt(device_size)) / @as(f64, viewbox);
-    cg.CGContextTranslateCTM(context, 0, @floatFromInt(device_size));
-    cg.CGContextScaleCTM(context, scale, -scale);
 
-    // Build the path
-    for (polygons.items) |poly| {
-        const pts = points.items[poly.start..poly.end];
-        if (pts.len < 2) continue;
+    if (fill and stroke.enabled) {
+        // Two-channel mode: fill in R, stroke in G
+        const temp_size = device_size * device_size * 4;
+        const fill_buffer = allocator.alloc(u8, temp_size) catch return error.OutOfMemory;
+        defer allocator.free(fill_buffer);
+        const stroke_buffer = allocator.alloc(u8, temp_size) catch return error.OutOfMemory;
+        defer allocator.free(stroke_buffer);
 
-        cg.CGContextBeginPath(context);
-        cg.CGContextMoveToPoint(context, pts[0].x, pts[0].y);
+        @memset(fill_buffer, 0);
+        @memset(stroke_buffer, 0);
 
-        for (pts[1..]) |pt| {
-            cg.CGContextAddLineToPoint(context, pt.x, pt.y);
+        // Render fill to temporary buffer
+        {
+            const ctx = cg.CGBitmapContextCreate(
+                fill_buffer.ptr,
+                device_size,
+                device_size,
+                8,
+                device_size * 4,
+                color_space,
+                cg.kCGImageAlphaPremultipliedLast,
+            );
+            if (ctx == null) return error.GraphicsError;
+            defer cg.CGContextRelease(ctx);
+
+            cg.CGContextSetAllowsAntialiasing(ctx, true);
+            cg.CGContextSetShouldAntialias(ctx, true);
+            cg.CGContextTranslateCTM(ctx, 0, @floatFromInt(device_size));
+            cg.CGContextScaleCTM(ctx, scale, -scale);
+
+            for (polygons.items) |poly| {
+                const pts = points.items[poly.start..poly.end];
+                if (pts.len < 2) continue;
+                cg.CGContextBeginPath(ctx);
+                cg.CGContextMoveToPoint(ctx, pts[0].x, pts[0].y);
+                for (pts[1..]) |pt| {
+                    cg.CGContextAddLineToPoint(ctx, pt.x, pt.y);
+                }
+                cg.CGContextClosePath(ctx);
+            }
+
+            cg.CGContextSetRGBFillColor(ctx, 1.0, 1.0, 1.0, 1.0);
+            cg.CGContextFillPath(ctx);
+        }
+
+        // Render stroke to temporary buffer
+        {
+            const ctx = cg.CGBitmapContextCreate(
+                stroke_buffer.ptr,
+                device_size,
+                device_size,
+                8,
+                device_size * 4,
+                color_space,
+                cg.kCGImageAlphaPremultipliedLast,
+            );
+            if (ctx == null) return error.GraphicsError;
+            defer cg.CGContextRelease(ctx);
+
+            cg.CGContextSetAllowsAntialiasing(ctx, true);
+            cg.CGContextSetShouldAntialias(ctx, true);
+            cg.CGContextTranslateCTM(ctx, 0, @floatFromInt(device_size));
+            cg.CGContextScaleCTM(ctx, scale, -scale);
+
+            for (polygons.items) |poly| {
+                const pts = points.items[poly.start..poly.end];
+                if (pts.len < 2) continue;
+                cg.CGContextBeginPath(ctx);
+                cg.CGContextMoveToPoint(ctx, pts[0].x, pts[0].y);
+                for (pts[1..]) |pt| {
+                    cg.CGContextAddLineToPoint(ctx, pt.x, pt.y);
+                }
+                cg.CGContextClosePath(ctx);
+            }
+
+            cg.CGContextSetRGBStrokeColor(ctx, 1.0, 1.0, 1.0, 1.0);
+            cg.CGContextSetLineWidth(ctx, stroke.width);
+            cg.CGContextSetLineCap(ctx, cg.kCGLineCapRound);
+            cg.CGContextSetLineJoin(ctx, cg.kCGLineJoinRound);
+            cg.CGContextStrokePath(ctx);
+        }
+
+        // Combine: R = fill alpha, G = stroke alpha, B = 0, A = max(fill, stroke)
+        var i: usize = 0;
+        while (i < device_size * device_size) : (i += 1) {
+            const idx = i * 4;
+            const fill_a = fill_buffer[idx + 3];
+            const stroke_a = stroke_buffer[idx + 3];
+            buffer[idx + 0] = fill_a; // R = fill
+            buffer[idx + 1] = stroke_a; // G = stroke
+            buffer[idx + 2] = 0; // B = unused
+            buffer[idx + 3] = @max(fill_a, stroke_a); // A = combined
+        }
+    } else {
+        // Single channel mode (fill-only or stroke-only)
+        const context = cg.CGBitmapContextCreate(
+            buffer.ptr,
+            device_size,
+            device_size,
+            8,
+            device_size * 4,
+            color_space,
+            cg.kCGImageAlphaPremultipliedLast,
+        );
+        if (context == null) return error.GraphicsError;
+        defer cg.CGContextRelease(context);
+
+        cg.CGContextSetAllowsAntialiasing(context, true);
+        cg.CGContextSetShouldAntialias(context, true);
+        cg.CGContextTranslateCTM(context, 0, @floatFromInt(device_size));
+        cg.CGContextScaleCTM(context, scale, -scale);
+
+        for (polygons.items) |poly| {
+            const pts = points.items[poly.start..poly.end];
+            if (pts.len < 2) continue;
+
+            cg.CGContextBeginPath(context);
+            cg.CGContextMoveToPoint(context, pts[0].x, pts[0].y);
+
+            for (pts[1..]) |pt| {
+                cg.CGContextAddLineToPoint(context, pt.x, pt.y);
+            }
+
+            if (fill) {
+                cg.CGContextClosePath(context);
+            }
         }
 
         if (fill) {
-            cg.CGContextClosePath(context);
+            cg.CGContextSetRGBFillColor(context, 1.0, 1.0, 1.0, 1.0);
+            cg.CGContextFillPath(context);
+
+            // Copy alpha to R channel, clear G
+            var i: usize = 0;
+            while (i < device_size * device_size) : (i += 1) {
+                const idx = i * 4;
+                buffer[idx + 0] = buffer[idx + 3]; // R = A
+                buffer[idx + 1] = 0; // G = 0 (no stroke)
+                buffer[idx + 2] = 0;
+            }
+        } else if (stroke.enabled) {
+            cg.CGContextSetRGBStrokeColor(context, 1.0, 1.0, 1.0, 1.0);
+            cg.CGContextSetLineWidth(context, stroke.width);
+            cg.CGContextSetLineCap(context, cg.kCGLineCapRound);
+            cg.CGContextSetLineJoin(context, cg.kCGLineJoinRound);
+            cg.CGContextStrokePath(context);
+
+            // Copy alpha to G channel, clear R
+            var i: usize = 0;
+            while (i < device_size * device_size) : (i += 1) {
+                const idx = i * 4;
+                buffer[idx + 1] = buffer[idx + 3]; // G = A
+                buffer[idx + 0] = 0; // R = 0 (no fill)
+                buffer[idx + 2] = 0;
+            }
         }
-    }
-
-    // Set colors to white (alpha mask - tint applied in shader)
-    cg.CGContextSetRGBFillColor(context, 1.0, 1.0, 1.0, 1.0);
-    cg.CGContextSetRGBStrokeColor(context, 1.0, 1.0, 1.0, 1.0);
-
-    // Draw based on options
-    if (fill and stroke.enabled) {
-        cg.CGContextSetLineWidth(context, stroke.width);
-        cg.CGContextSetLineCap(context, cg.kCGLineCapRound);
-        cg.CGContextSetLineJoin(context, cg.kCGLineJoinRound);
-        cg.CGContextDrawPath(context, cg.kCGPathFillStroke);
-    } else if (fill) {
-        cg.CGContextFillPath(context);
-    } else if (stroke.enabled) {
-        cg.CGContextSetLineWidth(context, stroke.width);
-        cg.CGContextSetLineCap(context, cg.kCGLineCapRound);
-        cg.CGContextSetLineJoin(context, cg.kCGLineJoinRound);
-        cg.CGContextStrokePath(context);
     }
 
     return RasterizedSvg{

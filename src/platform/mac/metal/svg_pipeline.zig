@@ -23,7 +23,8 @@ pub const svg_shader_source =
     \\    float uv_top;
     \\    float uv_right;
     \\    float uv_bottom;
-    \\    float4 color;  // HSLA
+    \\    float4 color;         // Fill color (HSLA)
+    \\    float4 stroke_color;  // Stroke color (HSLA)
     \\    float clip_x;
     \\    float clip_y;
     \\    float clip_width;
@@ -33,7 +34,8 @@ pub const svg_shader_source =
     \\struct VertexOut {
     \\    float4 position [[position]];
     \\    float2 tex_coord;
-    \\    float4 color;
+    \\    float4 fill_color;
+    \\    float4 stroke_color;
     \\    float4 clip_bounds;
     \\    float2 screen_pos;
     \\};
@@ -77,7 +79,8 @@ pub const svg_shader_source =
     \\    VertexOut out;
     \\    out.position = float4(ndc, 0.0, 1.0);
     \\    out.tex_coord = uv;
-    \\    out.color = hsla_to_rgba(icon.color);
+    \\    out.fill_color = hsla_to_rgba(icon.color);
+    \\    out.stroke_color = hsla_to_rgba(icon.stroke_color);
     \\    out.clip_bounds = float4(icon.clip_x, icon.clip_y, icon.clip_width, icon.clip_height);
     \\    out.screen_pos = pos;
     \\    return out;
@@ -96,8 +99,20 @@ pub const svg_shader_source =
     \\    }
     \\
     \\    constexpr sampler s(mag_filter::linear, min_filter::linear);
-    \\    float alpha = atlas.sample(s, in.tex_coord).a;  // RGBA atlas, use alpha
-    \\    return float4(in.color.rgb, in.color.a * alpha);
+    \\    float4 sample = atlas.sample(s, in.tex_coord);
+    \\    float fill_alpha = sample.r;    // Fill mask in R channel
+    \\    float stroke_alpha = sample.g;  // Stroke mask in G channel
+    \\
+    \\    // Composite: stroke shows only where fill isn't
+    \\    float visible_stroke = stroke_alpha * (1.0 - fill_alpha);
+    \\
+    \\    // Blend colors
+    \\    float3 rgb = in.fill_color.rgb * in.fill_color.a * fill_alpha
+    \\               + in.stroke_color.rgb * in.stroke_color.a * visible_stroke;
+    \\    float alpha = in.fill_color.a * fill_alpha + in.stroke_color.a * visible_stroke;
+    \\
+    \\    if (alpha < 0.001) discard_fragment();
+    \\    return float4(rgb, alpha);
     \\}
 ;
 

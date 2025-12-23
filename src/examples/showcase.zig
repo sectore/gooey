@@ -474,8 +474,8 @@ const SvgAdvancedRow = struct {
                 Svg{
                     .path = rounded_rect_path,
                     .size = 28,
-                    .color = null,
-                    .stroke_color = gooey.Color.gold,
+                    .color = t.card,
+                    .stroke_color = t.text,
                     .stroke_width = 1.5,
                 },
             }),

@@ -15,8 +15,10 @@ pub const SvgInstance = extern struct {
     uv_top: f32 = 0,
     uv_right: f32 = 0,
     uv_bottom: f32 = 0,
-    // Tint color (HSLA)
+    // Fill color (HSLA)
     color: scene.Hsla = scene.Hsla.black,
+    // Stroke color (HSLA)
+    stroke_color: scene.Hsla = scene.Hsla.transparent,
     // Clip bounds
     clip_x: f32 = 0,
     clip_y: f32 = 0,
@@ -32,7 +34,8 @@ pub const SvgInstance = extern struct {
         uv_top: f32,
         uv_right: f32,
         uv_bottom: f32,
-        color: scene.Hsla,
+        fill_color: scene.Hsla,
+        stroke_color_arg: scene.Hsla,
     ) SvgInstance {
         return .{
             .pos_x = x,
@@ -43,7 +46,8 @@ pub const SvgInstance = extern struct {
             .uv_top = uv_top,
             .uv_right = uv_right,
             .uv_bottom = uv_bottom,
-            .color = color,
+            .color = fill_color,
+            .stroke_color = stroke_color_arg,
         };
     }
 
@@ -56,7 +60,6 @@ pub const SvgInstance = extern struct {
         return s;
     }
 
-    /// Legacy compat - same as withClipBounds but takes individual args
     pub fn withClip(self: SvgInstance, clip_x: f32, clip_y: f32, clip_w: f32, clip_h: f32) SvgInstance {
         var s = self;
         s.clip_x = clip_x;
@@ -68,9 +71,9 @@ pub const SvgInstance = extern struct {
 };
 
 comptime {
-    if (@sizeOf(SvgInstance) != 64) {
+    if (@sizeOf(SvgInstance) != 80) {
         @compileError(std.fmt.comptimePrint(
-            "SvgInstance must be 64 bytes, got {}",
+            "SvgInstance must be 80 bytes, got {}",
             .{@sizeOf(SvgInstance)},
         ));
     }

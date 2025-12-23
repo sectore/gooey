@@ -307,13 +307,9 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
             const snapped_x = @floor(device_x) / scale_factor;
             const snapped_y = @floor(device_y) / scale_factor;
 
-            // Blend fill and stroke colors if both present
-            const final_color = if (pending.has_fill)
-                pending.color
-            else if (pending.stroke_color) |sc|
-                sc
-            else
-                pending.color;
+            // Get fill and stroke colors
+            const fill_color = if (pending.has_fill) pending.color else Hsla.transparent;
+            const stroke_col = if (pending.stroke_color) |sc| sc else Hsla.transparent;
 
             const instance = svg_instance_mod.SvgInstance.init(
                 snapped_x,
@@ -324,7 +320,8 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
                 uv.v0,
                 uv.u1,
                 uv.v1,
-                final_color,
+                fill_color,
+                stroke_col,
             );
 
             try cx.gooey().scene.insertSvgClipped(instance);
