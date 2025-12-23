@@ -872,10 +872,10 @@ test "flatten simple triangle" {
 
     try parser.parse(&path, "M0 0 L100 0 L50 100 Z");
 
-    var points = std.ArrayList(Vec2).init(allocator);
-    defer points.deinit();
-    var polygons = std.ArrayList(IndexSlice).init(allocator);
-    defer polygons.deinit();
+    var points: std.ArrayList(Vec2) = .{};
+    defer points.deinit(allocator);
+    var polygons: std.ArrayList(IndexSlice) = .{};
+    defer polygons.deinit(allocator);
 
     try flattenPath(allocator, &path, 0.5, &points, &polygons);
 
@@ -926,8 +926,8 @@ test "parse arc command" {
 
 test "flatten arc" {
     const allocator = std.testing.allocator;
-    var points = std.ArrayList(Vec2).init(allocator);
-    defer points.deinit();
+    var points: std.ArrayList(Vec2) = .{};
+    defer points.deinit(allocator);
 
     // Semi-circle arc
     try flattenArc(allocator, Vec2.init(0, 0), 50, 50, 0, false, true, Vec2.init(100, 0), 1.0, &points);
@@ -948,16 +948,6 @@ test "parse lucide arrow path" {
 
     // Lucide arrow-left: "m12 19-7-7 7-7 M19 12H5"
     try parser.parse(&path, "m12 19-7-7 7-7");
-
-    // Should have: move_to_rel, line_to_rel, line_to_rel
-    std.debug.print("\nCommands: {}\n", .{path.commands.items.len});
-    for (path.commands.items) |cmd| {
-        std.debug.print("  cmd: {}\n", .{cmd});
-    }
-    std.debug.print("Data: {}\n", .{path.data.items.len});
-    for (path.data.items) |d| {
-        std.debug.print("  {d:.1}\n", .{d});
-    }
 
     try std.testing.expectEqual(@as(usize, 3), path.commands.items.len);
     try std.testing.expectEqual(PathCommand.move_to_rel, path.commands.items[0]);

@@ -809,8 +809,9 @@ test "Cx.update creates valid HandlerRef" {
 
     // Create a minimal Cx (we only need it for the update() method)
     var cx = Cx{
-        .gooey = undefined, // Not used by update()
-        .builder = undefined, // Not used by update()
+        ._allocator = undefined, // Not used by update()
+        ._gooey = undefined, // Not used by update()
+        ._builder = undefined, // Not used by update()
         .state_ptr = @ptrCast(&state),
         .state_type_id = typeId(TestState),
     };
@@ -836,8 +837,9 @@ test "Cx.updateWith creates handler with packed argument" {
     defer handler_mod.clearRootState();
 
     var cx = Cx{
-        .gooey = undefined,
-        .builder = undefined,
+        ._allocator = undefined,
+        ._gooey = undefined,
+        ._builder = undefined,
         .state_ptr = @ptrCast(&state),
         .state_type_id = typeId(TestState),
     };
