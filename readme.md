@@ -2,6 +2,8 @@
 
 A GPU-accelerated UI framework for Zig, targeting macOS with Metal rendering and Browser via WASM.
 
+Join the [Gooey discord](https://discord.gg/bmzAZnZJyw)
+
 > ⚠️ **Early Development**: macOS-only (WASM half-baked). API is evolving.
 
 <table>
