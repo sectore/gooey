@@ -4,8 +4,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Only load zig-objc dependency and setup native module on macOS
+    // Platform detection
     const is_native_macos = target.result.os.tag == .macos;
+    const is_native_linux = target.result.os.tag == .linux;
 
     if (is_native_macos) {
         // Get the zig-objc dependency
@@ -126,6 +127,76 @@ pub fn build(b: *std.Build) void {
         }
 
         hot_step.dependOn(&watcher_cmd.step);
+    }
+
+    // =============================================================================
+    // Linux Native Builds
+    // =============================================================================
+
+    if (is_native_linux) {
+        // Create the gooey module for Linux
+        const mod = b.addModule("gooey", .{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+
+        // Link Linux system libraries
+        mod.linkSystemLibrary("wayland-client", .{});
+        mod.link_libc = true;
+
+        // Add shader embeds (same as WASM, shared WGSL shaders)
+        mod.addAnonymousImport("unified_wgsl", .{
+            .root_source_file = b.path("src/platform/wgpu/shaders/unified.wgsl"),
+        });
+        mod.addAnonymousImport("text_wgsl", .{
+            .root_source_file = b.path("src/platform/wgpu/shaders/text.wgsl"),
+        });
+
+        // =========================================================================
+        // Linux Demo (Showcase)
+        // =========================================================================
+
+        const exe = b.addExecutable(.{
+            .name = "gooey",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/linux_demo.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "gooey", .module = mod },
+                },
+            }),
+        });
+
+        // Link wgpu-native (must be installed or provided)
+        exe.root_module.linkSystemLibrary("wgpu_native", .{});
+        exe.root_module.linkSystemLibrary("wayland-client", .{});
+        exe.root_module.link_libc = true;
+
+        b.installArtifact(exe);
+
+        // Run step
+        const run_step = b.step("run", "Run the Linux demo");
+        const run_cmd = b.addRunArtifact(exe);
+        run_step.dependOn(&run_cmd.step);
+        run_cmd.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
+
+        // =====================================================================
+        // Tests
+        // =====================================================================
+
+        const mod_tests = b.addTest(.{
+            .root_module = mod,
+        });
+        const run_mod_tests = b.addRunArtifact(mod_tests);
+
+        const test_step = b.step("test", "Run tests");
+        test_step.dependOn(&run_mod_tests.step);
     }
 
     // =============================================================================

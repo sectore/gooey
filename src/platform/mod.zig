@@ -59,28 +59,37 @@ pub const time = @import("time.zig");
 // Backend Selection
 // =============================================================================
 
+pub const is_linux = builtin.os.tag == .linux;
+
 pub const backend = if (is_wasm)
     @import("wgpu/web/mod.zig")
 else switch (builtin.os.tag) {
     .macos => @import("mac/platform.zig"),
+    .linux => @import("linux/mod.zig"),
     else => @compileError("Unsupported platform: " ++ @tagName(builtin.os.tag)),
 };
 
 /// Platform type for the current OS (compile-time selected)
 pub const Platform = if (is_wasm)
     backend.WebPlatform
+else if (is_linux)
+    backend.LinuxPlatform
 else
     backend.MacPlatform;
 
 /// Window type for the current OS (compile-time selected)
 pub const Window = if (is_wasm)
     backend.WebWindow
+else if (is_linux)
+    backend.Window
 else
     @import("mac/window.zig").Window;
 
-/// DisplayLink for vsync (native only)
+/// DisplayLink for vsync (native only, not available on Linux)
 pub const DisplayLink = if (is_wasm)
     void // Not applicable on web
+else if (is_linux)
+    void // Linux uses Wayland frame callbacks
 else
     @import("mac/display_link.zig").DisplayLink;
 
@@ -88,12 +97,20 @@ else
 // Platform-specific modules (for advanced usage)
 // =============================================================================
 
-pub const mac = if (!is_wasm) struct {
+pub const mac = if (!is_wasm and !is_linux) struct {
     pub const platform = @import("mac/platform.zig");
     pub const window = @import("mac/window.zig");
     pub const display_link = @import("mac/display_link.zig");
     pub const appkit = @import("mac/appkit.zig");
     pub const metal = @import("mac/metal/metal.zig");
+} else struct {};
+
+pub const linux = if (is_linux) struct {
+    pub const platform = @import("linux/platform.zig");
+    pub const window = @import("linux/window.zig");
+    pub const renderer = @import("linux/renderer.zig");
+    pub const wayland = @import("linux/wayland.zig");
+    pub const wgpu = @import("linux/wgpu.zig");
 } else struct {};
 
 pub const web = if (is_wasm) struct {
