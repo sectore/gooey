@@ -64,7 +64,7 @@ pub fn renderFullPipeline(
         if (sp) |svg_pipe| {
             const svg_instances = scene.getSvgInstances();
             if (svg_instances.len > 0) {
-                svg_pipe.render(encoder, svg_instances, viewport_size);
+                try svg_pipe.render(encoder, svg_instances, viewport_size);
             }
         }
 

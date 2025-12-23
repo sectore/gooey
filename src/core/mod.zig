@@ -81,11 +81,6 @@ pub const GlyphInstance = scene.GlyphInstance;
 // =============================================================================
 
 pub const svg = @import("svg.zig");
-pub const tessellator = @import("tessellator.zig");
-pub const svg_mesh = @import("svg_mesh.zig");
-
-pub const SvgMesh = svg_mesh.SvgMesh;
-pub const SvgInstance = svg_mesh.SvgInstance;
 
 // =============================================================================
 // Render Bridge (layout -> scene conversion)

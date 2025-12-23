@@ -54,7 +54,7 @@ const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
 
 // Re-export for convenience
-pub const Color = @import("../layout/types.zig").Color;
+pub const Color = @import("../core/geometry.zig").Color;
 pub const ShadowConfig = @import("../layout/types.zig").ShadowConfig;
 
 // =============================================================================
@@ -366,12 +366,17 @@ pub const Empty = struct {
 
 /// SVG element descriptor - renders a pre-loaded SVG mesh
 pub const SvgPrimitive = struct {
-    /// Width of the SVG element (determines layout size)
+    path: []const u8,
+    /// Mesh ID (from svg_mesh.meshId())
+    mesh_id: u64 = 0,
+    /// Width of the SVG element
     width: f32 = 24,
-    /// Height of the SVG element (determines layout size)
+    /// Height of the SVG element
     height: f32 = 24,
-    /// Fill color for the SVG
+    /// Fill color
     color: Color = Color.black,
+    /// Source viewbox size (for proper scaling)
+    viewbox: f32 = 24,
 
     pub const primitive_type: PrimitiveType = .svg;
 };
@@ -413,8 +418,18 @@ pub fn spacerMin(min_size: f32) Spacer {
 }
 
 /// Create an SVG element with the given size and color
-pub fn svg(width: f32, height: f32, color: Color) SvgPrimitive {
-    return .{ .width = width, .height = height, .color = color };
+pub fn svg(mesh_id: u64, width: f32, height: f32, color: Color) SvgPrimitive {
+    return .{ .mesh_id = mesh_id, .width = width, .height = height, .color = color };
+}
+
+pub fn svgIcon(mesh_id: u64, width: f32, height: f32, color: Color, viewbox: f32) SvgPrimitive {
+    return .{
+        .mesh_id = mesh_id,
+        .width = width,
+        .height = height,
+        .color = color,
+        .viewbox = viewbox,
+    };
 }
 
 /// Set key context for dispatch (use inside box children)
@@ -524,7 +539,9 @@ pub const Builder = struct {
 
     const PendingSvg = struct {
         layout_id: LayoutId,
+        path: []const u8,
         color: Hsla,
+        viewbox: f32,
     };
 
     const Self = @This();
@@ -1422,7 +1439,9 @@ pub const Builder = struct {
         // Store for later rendering (after layout is computed)
         self.pending_svgs.append(self.allocator, .{
             .layout_id = layout_id,
+            .path = prim.path,
             .color = hsla,
+            .viewbox = prim.viewbox,
         }) catch {};
     }
 

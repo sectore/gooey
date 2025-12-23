@@ -23,8 +23,8 @@
 
 const std = @import("std");
 const geometry = @import("geometry.zig");
-const svg_mesh = @import("svg_mesh.zig");
-pub const SvgInstance = svg_mesh.SvgInstance;
+const svg_instance_mod = @import("svg_instance.zig");
+pub const SvgInstance = svg_instance_mod.SvgInstance;
 
 pub const DrawOrder = u32;
 
@@ -437,8 +437,7 @@ pub const Scene = struct {
 
     /// Insert an SVG instance without clipping
     pub fn insertSvg(self: *Self, instance: SvgInstance) !void {
-        var inst = instance;
-        inst.order = self.next_order;
+        const inst = instance;
         self.next_order += 1;
         try self.svg_instances.append(self.allocator, inst);
     }
@@ -446,8 +445,7 @@ pub const Scene = struct {
     /// Insert an SVG instance with the current clip mask applied
     pub fn insertSvgClipped(self: *Self, instance: SvgInstance) !void {
         const clip = self.currentClip();
-        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
-        inst.order = self.next_order;
+        const inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
         self.next_order += 1;
         try self.svg_instances.append(self.allocator, inst);
     }

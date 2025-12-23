@@ -77,6 +77,8 @@ pub const RadioGroup = components.RadioGroup;
 pub const RadioButton = components.RadioButton;
 pub const Tab = components.Tab;
 pub const TabBar = components.TabBar;
+pub const Svg = components.Svg;
+pub const Icons = components.Icons;
 
 // =============================================================================
 // App Entry Point (most common usage)

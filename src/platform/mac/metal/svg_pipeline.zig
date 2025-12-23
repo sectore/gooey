@@ -1,44 +1,41 @@
-//! SVG Pipeline - Metal rendering for tessellated SVG meshes
+//! SVG Pipeline - Metal rendering for atlas-cached SVG icons
 //!
-//! Renders SVG meshes as indexed triangle lists with instancing support.
-//! Each mesh can be drawn multiple times with different transforms/colors.
+//! Renders SVG icons as textured quads, sampling from an RGBA atlas.
+//! Structure mirrors TextPipeline for consistency.
 
 const std = @import("std");
 const objc = @import("objc");
 const mtl = @import("api.zig");
 const scene = @import("../../../core/scene.zig");
-const svg_mesh = @import("../../../core/svg_mesh.zig");
+const SvgInstance = @import("../../../core/svg_instance.zig").SvgInstance;
+const Atlas = @import("../../../text/atlas.zig").Atlas;
 
-/// Metal shader source for SVG rendering
 pub const svg_shader_source =
     \\#include <metal_stdlib>
     \\using namespace metal;
     \\
-    \\struct Vertex {
-    \\    float2 position;
-    \\};
-    \\
-    \\struct Instance {
-    \\    float offset_x;
-    \\    float offset_y;
-    \\    float scale_x;
-    \\    float scale_y;
-    \\    float4 color;       // HSLA
+    \\struct SvgInstance {
+    \\    float pos_x;
+    \\    float pos_y;
+    \\    float size_x;
+    \\    float size_y;
+    \\    float uv_left;
+    \\    float uv_top;
+    \\    float uv_right;
+    \\    float uv_bottom;
+    \\    float4 color;  // HSLA
     \\    float clip_x;
     \\    float clip_y;
     \\    float clip_width;
     \\    float clip_height;
-    \\    uint order;
-    \\    float _pad1;
-    \\    float _pad2;
-    \\    float _pad3;
     \\};
     \\
     \\struct VertexOut {
     \\    float4 position [[position]];
+    \\    float2 tex_coord;
     \\    float4 color;
-    \\    float2 screen_pos;
     \\    float4 clip_bounds;
+    \\    float2 screen_pos;
     \\};
     \\
     \\float4 hsla_to_rgba(float4 hsla) {
@@ -62,31 +59,34 @@ pub const svg_shader_source =
     \\vertex VertexOut svg_vertex(
     \\    uint vid [[vertex_id]],
     \\    uint iid [[instance_id]],
-    \\    constant Vertex* vertices [[buffer(0)]],
-    \\    constant Instance* instances [[buffer(1)]],
-    \\    constant float2* viewport_size [[buffer(2)]]
+    \\    constant float2 *unit_vertices [[buffer(0)]],
+    \\    constant SvgInstance *icons [[buffer(1)]],
+    \\    constant float2 *viewport_size [[buffer(2)]]
     \\) {
-    \\    Vertex v = vertices[vid];
-    \\    Instance inst = instances[iid];
+    \\    float2 unit = unit_vertices[vid];
+    \\    SvgInstance icon = icons[iid];
     \\
-    \\    // Apply transform
-    \\    float2 pos = float2(
-    \\        v.position.x * inst.scale_x + inst.offset_x,
-    \\        v.position.y * inst.scale_y + inst.offset_y
-    \\    );
-    \\
-    \\    // Convert to NDC
+    \\    float2 pos = float2(icon.pos_x, icon.pos_y) + unit * float2(icon.size_x, icon.size_y);
     \\    float2 ndc = pos / *viewport_size * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    \\
+    \\    float2 uv = float2(
+    \\        mix(icon.uv_left, icon.uv_right, unit.x),
+    \\        mix(icon.uv_top, icon.uv_bottom, unit.y)
+    \\    );
     \\
     \\    VertexOut out;
     \\    out.position = float4(ndc, 0.0, 1.0);
-    \\    out.color = hsla_to_rgba(inst.color);
+    \\    out.tex_coord = uv;
+    \\    out.color = hsla_to_rgba(icon.color);
+    \\    out.clip_bounds = float4(icon.clip_x, icon.clip_y, icon.clip_width, icon.clip_height);
     \\    out.screen_pos = pos;
-    \\    out.clip_bounds = float4(inst.clip_x, inst.clip_y, inst.clip_width, inst.clip_height);
     \\    return out;
     \\}
     \\
-    \\fragment float4 svg_fragment(VertexOut in [[stage_in]]) {
+    \\fragment float4 svg_fragment(
+    \\    VertexOut in [[stage_in]],
+    \\    texture2d<float> atlas [[texture(0)]]
+    \\) {
     \\    // Clip test
     \\    float2 clip_min = in.clip_bounds.xy;
     \\    float2 clip_max = clip_min + in.clip_bounds.zw;
@@ -94,201 +94,239 @@ pub const svg_shader_source =
     \\        in.screen_pos.y < clip_min.y || in.screen_pos.y > clip_max.y) {
     \\        discard_fragment();
     \\    }
-    \\    return in.color;
+    \\
+    \\    constexpr sampler s(mag_filter::linear, min_filter::linear);
+    \\    float alpha = atlas.sample(s, in.tex_coord).a;  // RGBA atlas, use alpha
+    \\    return float4(in.color.rgb, in.color.a * alpha);
     \\}
 ;
 
-/// SVG rendering pipeline
+pub const unit_vertices = [_][2]f32{
+    .{ 0.0, 0.0 },
+    .{ 1.0, 0.0 },
+    .{ 0.0, 1.0 },
+    .{ 1.0, 0.0 },
+    .{ 1.0, 1.0 },
+    .{ 0.0, 1.0 },
+};
+
+const FRAME_COUNT = 3;
+const INITIAL_CAPACITY = 256;
+
 pub const SvgPipeline = struct {
     device: objc.Object,
     pipeline_state: objc.Object,
-    vertex_buffer: ?objc.Object,
-    index_buffer: ?objc.Object,
-    vertex_count: usize,
-    index_count: usize,
+    unit_vertex_buffer: objc.Object,
+    instance_buffers: [FRAME_COUNT]objc.Object,
+    instance_capacities: [FRAME_COUNT]usize,
+    frame_index: usize,
 
-    pub fn init(device: objc.Object, sample_count: u32) !SvgPipeline {
+    // Atlas texture management
+    atlas_texture: ?objc.Object,
+    atlas_generation: u32,
+
+    // Atlas reference for current frame (set during prepareFrame)
+    current_atlas: ?*const Atlas,
+
+    allocator: std.mem.Allocator,
+
+    pub fn init(allocator: std.mem.Allocator, device: objc.Object, sample_count: u32) !SvgPipeline {
         const pipeline_state = try createPipeline(device, sample_count);
+
+        // Unit vertex buffer
+        const vert_ptr = device.msgSend(?*anyopaque, "newBufferWithBytes:length:options:", .{
+            @as(*const anyopaque, @ptrCast(&unit_vertices)),
+            @as(c_ulong, @sizeOf(@TypeOf(unit_vertices))),
+            @as(c_ulong, @bitCast(mtl.MTLResourceOptions{ .storage_mode = .shared })),
+        }) orelse return error.BufferCreationFailed;
+
+        // Instance buffers (triple-buffered)
+        var instance_buffers: [FRAME_COUNT]objc.Object = undefined;
+        var instance_capacities: [FRAME_COUNT]usize = undefined;
+        const instance_size = INITIAL_CAPACITY * @sizeOf(SvgInstance);
+
+        for (0..FRAME_COUNT) |i| {
+            const buf_ptr = device.msgSend(?*anyopaque, "newBufferWithLength:options:", .{
+                @as(c_ulong, instance_size),
+                @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+            }) orelse return error.BufferCreationFailed;
+            instance_buffers[i] = objc.Object.fromId(buf_ptr);
+            instance_capacities[i] = INITIAL_CAPACITY;
+        }
+
         return .{
             .device = device,
             .pipeline_state = pipeline_state,
-            .vertex_buffer = null,
-            .index_buffer = null,
-            .vertex_count = 0,
-            .index_count = 0,
+            .unit_vertex_buffer = objc.Object.fromId(vert_ptr),
+            .instance_buffers = instance_buffers,
+            .instance_capacities = instance_capacities,
+            .frame_index = 0,
+            .atlas_texture = null,
+            .atlas_generation = 0,
+            .current_atlas = null,
+            .allocator = allocator,
         };
     }
 
     pub fn deinit(self: *SvgPipeline) void {
         self.pipeline_state.msgSend(void, "release", .{});
-        if (self.vertex_buffer) |buf| buf.msgSend(void, "release", .{});
-        if (self.index_buffer) |buf| buf.msgSend(void, "release", .{});
+        self.unit_vertex_buffer.msgSend(void, "release", .{});
+        for (&self.instance_buffers) |buf| buf.msgSend(void, "release", .{});
+        if (self.atlas_texture) |tex| tex.msgSend(void, "release", .{});
     }
 
-    /// Upload mesh data to GPU buffers
-    pub fn uploadMesh(self: *SvgPipeline, mesh: *const svg_mesh.SvgMesh) !void {
-        // Release old buffers
-        if (self.vertex_buffer) |buf| buf.msgSend(void, "release", .{});
-        if (self.index_buffer) |buf| buf.msgSend(void, "release", .{});
-
-        // Create vertex buffer
-        const vert_size = mesh.vertices.len * @sizeOf(svg_mesh.Vec2);
-        const vert_ptr = self.device.msgSend(
-            ?*anyopaque,
-            "newBufferWithBytes:length:options:",
-            .{
-                @as(*const anyopaque, @ptrCast(mesh.vertices.ptr)),
-                @as(c_ulong, vert_size),
-                @as(c_ulong, @bitCast(mtl.MTLResourceOptions{ .storage_mode = .shared })),
-            },
-        );
-        if (vert_ptr == null) return error.BufferCreationFailed;
-        self.vertex_buffer = objc.Object.fromId(vert_ptr);
-        self.vertex_count = mesh.vertices.len;
-
-        // Create index buffer
-        const idx_size = mesh.indices.len * @sizeOf(u16);
-        const idx_ptr = self.device.msgSend(
-            ?*anyopaque,
-            "newBufferWithBytes:length:options:",
-            .{
-                @as(*const anyopaque, @ptrCast(mesh.indices.ptr)),
-                @as(c_ulong, idx_size),
-                @as(c_ulong, @bitCast(mtl.MTLResourceOptions{ .storage_mode = .shared })),
-            },
-        );
-        if (idx_ptr == null) return error.BufferCreationFailed;
-        self.index_buffer = objc.Object.fromId(idx_ptr);
-        self.index_count = mesh.indices.len;
+    /// Call at start of frame to bind atlas reference
+    pub fn prepareFrame(self: *SvgPipeline, atlas: *const Atlas) void {
+        self.current_atlas = atlas;
     }
 
-    /// Render the mesh with given instances
     pub fn render(
         self: *SvgPipeline,
         encoder: objc.Object,
-        instances: []const svg_mesh.SvgInstance,
+        instances: []const SvgInstance,
         viewport_size: [2]f32,
-    ) void {
-        std.debug.print("SVG render called: {} instances, vbuf={}, ibuf={}, idx_count={}\n", .{
-            instances.len,
-            self.vertex_buffer != null,
-            self.index_buffer != null,
-            self.index_count,
-        });
-        if (self.vertex_buffer == null or self.index_buffer == null) return;
+    ) !void {
         if (instances.len == 0) return;
 
+        const atlas = self.current_atlas orelse return;
+
+        // Update atlas texture if needed
+        try self.updateAtlasTexture(atlas);
+
+        const idx = self.frame_index;
+        self.frame_index = (self.frame_index + 1) % FRAME_COUNT;
+
+        // Grow buffer if needed
+        if (instances.len > self.instance_capacities[idx]) {
+            try self.growInstanceBuffer(idx, instances.len);
+        }
+
+        // Upload instances
+        const buffer_ptr = self.instance_buffers[idx].msgSend(*anyopaque, "contents", .{});
+        const dest: [*]SvgInstance = @ptrCast(@alignCast(buffer_ptr));
+        @memcpy(dest[0..instances.len], instances);
+
+        // Bind pipeline
         encoder.msgSend(void, "setRenderPipelineState:", .{self.pipeline_state.value});
-
-        // Vertex buffer
-        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
-            self.vertex_buffer.?.value,
-            @as(c_ulong, 0),
-            @as(c_ulong, 0),
-        });
-
-        // Instance data
-        encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
-            @as(*const anyopaque, @ptrCast(instances.ptr)),
-            @as(c_ulong, instances.len * @sizeOf(svg_mesh.SvgInstance)),
-            @as(c_ulong, 1),
-        });
-
-        // Viewport size
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ self.unit_vertex_buffer.value, @as(c_ulong, 0), @as(c_ulong, 0) });
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ self.instance_buffers[idx].value, @as(c_ulong, 0), @as(c_ulong, 1) });
         encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
             @as(*const anyopaque, @ptrCast(&viewport_size)),
             @as(c_ulong, @sizeOf([2]f32)),
             @as(c_ulong, 2),
         });
 
-        // Draw indexed triangles with instancing
-        encoder.msgSend(void, "drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:", .{
+        // Bind atlas texture
+        if (self.atlas_texture) |tex| {
+            encoder.msgSend(void, "setFragmentTexture:atIndex:", .{ tex.value, @as(c_ulong, 0) });
+        }
+
+        // Draw
+        encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{
             @intFromEnum(mtl.MTLPrimitiveType.triangle),
-            @as(c_ulong, self.index_count),
-            @intFromEnum(mtl.MTLIndexType.uint16),
-            self.index_buffer.?.value,
             @as(c_ulong, 0),
+            @as(c_ulong, 6),
             @as(c_ulong, instances.len),
         });
+    }
 
-        std.debug.print("SVG draw call issued: {} triangles, {} instances\n", .{
-            self.index_count / 3,
-            instances.len,
+    fn updateAtlasTexture(self: *SvgPipeline, atlas: *const Atlas) !void {
+        if (self.atlas_generation == atlas.generation and self.atlas_texture != null) {
+            return;
+        }
+
+        // Release old texture
+        if (self.atlas_texture) |tex| {
+            tex.msgSend(void, "release", .{});
+            self.atlas_texture = null;
+        }
+
+        // Create texture descriptor
+        const MTLTextureDescriptor = objc.getClass("MTLTextureDescriptor") orelse return error.ClassNotFound;
+        const desc = MTLTextureDescriptor.msgSend(objc.Object, "texture2DDescriptorWithPixelFormat:width:height:mipmapped:", .{
+            @intFromEnum(mtl.MTLPixelFormat.rgba8unorm),
+            @as(c_ulong, atlas.size),
+            @as(c_ulong, atlas.size),
+            false,
         });
+        desc.msgSend(void, "setUsage:", .{@as(c_ulong, 0x01)}); // ShaderRead
+
+        const tex_ptr = self.device.msgSend(?*anyopaque, "newTextureWithDescriptor:", .{desc.value}) orelse
+            return error.TextureCreationFailed;
+        const texture = objc.Object.fromId(tex_ptr);
+
+        // Upload atlas data
+        const region = mtl.MTLRegion{
+            .origin = .{ .x = 0, .y = 0, .z = 0 },
+            .size = .{ .width = atlas.size, .height = atlas.size, .depth = 1 },
+        };
+        texture.msgSend(void, "replaceRegion:mipmapLevel:withBytes:bytesPerRow:", .{
+            region,
+            @as(c_ulong, 0),
+            @as(*const anyopaque, @ptrCast(atlas.data.ptr)),
+            @as(c_ulong, atlas.size * 4), // RGBA = 4 bytes per pixel
+        });
+
+        self.atlas_texture = texture;
+        self.atlas_generation = atlas.generation;
+    }
+
+    fn growInstanceBuffer(self: *SvgPipeline, idx: usize, min_capacity: usize) !void {
+        const new_capacity = @max(min_capacity, self.instance_capacities[idx] * 2);
+        const new_size = new_capacity * @sizeOf(SvgInstance);
+
+        const new_ptr = self.device.msgSend(?*anyopaque, "newBufferWithLength:options:", .{
+            @as(c_ulong, new_size),
+            @as(c_ulong, @bitCast(mtl.MTLResourceOptions.storage_shared)),
+        }) orelse return error.BufferCreationFailed;
+
+        self.instance_buffers[idx].msgSend(void, "release", .{});
+        self.instance_buffers[idx] = objc.Object.fromId(new_ptr);
+        self.instance_capacities[idx] = new_capacity;
     }
 };
 
 fn createPipeline(device: objc.Object, sample_count: u32) !objc.Object {
     const NSString = objc.getClass("NSString") orelse return error.ClassNotFound;
-    const source_str = NSString.msgSend(
-        objc.Object,
-        "stringWithUTF8String:",
-        .{svg_shader_source.ptr},
-    );
+    const source_str = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{svg_shader_source.ptr});
 
     var compile_error: ?*anyopaque = null;
-    const library_ptr = device.msgSend(
-        ?*anyopaque,
-        "newLibraryWithSource:options:error:",
-        .{ source_str.value, @as(?*anyopaque, null), &compile_error },
-    );
-    if (library_ptr == null) {
-        if (compile_error) |err| {
-            const err_obj = objc.Object.fromId(err);
-            const desc = err_obj.msgSend(objc.Object, "localizedDescription", .{});
-            const cstr = desc.msgSend([*:0]const u8, "UTF8String", .{});
-            std.debug.print("SVG shader compilation error: {s}\n", .{cstr});
-        }
-        return error.ShaderCompilationFailed;
-    }
+    const library_ptr = device.msgSend(?*anyopaque, "newLibraryWithSource:options:error:", .{
+        source_str.value, @as(?*anyopaque, null), &compile_error,
+    });
+    if (library_ptr == null) return error.ShaderCompilationFailed;
 
     const library = objc.Object.fromId(library_ptr);
     defer library.msgSend(void, "release", .{});
 
-    const vertex_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"svg_vertex"});
-    const fragment_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"svg_fragment"});
+    const vert_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"svg_vertex"});
+    const frag_name = NSString.msgSend(objc.Object, "stringWithUTF8String:", .{"svg_fragment"});
 
-    const vertex_fn_ptr = library.msgSend(?*anyopaque, "newFunctionWithName:", .{vertex_name.value});
-    const fragment_fn_ptr = library.msgSend(?*anyopaque, "newFunctionWithName:", .{fragment_name.value});
+    const vert_fn = objc.Object.fromId(library.msgSend(?*anyopaque, "newFunctionWithName:", .{vert_name.value}) orelse return error.ShaderFunctionNotFound);
+    const frag_fn = objc.Object.fromId(library.msgSend(?*anyopaque, "newFunctionWithName:", .{frag_name.value}) orelse return error.ShaderFunctionNotFound);
+    defer vert_fn.msgSend(void, "release", .{});
+    defer frag_fn.msgSend(void, "release", .{});
 
-    if (vertex_fn_ptr == null or fragment_fn_ptr == null) {
-        return error.ShaderFunctionNotFound;
-    }
-    const vertex_fn = objc.Object.fromId(vertex_fn_ptr);
-    const fragment_fn = objc.Object.fromId(fragment_fn_ptr);
-    defer vertex_fn.msgSend(void, "release", .{});
-    defer fragment_fn.msgSend(void, "release", .{});
-
-    const MTLRenderPipelineDescriptor = objc.getClass("MTLRenderPipelineDescriptor") orelse
-        return error.ClassNotFound;
-    const desc = MTLRenderPipelineDescriptor.msgSend(objc.Object, "alloc", .{})
-        .msgSend(objc.Object, "init", .{});
+    const MTLRenderPipelineDescriptor = objc.getClass("MTLRenderPipelineDescriptor") orelse return error.ClassNotFound;
+    const desc = MTLRenderPipelineDescriptor.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
     defer desc.msgSend(void, "release", .{});
 
-    desc.msgSend(void, "setVertexFunction:", .{vertex_fn.value});
-    desc.msgSend(void, "setFragmentFunction:", .{fragment_fn.value});
+    desc.msgSend(void, "setVertexFunction:", .{vert_fn.value});
+    desc.msgSend(void, "setFragmentFunction:", .{frag_fn.value});
     desc.msgSend(void, "setSampleCount:", .{@as(c_ulong, sample_count)});
 
-    const color_attachments = desc.msgSend(objc.Object, "colorAttachments", .{});
-    const attachment0 = color_attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+    const attachments = desc.msgSend(objc.Object, "colorAttachments", .{});
+    const attach0 = attachments.msgSend(objc.Object, "objectAtIndexedSubscript:", .{@as(c_ulong, 0)});
+    attach0.msgSend(void, "setPixelFormat:", .{@intFromEnum(mtl.MTLPixelFormat.bgra8unorm)});
+    attach0.msgSend(void, "setBlendingEnabled:", .{true});
+    attach0.msgSend(void, "setSourceRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.source_alpha)});
+    attach0.msgSend(void, "setDestinationRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
+    attach0.msgSend(void, "setSourceAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one)});
+    attach0.msgSend(void, "setDestinationAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
 
-    // Configure blending
-    attachment0.msgSend(void, "setPixelFormat:", .{@intFromEnum(mtl.MTLPixelFormat.bgra8unorm)});
-    attachment0.msgSend(void, "setBlendingEnabled:", .{true});
-    attachment0.msgSend(void, "setSourceRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.source_alpha)});
-    attachment0.msgSend(void, "setDestinationRGBBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
-    attachment0.msgSend(void, "setSourceAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one)});
-    attachment0.msgSend(void, "setDestinationAlphaBlendFactor:", .{@intFromEnum(mtl.MTLBlendFactor.one_minus_source_alpha)});
+    const pipeline_ptr = device.msgSend(?*anyopaque, "newRenderPipelineStateWithDescriptor:error:", .{
+        desc.value, @as(?*anyopaque, null),
+    }) orelse return error.PipelineCreationFailed;
 
-    const pipeline_ptr = device.msgSend(
-        ?*anyopaque,
-        "newRenderPipelineStateWithDescriptor:error:",
-        .{ desc.value, @as(?*anyopaque, null) },
-    );
-    if (pipeline_ptr == null) {
-        return error.PipelineCreationFailed;
-    }
-
-    std.debug.print("SVG pipeline created successfully\n", .{});
     return objc.Object.fromId(pipeline_ptr);
 }

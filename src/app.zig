@@ -43,6 +43,7 @@ const geometry_mod = @import("core/geometry.zig");
 const shader_mod = @import("core/shader.zig");
 const ui_mod = @import("ui/ui.zig");
 const dispatch_mod = @import("core/dispatch.zig");
+const svg_instance_mod = @import("core/svg_instance.zig");
 const scroll_mod = @import("widgets/scroll_container.zig");
 const text_input_mod = @import("widgets/text_input.zig");
 const text_area_mod = @import("widgets/text_area.zig");
@@ -227,6 +228,7 @@ pub fn runCx(
     window.setRenderCallback(CallbackState.onRender);
     window.setInputCallback(CallbackState.onInput);
     window.setTextAtlas(gooey_ctx.text_system.getAtlas());
+    window.setSvgAtlas(gooey_ctx.svg_atlas.getAtlas());
     window.setScene(gooey_ctx.scene);
 
     // Run the event loop
@@ -271,19 +273,45 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
         try renderCommand(cx.gooey(), cmd);
     }
 
-    // Render pending SVGs (after scene is built)
+    // Render pending SVGs (after layout is computed)
     const pending_svgs = cx.builder().getPendingSvgs();
     for (pending_svgs) |pending| {
         const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
         if (bounds) |b| {
-            const svg_mesh_mod = @import("core/svg_mesh.zig");
-            try cx.gooey().scene.insertSvgClipped(svg_mesh_mod.SvgInstance{
-                .offset_x = b.x,
-                .offset_y = b.y,
-                .scale_x = b.width / 24.0, // Assuming 24x24 viewbox - TODO: get from mesh
-                .scale_y = b.height / 24.0,
-                .color = pending.color,
-            });
+            const scale_factor = cx.gooey().scale_factor;
+
+            // Get from atlas (rasterizes if not cached)
+            const cached = try cx.gooey().svg_atlas.getOrRasterize(
+                pending.path,
+                pending.viewbox,
+                @max(b.width, b.height), // Use larger dimension for size
+            );
+
+            if (cached.region.width == 0) continue;
+
+            // Get UV coordinates
+            const atlas = cx.gooey().svg_atlas.getAtlas();
+            const uv = cached.region.uv(atlas.size);
+
+            // Snap to device pixel grid (like text rendering)
+            const device_x = b.x * scale_factor;
+            const device_y = b.y * scale_factor;
+            const snapped_x = @floor(device_x) / scale_factor;
+            const snapped_y = @floor(device_y) / scale_factor;
+
+            const instance = svg_instance_mod.SvgInstance.init(
+                snapped_x,
+                snapped_y,
+                b.width,
+                b.height,
+                uv.u0,
+                uv.v0,
+                uv.u1,
+                uv.v1,
+                pending.color,
+            );
+
+            try cx.gooey().scene.insertSvgClipped(instance);
         }
     }
 

@@ -26,10 +26,8 @@ const Tab = gooey.Tab;
 const RadioButton = gooey.RadioButton;
 const RadioGroup = gooey.RadioGroup;
 const ProgressBar = gooey.ProgressBar;
-// SVG support
-const svg_mesh = gooey.svg_mesh;
-const SvgInstance = gooey.SvgInstance;
-const Hsla = gooey.Hsla;
+const Svg = gooey.Svg;
+const Icons = gooey.Icons;
 
 // =============================================================================
 // Theme
@@ -80,10 +78,6 @@ const AppState = struct {
     theme: *const Theme = &Theme.light,
     is_dark: bool = false,
 
-    // Star icon path (Material Design)
-    star_mesh: ?svg_mesh.SvgMesh = null,
-    svg_uploaded: bool = false,
-
     // Form state
     name: []const u8 = "",
     email: []const u8 = "",
@@ -110,12 +104,6 @@ const AppState = struct {
 
     // Layout demo state
     completed_tasks: [3]bool = .{ false, true, false },
-
-    pub fn deinitSvg(self: *AppState) void {
-        if (self.star_mesh) |*m| m.deinit();
-        self.star_mesh = null;
-        self.svg_uploaded = false;
-    }
 
     // =========================================================================
     // PURE methods - fn(*State) or fn(*State, Arg)
@@ -277,7 +265,6 @@ comptime {
 const platform = gooey.platform;
 pub fn main() !void {
     if (platform.is_wasm) unreachable;
-    defer app_state.deinitSvg();
     return App.main();
 }
 
@@ -376,8 +363,8 @@ const NavTabs = struct {
 
 const HomePage = struct {
     pub fn render(_: @This(), cx: *Cx) void {
-        const t = cx.state(AppState).theme;
         const s = cx.state(AppState);
+        const t = s.theme;
 
         cx.box(.{
             .padding = .{ .all = 32 },
@@ -388,8 +375,7 @@ const HomePage = struct {
         }, .{
             ui.text("Welcome to Gooey", .{ .size = 32, .color = t.text }),
             ui.text("A GPU-accelerated UI framework for Zig", .{ .size = 16, .color = t.muted }),
-            // SVG stars row (only if uploaded)
-            SvgStarsRow{ .show = s.svg_uploaded },
+            SvgRow{},
             StatsRow{},
             ButtonRow{},
             ui.text("Use arrow keys or [1-4] to navigate", .{ .size = 12, .color = t.muted }),
@@ -397,19 +383,13 @@ const HomePage = struct {
     }
 };
 
-const SvgStarsRow = struct {
-    show: bool,
-
-    pub fn render(self: @This(), cx: *Cx) void {
-        if (!self.show) return;
-
-        cx.box(.{ .direction = .row, .gap = 8, .alignment = .{ .cross = .center } }, .{
-            // Gold star (48x48)
-            ui.svg(48, 48, ui.Color.rgb(1.0, 0.84, 0.0)),
-            // Red star (36x36)
-            ui.svg(36, 36, ui.Color.rgb(0.9, 0.2, 0.2)),
-            // Blue star (24x24)
-            ui.svg(24, 24, ui.Color.rgb(0.2, 0.4, 0.9)),
+const SvgRow = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        cx.hstack(.{ .gap = 16, .alignment = .center }, .{
+            // Using built-in icons
+            Svg{ .path = Icons.star_outline, .size = 24, .color = gooey.Color.blue },
+            Svg{ .path = Icons.star_outline, .size = 32, .color = gooey.Color.red },
+            Svg{ .path = Icons.star_outline, .size = 24, .color = gooey.Color.green },
         });
     }
 };
@@ -941,36 +921,6 @@ fn render(cx: *Cx) void {
     const t = s.theme;
     const size = cx.windowSize();
     const g = cx.gooey();
-
-    // === SVG Setup (runs once) ===
-    if (!s.svg_uploaded) {
-        // Load mesh if not loaded
-        if (s.star_mesh == null) {
-            s.star_mesh = svg_mesh.loadFromPathData(
-                std.heap.page_allocator,
-                star_path,
-            ) catch |err| blk: {
-                std.debug.print("Failed to load SVG: {}\n", .{err});
-                break :blk null;
-            };
-
-            if (s.star_mesh) |m| {
-                std.debug.print("Star mesh: {} verts, {} tris\n", .{
-                    m.vertexCount(),
-                    m.triangleCount(),
-                });
-            }
-        }
-
-        // Upload to GPU
-        if (s.star_mesh) |*m| {
-            cx.gooey().uploadSvgMesh(m) catch |err| {
-                std.debug.print("Failed to upload SVG: {}\n", .{err});
-            };
-            s.svg_uploaded = true;
-            std.debug.print("SVG uploaded to GPU!\n", .{});
-        }
-    }
 
     // Initialize form focus on first render of forms page
     if (s.page == .forms and !s.form_initialized) {

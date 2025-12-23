@@ -36,6 +36,7 @@ pub const Window = struct {
     needs_render: std.atomic.Value(bool),
     scene: ?*const scene_mod.Scene,
     text_atlas: ?*const Atlas = null,
+    svg_atlas: ?*const Atlas = null,
     delegate: ?objc.Object = null,
     // Custom shader animation flag
     custom_shader_animation: bool,
@@ -105,6 +106,14 @@ pub const Window = struct {
             .glass_regular, .glass_clear, .blur => geometry.Color.transparent,
             .none => self.background_color,
         };
+    }
+
+    pub fn setSvgAtlas(self: *Self, atlas: *const Atlas) void {
+        if (!self.render_in_progress.load(.acquire)) {
+            self.render_mutex.lock();
+            defer self.render_mutex.unlock();
+        }
+        self.svg_atlas = atlas;
     }
 
     /// Window width in logical pixels
@@ -520,6 +529,9 @@ pub const Window = struct {
             if (self.text_atlas) |atlas| {
                 self.renderer.updateTextAtlas(atlas) catch {};
             }
+            if (self.svg_atlas) |atlas| {
+                self.renderer.prepareSvgAtlas(atlas);
+            }
 
             if (self.scene) |s| {
                 self.renderer.renderSceneSynchronous(s, self.getClearColor()) catch {};
@@ -567,15 +579,6 @@ pub const Window = struct {
     /// Manual render (for when display link is disabled)
     pub fn render(self: *Self) void {
         self.renderer.clear(self.getClearColor());
-    }
-
-    /// Upload an SVG mesh to GPU for rendering
-    pub fn uploadSvgMesh(self: *Self, mesh: *const @import("../../core/svg_mesh.zig").SvgMesh) !void {
-        if (self.renderer.svg_pipeline_state) |*sp| {
-            try sp.uploadMesh(mesh);
-        } else {
-            return error.SvgPipelineNotInitialized;
-        }
     }
 
     pub fn setTitle(self: *Self, new_title: []const u8) void {
@@ -1000,6 +1003,11 @@ fn displayLinkCallback(
     // Update text atlas if set
     if (window.text_atlas) |atlas| {
         window.renderer.updateTextAtlas(atlas) catch {};
+    }
+
+    // Update SVG atlas if set
+    if (window.svg_atlas) |atlas| {
+        window.renderer.prepareSvgAtlas(atlas);
     }
 
     // Use post-process rendering if shaders are active

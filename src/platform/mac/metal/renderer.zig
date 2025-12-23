@@ -5,7 +5,6 @@ const objc = @import("objc");
 
 const geometry = @import("../../../core/geometry.zig");
 const scene_mod = @import("../../../core/scene.zig");
-const svg_mesh = @import("../../../core/svg_mesh.zig");
 const mtl = @import("api.zig");
 const pipelines = @import("pipelines.zig");
 const render_pass = @import("render_pass.zig");
@@ -99,7 +98,7 @@ pub const Renderer = struct {
         ) catch null;
 
         // Initialize SVG pipeline
-        self.svg_pipeline_state = svg_pipeline.SvgPipeline.init(device, sample_count) catch null;
+        self.svg_pipeline_state = svg_pipeline.SvgPipeline.init(self.allocator, device, @intCast(sample_count)) catch null;
 
         return self;
     }
@@ -181,13 +180,6 @@ pub const Renderer = struct {
         self.post_process_state = custom_shader.PostProcessState.init(self.allocator, self.device);
     }
 
-    /// Upload an SVG mesh to GPU for rendering
-    pub fn uploadSvgMesh(self: *Self, mesh: *const svg_mesh.SvgMesh) !void {
-        if (self.svg_pipeline_state) |*sp| {
-            try sp.uploadMesh(mesh);
-        }
-    }
-
     pub fn addCustomShader(self: *Self, shader_source: []const u8, name: []const u8) !void {
         if (self.post_process_state == null) try self.initPostProcess();
         try self.post_process_state.?.addShader(shader_source, name, mtl.MTLPixelFormat.bgra8unorm, 1);
@@ -223,6 +215,12 @@ pub const Renderer = struct {
 
     pub fn updateTextAtlas(self: *Self, atlas: *const Atlas) !void {
         if (self.text_pipeline_state) |*tp| try tp.updateAtlas(atlas);
+    }
+
+    pub fn prepareSvgAtlas(self: *Self, atlas: *const Atlas) void {
+        if (self.svg_pipeline_state) |*sp| {
+            sp.prepareFrame(atlas);
+        }
     }
 
     pub fn setScissor(encoder: objc.Object, rect: ScissorRect) void {
@@ -303,7 +301,7 @@ pub const Renderer = struct {
 
         if (self.svg_pipeline_state) |*sp| {
             if (svg_instances.len > 0) {
-                sp.render(encoder, svg_instances, viewport_size);
+                try sp.render(encoder, svg_instances, viewport_size);
             }
         }
 

@@ -7,7 +7,6 @@ const std = @import("std");
 const objc = @import("objc");
 const mtl = @import("api.zig");
 const scene_mod = @import("../../../core/scene.zig");
-const svg_mesh = @import("../../../core/svg_mesh.zig");
 const text_pipeline = @import("text.zig");
 const render_stats = @import("../../../core/render_stats.zig");
 const unified = @import("unified.zig");
