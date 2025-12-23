@@ -100,8 +100,10 @@ pub const svg_shader_source =
     \\
     \\    constexpr sampler s(mag_filter::linear, min_filter::linear);
     \\    float4 sample = atlas.sample(s, in.tex_coord);
-    \\    float fill_alpha = sample.r;    // Fill mask in R channel
-    \\    float stroke_alpha = sample.g;  // Stroke mask in G channel
+    \\
+    \\    // Threshold to eliminate linear filtering bleed between channels
+    \\    float fill_alpha = sample.r > 0.02 ? sample.r : 0.0;
+    \\    float stroke_alpha = sample.g > 0.02 ? sample.g : 0.0;
     \\
     \\    // Composite: stroke shows only where fill isn't
     \\    float visible_stroke = stroke_alpha * (1.0 - fill_alpha);

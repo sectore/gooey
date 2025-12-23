@@ -398,7 +398,13 @@ const SvgRow = struct {
 
             cx.hstack(.{ .gap = 16, .alignment = .center }, .{
                 // Filled icons (original behavior)
-                Svg{ .path = Icons.star, .size = 32, .color = ui.Color.gold },
+                Svg{
+                    .path = Icons.arrow_back,
+                    .size = 24,
+                    .color = null, // no fill (Lucide uses fill="none")
+                    .stroke_color = t.text,
+                    .stroke_width = 1.5,
+                },
                 Svg{ .path = Icons.favorite, .size = 32, .color = ui.Color.red },
                 Svg{ .path = Icons.check, .size = 32, .color = t.accent },
                 // Stroke-only icons (new!)

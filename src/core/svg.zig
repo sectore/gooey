@@ -492,25 +492,30 @@ pub const PathParser = struct {
 
         const start = self.pos;
         var has_dot = false;
+        var has_digits = false;
 
-        // Handle negative sign
-        if (self.peek() == '-') {
+        // Handle leading negative sign
+        if (self.peek() == '-' or self.peek() == '+') {
             self.advance();
         }
 
         while (!self.atEnd()) {
             const c = self.peek();
             if (std.ascii.isDigit(c)) {
+                has_digits = true;
                 self.advance();
             } else if (c == '.' and !has_dot) {
                 has_dot = true;
                 self.advance();
+            } else if ((c == '-' or c == '+') and has_digits) {
+                // A sign after digits means new number starts - stop here
+                break;
             } else {
                 break;
             }
         }
 
-        if (self.pos == start) return error.ExpectedNumber;
+        if (self.pos == start or !has_digits) return error.ExpectedNumber;
         return std.fmt.parseFloat(f32, self.src[start..self.pos]) catch error.InvalidNumber;
     }
 
@@ -933,4 +938,34 @@ test "flatten arc" {
     const last = points.items[points.items.len - 1];
     try std.testing.expect(@abs(last.x - 100) < 0.1);
     try std.testing.expect(@abs(last.y - 0) < 0.1);
+}
+
+test "parse lucide arrow path" {
+    const allocator = std.testing.allocator;
+    var parser = PathParser.init(allocator);
+    var path = SvgPath.init(allocator);
+    defer path.deinit();
+
+    // Lucide arrow-left: "m12 19-7-7 7-7 M19 12H5"
+    try parser.parse(&path, "m12 19-7-7 7-7");
+
+    // Should have: move_to_rel, line_to_rel, line_to_rel
+    std.debug.print("\nCommands: {}\n", .{path.commands.items.len});
+    for (path.commands.items) |cmd| {
+        std.debug.print("  cmd: {}\n", .{cmd});
+    }
+    std.debug.print("Data: {}\n", .{path.data.items.len});
+    for (path.data.items) |d| {
+        std.debug.print("  {d:.1}\n", .{d});
+    }
+
+    try std.testing.expectEqual(@as(usize, 3), path.commands.items.len);
+    try std.testing.expectEqual(PathCommand.move_to_rel, path.commands.items[0]);
+    try std.testing.expectEqual(PathCommand.line_to_rel, path.commands.items[1]);
+    try std.testing.expectEqual(PathCommand.line_to_rel, path.commands.items[2]);
+
+    // Data should be: 12, 19, -7, -7, 7, -7
+    try std.testing.expectEqual(@as(usize, 6), path.data.items.len);
+    try std.testing.expectApproxEqAbs(@as(f32, -7), path.data.items[2], 0.01);
+    try std.testing.expectApproxEqAbs(@as(f32, -7), path.data.items[3], 0.01);
 }
