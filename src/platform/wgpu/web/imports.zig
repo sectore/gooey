@@ -285,3 +285,10 @@ pub extern "env" fn beginMSAARenderPass(
 
 /// Get the current MSAA sample count (4 if supported, 1 otherwise)
 pub extern "env" fn getMSAASampleCount() u32;
+
+// =============================================================================
+// Clipboard
+// =============================================================================
+
+/// Write text to clipboard. Fire-and-forget from WASM side (async in JS).
+pub extern "env" fn clipboardWriteText(ptr: [*]const u8, len: u32) void;

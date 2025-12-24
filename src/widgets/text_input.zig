@@ -28,6 +28,8 @@ const platform = @import("../platform/mod.zig");
 // Clipboard support (platform-specific)
 const clipboard = if (builtin.os.tag == .macos)
     @import("../platform/mac/clipboard.zig")
+else if (builtin.os.tag == .freestanding and builtin.cpu.arch == .wasm32)
+    @import("../platform/wgpu/web/clipboard.zig")
 else
     struct {
         pub fn getText(_: std.mem.Allocator) ?[]const u8 {

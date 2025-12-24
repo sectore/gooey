@@ -552,6 +552,15 @@
           }
         });
 
+        // Handle paste events - capture clipboard text synchronously
+        hiddenInput.addEventListener("paste", (e) => {
+          e.preventDefault();
+          const text = e.clipboardData?.getData("text");
+          if (text) {
+            appendText(text);
+          }
+        });
+
         // Forward key events from hidden input to canvas logic
         hiddenInput.addEventListener("keydown", (e) => {
           handleKeyDown(e);
@@ -636,7 +645,11 @@
         ];
 
         if (dominated.includes(e.code)) return true;
-        if (e.metaKey || e.ctrlKey) return true; // Shortcuts
+
+        // Allow Cmd/Ctrl+V through so browser paste event fires
+        if ((e.metaKey || e.ctrlKey) && e.code === "KeyV") return false;
+
+        if (e.metaKey || e.ctrlKey) return true; // Other shortcuts
 
         return false;
       }
@@ -1676,6 +1689,14 @@
           }
           // Note: This would need a blit operation or render pass
           // For now, we use render-to-texture approach instead
+        },
+
+        // Clipboard - write text (fire and forget, async in JS)
+        clipboardWriteText: (ptr, len) => {
+          const text = getString(ptr, len);
+          navigator.clipboard.writeText(text).catch((err) => {
+            console.warn("[Gooey] Clipboard write failed:", err);
+          });
         },
       };
 
