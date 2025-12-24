@@ -7,6 +7,7 @@ const std = @import("std");
 const imports = @import("imports.zig");
 const unified = @import("../unified.zig");
 const scene_mod = @import("../../../core/scene.zig");
+const batch_iter = @import("../../../core/batch_iterator.zig");
 const text_mod = @import("../../../text/mod.zig");
 const svg_mod = @import("../../../svg/mod.zig");
 const custom_shader = @import("custom_shader.zig");
@@ -143,6 +144,15 @@ comptime {
 // WebRenderer
 // =============================================================================
 
+/// Batch descriptor for deferred rendering
+const BatchDesc = struct {
+    kind: batch_iter.PrimitiveKind,
+    start: u32,
+    count: u32,
+};
+
+const MAX_BATCHES: u32 = 256;
+
 pub const WebRenderer = struct {
     allocator: std.mem.Allocator,
 
@@ -182,6 +192,9 @@ pub const WebRenderer = struct {
 
     // Post-processing state for custom shaders
     post_process_state: ?PostProcessState = null,
+
+    // Batch descriptors for deferred rendering
+    batches: [MAX_BATCHES]BatchDesc = undefined,
 
     const Self = @This();
 
@@ -376,56 +389,9 @@ pub const WebRenderer = struct {
     ) void {
         if (!self.initialized) return;
 
-        // Convert scene data to GPU format
-        const prim_count = unified.convertScene(scene, &self.primitives);
-
-        var glyph_count: u32 = 0;
-        for (scene.getGlyphs()) |g| {
-            if (glyph_count >= MAX_GLYPHS) break;
-            self.gpu_glyphs[glyph_count] = GpuGlyph.fromScene(g);
-            glyph_count += 1;
-        }
-
-        var svg_count: u32 = 0;
-        for (scene.getSvgInstances()) |s| {
-            if (svg_count >= MAX_SVGS) break;
-            self.gpu_svgs[svg_count] = GpuSvgInstance.fromScene(s);
-            svg_count += 1;
-        }
-
         // Upload uniforms
         const uniforms = Uniforms{ .viewport_width = viewport_width, .viewport_height = viewport_height };
         imports.writeBuffer(self.uniform_buffer, 0, std.mem.asBytes(&uniforms).ptr, @sizeOf(Uniforms));
-
-        // Upload primitives
-        if (prim_count > 0) {
-            imports.writeBuffer(
-                self.primitive_buffer,
-                0,
-                std.mem.sliceAsBytes(self.primitives[0..prim_count]).ptr,
-                @intCast(@sizeOf(unified.Primitive) * prim_count),
-            );
-        }
-
-        // Upload glyphs
-        if (glyph_count > 0) {
-            imports.writeBuffer(
-                self.glyph_buffer,
-                0,
-                std.mem.sliceAsBytes(self.gpu_glyphs[0..glyph_count]).ptr,
-                @intCast(@sizeOf(GpuGlyph) * glyph_count),
-            );
-        }
-
-        // Upload SVG instances
-        if (svg_count > 0) {
-            imports.writeBuffer(
-                self.svg_buffer,
-                0,
-                std.mem.sliceAsBytes(self.gpu_svgs[0..svg_count]).ptr,
-                @intCast(@sizeOf(GpuSvgInstance) * svg_count),
-            );
-        }
 
         // Ensure MSAA texture is sized correctly (use actual canvas pixel dimensions)
         if (self.sample_count > 1) {
@@ -437,7 +403,49 @@ pub const WebRenderer = struct {
         // Check if we need post-processing
         const has_post_process = if (self.post_process_state) |*state| state.hasShaders() else false;
         if (has_post_process) {
-            // Render to offscreen texture first
+            // Render to offscreen texture first (uses legacy non-batched path)
+            const prim_count = unified.convertScene(scene, &self.primitives);
+
+            var glyph_count: u32 = 0;
+            for (scene.getGlyphs()) |g| {
+                if (glyph_count >= MAX_GLYPHS) break;
+                self.gpu_glyphs[glyph_count] = GpuGlyph.fromScene(g);
+                glyph_count += 1;
+            }
+
+            var svg_count: u32 = 0;
+            for (scene.getSvgInstances()) |s| {
+                if (svg_count >= MAX_SVGS) break;
+                self.gpu_svgs[svg_count] = GpuSvgInstance.fromScene(s);
+                svg_count += 1;
+            }
+
+            // Upload all buffers for post-process path
+            if (prim_count > 0) {
+                imports.writeBuffer(
+                    self.primitive_buffer,
+                    0,
+                    std.mem.sliceAsBytes(self.primitives[0..prim_count]).ptr,
+                    @intCast(@sizeOf(unified.Primitive) * prim_count),
+                );
+            }
+            if (glyph_count > 0) {
+                imports.writeBuffer(
+                    self.glyph_buffer,
+                    0,
+                    std.mem.sliceAsBytes(self.gpu_glyphs[0..glyph_count]).ptr,
+                    @intCast(@sizeOf(GpuGlyph) * glyph_count),
+                );
+            }
+            if (svg_count > 0) {
+                imports.writeBuffer(
+                    self.svg_buffer,
+                    0,
+                    std.mem.sliceAsBytes(self.gpu_svgs[0..svg_count]).ptr,
+                    @intCast(@sizeOf(GpuSvgInstance) * svg_count),
+                );
+            }
+
             self.renderWithPostProcess(
                 prim_count,
                 glyph_count,
@@ -450,12 +458,168 @@ pub const WebRenderer = struct {
                 clear_a,
             );
         } else {
-            // Render directly to screen
-            self.renderDirect(prim_count, glyph_count, svg_count, clear_r, clear_g, clear_b, clear_a);
+            // Render directly to screen using batched rendering for correct z-order
+            self.renderBatched(scene, clear_r, clear_g, clear_b, clear_a);
         }
     }
 
-    /// Render directly to the screen (no post-processing)
+    /// Render using batch iteration for correct z-ordering across primitive types.
+    /// This ensures text and SVGs are properly interleaved with quads/shadows.
+    ///
+    /// Two-pass approach to avoid WebGPU queue ordering issues:
+    /// 1. First pass: iterate batches, convert data, record batch descriptors
+    /// 2. Upload all converted data to GPU buffers
+    /// 3. Second pass: begin render pass, draw each batch using recorded descriptors
+    fn renderBatched(
+        self: *Self,
+        scene: *const Scene,
+        clear_r: f32,
+        clear_g: f32,
+        clear_b: f32,
+        clear_a: f32,
+    ) void {
+        // Pass 1: Convert all data and record batch descriptors
+        var iter = batch_iter.BatchIterator.init(scene);
+        var batch_count: u32 = 0;
+        var prim_offset: u32 = 0;
+        var glyph_offset: u32 = 0;
+        var svg_offset: u32 = 0;
+
+        while (iter.next()) |batch| {
+            if (batch_count >= MAX_BATCHES) break;
+
+            switch (batch) {
+                .shadow => |shadows| {
+                    const count: u32 = @intCast(@min(shadows.len, MAX_PRIMITIVES - prim_offset));
+                    if (count == 0) continue;
+
+                    for (shadows[0..count], 0..) |shadow, i| {
+                        self.primitives[prim_offset + i] = unified.Primitive.fromShadow(shadow);
+                    }
+
+                    self.batches[batch_count] = .{
+                        .kind = .shadow,
+                        .start = prim_offset,
+                        .count = count,
+                    };
+                    prim_offset += count;
+                    batch_count += 1;
+                },
+                .quad => |quads| {
+                    const count: u32 = @intCast(@min(quads.len, MAX_PRIMITIVES - prim_offset));
+                    if (count == 0) continue;
+
+                    for (quads[0..count], 0..) |quad, i| {
+                        self.primitives[prim_offset + i] = unified.Primitive.fromQuad(quad);
+                    }
+
+                    self.batches[batch_count] = .{
+                        .kind = .quad,
+                        .start = prim_offset,
+                        .count = count,
+                    };
+                    prim_offset += count;
+                    batch_count += 1;
+                },
+                .glyph => |glyphs| {
+                    const count: u32 = @intCast(@min(glyphs.len, MAX_GLYPHS - glyph_offset));
+                    if (count == 0) continue;
+
+                    for (glyphs[0..count], 0..) |g, i| {
+                        self.gpu_glyphs[glyph_offset + i] = GpuGlyph.fromScene(g);
+                    }
+
+                    self.batches[batch_count] = .{
+                        .kind = .glyph,
+                        .start = glyph_offset,
+                        .count = count,
+                    };
+                    glyph_offset += count;
+                    batch_count += 1;
+                },
+                .svg => |svgs| {
+                    const count: u32 = @intCast(@min(svgs.len, MAX_SVGS - svg_offset));
+                    if (count == 0) continue;
+
+                    for (svgs[0..count], 0..) |s, i| {
+                        self.gpu_svgs[svg_offset + i] = GpuSvgInstance.fromScene(s);
+                    }
+
+                    self.batches[batch_count] = .{
+                        .kind = .svg,
+                        .start = svg_offset,
+                        .count = count,
+                    };
+                    svg_offset += count;
+                    batch_count += 1;
+                },
+            }
+        }
+
+        // Pass 2: Upload all data to GPU buffers BEFORE starting render pass
+        if (prim_offset > 0) {
+            imports.writeBuffer(
+                self.primitive_buffer,
+                0,
+                std.mem.sliceAsBytes(self.primitives[0..prim_offset]).ptr,
+                @intCast(@sizeOf(unified.Primitive) * prim_offset),
+            );
+        }
+        if (glyph_offset > 0) {
+            imports.writeBuffer(
+                self.glyph_buffer,
+                0,
+                std.mem.sliceAsBytes(self.gpu_glyphs[0..glyph_offset]).ptr,
+                @intCast(@sizeOf(GpuGlyph) * glyph_offset),
+            );
+        }
+        if (svg_offset > 0) {
+            imports.writeBuffer(
+                self.svg_buffer,
+                0,
+                std.mem.sliceAsBytes(self.gpu_svgs[0..svg_offset]).ptr,
+                @intCast(@sizeOf(GpuSvgInstance) * svg_offset),
+            );
+        }
+
+        // Pass 3: Begin render pass and draw each batch
+        const texture_view = imports.getCurrentTextureView();
+
+        if (self.sample_count > 1 and self.msaa_texture != 0) {
+            imports.beginMSAARenderPass(self.msaa_texture, texture_view, clear_r, clear_g, clear_b, clear_a);
+        } else {
+            imports.beginRenderPass(texture_view, clear_r, clear_g, clear_b, clear_a);
+        }
+
+        for (self.batches[0..batch_count]) |batch_desc| {
+            switch (batch_desc.kind) {
+                .shadow, .quad => {
+                    imports.setPipeline(self.pipeline);
+                    imports.setBindGroup(0, self.bind_group);
+                    imports.drawInstancedWithOffset(6, batch_desc.count, batch_desc.start);
+                },
+                .glyph => {
+                    if (self.text_bind_group != 0) {
+                        imports.setPipeline(self.text_pipeline);
+                        imports.setBindGroup(0, self.text_bind_group);
+                        imports.drawInstancedWithOffset(6, batch_desc.count, batch_desc.start);
+                    }
+                },
+                .svg => {
+                    if (self.svg_bind_group != 0) {
+                        imports.setPipeline(self.svg_pipeline);
+                        imports.setBindGroup(0, self.svg_bind_group);
+                        imports.drawInstancedWithOffset(6, batch_desc.count, batch_desc.start);
+                    }
+                },
+            }
+        }
+
+        imports.endRenderPass();
+        imports.releaseTextureView(texture_view);
+    }
+
+    /// Legacy non-batched rendering (used by post-process path)
     fn renderDirect(
         self: *Self,
         prim_count: u32,

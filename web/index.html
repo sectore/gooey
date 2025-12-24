@@ -994,6 +994,14 @@
           env.currentPass.draw(vertexCount, instanceCount);
         },
 
+        drawInstancedWithOffset: (
+          vertexCount,
+          instanceCount,
+          firstInstance,
+        ) => {
+          env.currentPass.draw(vertexCount, instanceCount, 0, firstInstance);
+        },
+
         endRenderPass: () => {
           env.currentPass.end();
           queue.submit([env.currentEncoder.finish()]);

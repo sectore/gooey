@@ -289,6 +289,9 @@ pub const Shadow = extern struct {
 /// A single glyph instance for GPU rendering
 /// Layout matches Metal shader (must be 16-byte aligned)
 pub const GlyphInstance = extern struct {
+    // Draw order for z-index interleaving
+    order: DrawOrder = 0,
+    _pad0: u32 = 0,
     // Screen position (top-left of glyph quad)
     pos_x: f32 = 0,
     pos_y: f32 = 0,
@@ -300,7 +303,11 @@ pub const GlyphInstance = extern struct {
     uv_top: f32 = 0,
     uv_right: f32 = 0,
     uv_bottom: f32 = 0,
-    // Color (HSLA)
+    // Padding to align color (float4) to 16-byte boundary
+    // Without this, color is at offset 40; Metal requires float4 at 16-byte aligned offset (48)
+    _pad1: u32 = 0,
+    _pad2: u32 = 0,
+    // Color (HSLA) - must be at 16-byte aligned offset for Metal float4
     color: Hsla = Hsla.black,
     // Clip bounds (content mask) - defaults to no clipping
     clip_x: f32 = 0,
@@ -342,6 +349,22 @@ pub const GlyphInstance = extern struct {
         return g;
     }
 };
+
+comptime {
+    if (@sizeOf(GlyphInstance) != 80) {
+        @compileError(std.fmt.comptimePrint(
+            "GlyphInstance must be 80 bytes, got {}",
+            .{@sizeOf(GlyphInstance)},
+        ));
+    }
+    // Verify color is at 16-byte aligned offset for Metal float4
+    if (@offsetOf(GlyphInstance, "color") != 48) {
+        @compileError(std.fmt.comptimePrint(
+            "GlyphInstance.color must be at offset 48 for Metal float4 alignment, got {}",
+            .{@offsetOf(GlyphInstance, "color")},
+        ));
+    }
+}
 
 // ============================================================================
 // Scene - collects primitives for rendering
@@ -437,7 +460,8 @@ pub const Scene = struct {
 
     /// Insert an SVG instance without clipping
     pub fn insertSvg(self: *Self, instance: SvgInstance) !void {
-        const inst = instance;
+        var inst = instance;
+        inst.order = self.next_order;
         self.next_order += 1;
         try self.svg_instances.append(self.allocator, inst);
     }
@@ -445,7 +469,8 @@ pub const Scene = struct {
     /// Insert an SVG instance with the current clip mask applied
     pub fn insertSvgClipped(self: *Self, instance: SvgInstance) !void {
         const clip = self.currentClip();
-        const inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = self.next_order;
         self.next_order += 1;
         try self.svg_instances.append(self.allocator, inst);
     }
@@ -464,13 +489,19 @@ pub const Scene = struct {
 
     /// Insert a glyph without clipping
     pub fn insertGlyph(self: *Self, glyph: GlyphInstance) !void {
-        try self.glyphs.append(self.allocator, glyph);
+        var g = glyph;
+        g.order = self.next_order;
+        self.next_order += 1;
+        try self.glyphs.append(self.allocator, g);
     }
 
     /// Insert a glyph with the current clip mask applied
     pub fn insertGlyphClipped(self: *Self, glyph: GlyphInstance) !void {
         const clip = self.currentClip();
-        try self.glyphs.append(self.allocator, glyph.withClipBounds(clip));
+        var g = glyph.withClipBounds(clip);
+        g.order = self.next_order;
+        self.next_order += 1;
+        try self.glyphs.append(self.allocator, g);
     }
 
     pub fn glyphCount(self: *const Self) usize {
@@ -583,6 +614,16 @@ pub const Scene = struct {
         }.lessThan);
         std.sort.pdq(Quad, self.quads.items, {}, struct {
             fn lessThan(_: void, a: Quad, b: Quad) bool {
+                return a.order < b.order;
+            }
+        }.lessThan);
+        std.sort.pdq(GlyphInstance, self.glyphs.items, {}, struct {
+            fn lessThan(_: void, a: GlyphInstance, b: GlyphInstance) bool {
+                return a.order < b.order;
+            }
+        }.lessThan);
+        std.sort.pdq(SvgInstance, self.svg_instances.items, {}, struct {
+            fn lessThan(_: void, a: SvgInstance, b: SvgInstance) bool {
                 return a.order < b.order;
             }
         }.lessThan);

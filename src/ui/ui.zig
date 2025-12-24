@@ -34,6 +34,7 @@ pub const EntityId = entity_mod.EntityId;
 pub const Gooey = gooey_mod.Gooey;
 const layout_types = @import("../layout/types.zig");
 const BorderConfig = layout_types.BorderConfig;
+const FloatingConfig = layout_types.FloatingConfig;
 const layout_mod = @import("../layout/layout.zig");
 const LayoutEngine = layout_mod.LayoutEngine;
 const LayoutId = layout_mod.LayoutId;
@@ -56,6 +57,74 @@ const Hsla = scene_mod.Hsla;
 // Re-export for convenience
 pub const Color = @import("../core/geometry.zig").Color;
 pub const ShadowConfig = @import("../layout/types.zig").ShadowConfig;
+pub const AttachPoint = layout_types.AttachPoint;
+
+// =============================================================================
+// Floating Configuration
+// =============================================================================
+
+/// User-friendly floating configuration for dropdowns, tooltips, modals, etc.
+/// Floating elements are positioned relative to their parent (or viewport)
+/// and render with a higher z-index for proper layering.
+pub const Floating = struct {
+    /// Where on the floating element to attach
+    element_anchor: AttachPoint = .left_top,
+    /// Where on the parent to attach
+    parent_anchor: AttachPoint = .left_top,
+    /// Offset from the anchor point
+    offset_x: f32 = 0,
+    offset_y: f32 = 0,
+    /// Z-index for layering (higher = on top). Default 100 for floating elements.
+    z_index: i16 = 100,
+    /// If false, positions relative to viewport instead of parent
+    attach_to_parent: bool = true,
+
+    /// Preset for dropdown menus (below parent, aligned left)
+    pub fn dropdown() Floating {
+        return .{
+            .element_anchor = .left_top,
+            .parent_anchor = .left_bottom,
+            .offset_y = 4, // Small gap
+        };
+    }
+
+    /// Preset for tooltips (above parent, centered)
+    pub fn tooltip() Floating {
+        return .{
+            .element_anchor = .center_bottom,
+            .parent_anchor = .center_top,
+            .offset_y = -4,
+        };
+    }
+
+    /// Preset for modals (centered on viewport)
+    pub fn modal() Floating {
+        return .{
+            .attach_to_parent = false,
+            .element_anchor = .center_center,
+            .parent_anchor = .center_center,
+        };
+    }
+
+    /// Preset for context menus (positioned at cursor, typically)
+    pub fn contextMenu() Floating {
+        return .{
+            .element_anchor = .left_top,
+            .parent_anchor = .left_top,
+        };
+    }
+
+    /// Convert to internal FloatingConfig
+    fn toFloatingConfig(self: Floating) FloatingConfig {
+        return .{
+            .offset = .{ .x = self.offset_x, .y = self.offset_y },
+            .z_index = self.z_index,
+            .attach_to_parent = self.attach_to_parent,
+            .element_attach = self.element_anchor,
+            .parent_attach = self.parent_anchor,
+        };
+    }
+};
 
 // =============================================================================
 // Hit Region for Click Handling
@@ -113,6 +182,9 @@ pub const Box = struct {
 
     shadow: ?ShadowConfig = null,
 
+    // Floating positioning (for dropdowns, tooltips, modals)
+    floating: ?Floating = null,
+
     // Hover styles (applied when element is hovered)
     hover_background: ?Color = null,
     hover_border_color: ?Color = null,
@@ -124,6 +196,8 @@ pub const Box = struct {
     // Interaction
     on_click: ?*const fn () void = null,
     on_click_handler: ?HandlerRef = null,
+    on_click_outside: ?*const fn () void = null,
+    on_click_outside_handler: ?HandlerRef = null,
 
     pub const Direction = enum { row, column };
 
@@ -787,6 +861,12 @@ pub const Builder = struct {
         else
             null;
 
+        // Convert floating config if present
+        const floating_config: ?FloatingConfig = if (props.floating) |f|
+            f.toFloatingConfig()
+        else
+            null;
+
         self.layout.openElement(.{
             .id = layout_id,
             .layout = .{
@@ -800,7 +880,13 @@ pub const Builder = struct {
             .corner_radius = CornerRadius.all(props.corner_radius),
             .border = border_config,
             .shadow = props.shadow,
+            .floating = floating_config,
         }) catch return;
+
+        // Mark floating elements for hit testing optimization
+        if (floating_config != null) {
+            self.dispatch.markFloating();
+        }
 
         self.processChildren(children);
 
@@ -812,6 +898,14 @@ pub const Builder = struct {
         }
         if (props.on_click_handler) |handler| {
             self.dispatch.onClickHandler(handler);
+        }
+
+        // Register click-outside handlers (for dropdowns, modals, etc.)
+        if (props.on_click_outside) |callback| {
+            self.dispatch.onClickOutside(callback);
+        }
+        if (props.on_click_outside_handler) |handler| {
+            self.dispatch.onClickOutsideHandler(handler);
         }
 
         // Pop dispatch node at element close

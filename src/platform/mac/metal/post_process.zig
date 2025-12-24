@@ -53,24 +53,13 @@ pub fn renderFullPipeline(
             @floatCast(size.height),
         };
 
-        scene_renderer.drawScenePrimitives(
-            encoder,
-            scene,
-            unit_vertex_buffer,
-            viewport_size,
-            unified_pipeline,
-        );
-
-        if (sp) |svg_pipe| {
-            const svg_instances = scene.getSvgInstances();
-            if (svg_instances.len > 0) {
-                try svg_pipe.render(encoder, svg_instances, viewport_size);
-            }
-        }
-
-        if (tp) |text_pipe| {
-            scene_renderer.drawText(text_pipe, encoder, scene, viewport_size);
-        }
+        // Use batch-based rendering for correct z-ordering
+        scene_renderer.drawScene(encoder, scene, .{
+            .unified = unified_pipeline,
+            .text = tp,
+            .svg = sp,
+            .unit_vertex_buffer = unit_vertex_buffer,
+        }, viewport_size);
 
         encoder.msgSend(void, "endEncoding", .{});
         // Don't commit yet - continue with same command buffer

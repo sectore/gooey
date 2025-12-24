@@ -79,6 +79,7 @@ pub const Tab = components.Tab;
 pub const TabBar = components.TabBar;
 pub const Svg = components.Svg;
 pub const Icons = components.Icons;
+pub const Select = components.Select;
 
 // =============================================================================
 // App Entry Point (most common usage)

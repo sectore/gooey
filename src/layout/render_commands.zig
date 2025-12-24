@@ -35,6 +35,8 @@ pub const RenderCommand = struct {
     command_type: RenderCommandType,
     /// Z-index for layering (higher = on top)
     z_index: i16 = 0,
+    /// Insertion order for stable sorting within same z_index
+    order: u32 = 0,
     /// Element ID this command belongs to
     id: u32 = 0,
     /// Command-specific data
@@ -107,6 +109,7 @@ pub const CustomData = struct {
 pub const RenderCommandList = struct {
     allocator: std.mem.Allocator,
     commands: std.ArrayList(RenderCommand),
+    next_order: u32 = 0,
 
     const Self = @This();
 
@@ -114,6 +117,7 @@ pub const RenderCommandList = struct {
         return .{
             .allocator = allocator,
             .commands = .{},
+            .next_order = 0,
         };
     }
 
@@ -123,10 +127,14 @@ pub const RenderCommandList = struct {
 
     pub fn clear(self: *Self) void {
         self.commands.clearRetainingCapacity();
+        self.next_order = 0;
     }
 
     pub fn append(self: *Self, cmd: RenderCommand) !void {
-        try self.commands.append(self.allocator, cmd);
+        var c = cmd;
+        c.order = self.next_order;
+        self.next_order += 1;
+        try self.commands.append(self.allocator, c);
     }
 
     pub fn items(self: *const Self) []const RenderCommand {
@@ -134,9 +142,13 @@ pub const RenderCommandList = struct {
     }
 
     pub fn sortByZIndex(self: *Self) void {
+        // Sort by z_index first, then by insertion order for stability
         std.sort.pdq(RenderCommand, self.commands.items, {}, struct {
             fn lessThan(_: void, a: RenderCommand, b: RenderCommand) bool {
-                return a.z_index < b.z_index;
+                if (a.z_index != b.z_index) {
+                    return a.z_index < b.z_index;
+                }
+                return a.order < b.order;
             }
         }.lessThan);
     }

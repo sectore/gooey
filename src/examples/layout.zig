@@ -1,14 +1,12 @@
-//! Layout System Demo - Phase 1 Features
+//! Layout System Demo - Minimal Floating Example
 //!
-//! Demonstrates the new layout features:
-//! - Shrink behavior (responsive layouts)
-//! - Aspect ratio (images, video containers)
-//! - Percent sizing with min/max constraints
-//! - Text wrapping
+//! Simplified to debug floating dropdown behavior
 
 const std = @import("std");
 const gooey = @import("gooey");
+const platform = gooey.platform;
 const ui = gooey.ui;
+const Cx = gooey.Cx;
 
 const Button = gooey.Button;
 
@@ -18,26 +16,47 @@ const Button = gooey.Button;
 
 const AppState = struct {
     show_dropdown: bool = false,
-    window_width: f32 = 800,
+
+    pub fn toggleDropdown(self: *AppState) void {
+        self.show_dropdown = !self.show_dropdown;
+    }
+
+    pub fn closeDropdown(self: *AppState) void {
+        self.show_dropdown = false;
+    }
 };
 
-// =============================================================================
-// Main Entry
-// =============================================================================
 var state = AppState{};
 
-pub fn main() !void {
-    try gooey.runCx(AppState, &state, render, .{
-        .title = "Layout Demo - Phase 1 Features",
-        .width = 800,
-        .height = 600,
-        .on_event = onEvent,
-    });
+// =============================================================================
+// Entry Points
+// =============================================================================
+
+// For WASM: WebApp with @export; For Native: struct with main()
+const App = gooey.App(AppState, &state, render, .{
+    .title = "Floating Dropdown Test",
+    .width = 600,
+    .height = 400,
+    .on_event = onEvent,
+});
+
+// Force type analysis - triggers @export on WASM
+comptime {
+    _ = App;
 }
 
-fn render(cx: *gooey.Cx) void {
+// Native entry point
+pub fn main() !void {
+    if (platform.is_wasm) unreachable;
+    return App.main();
+}
+
+// =============================================================================
+// Render Function
+// =============================================================================
+
+fn render(cx: *Cx) void {
     const size = cx.windowSize();
-    state.window_width = size.width;
 
     cx.box(.{
         .width = size.width,
@@ -48,7 +67,7 @@ fn render(cx: *gooey.Cx) void {
         .gap = 20,
     }, .{
         Header{},
-        MainContent{},
+        ContentArea{},
     });
 }
 
@@ -57,8 +76,8 @@ fn render(cx: *gooey.Cx) void {
 // =============================================================================
 
 const Header = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
+    pub fn render(_: @This(), cx: *Cx) void {
+        cx.box(.{
             .fill_width = true,
             .padding = .{ .all = 16 },
             .background = ui.Color.white,
@@ -66,47 +85,47 @@ const Header = struct {
             .direction = .row,
             .alignment = .{ .main = .space_between, .cross = .center },
         }, .{
-            ui.text("Layout System Demo", .{ .size = 24 }),
-            DropdownButton{},
+            ui.text("Floating Dropdown Test", .{ .size = 24 }),
+            DropdownTrigger{},
         });
     }
 };
 
-const DropdownButton = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{}, .{
-            Button{ .label = "Menu ▼", .on_click = toggleDropdown },
-            DropdownOverlay{},
+const DropdownTrigger = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const s = cx.state(AppState);
+
+        // The button acts as the anchor for the floating menu
+        cx.box(.{}, .{
+            Button{
+                .label = if (s.show_dropdown) "Close ▲" else "Menu ▼",
+                .on_click_handler = cx.update(AppState, AppState.toggleDropdown),
+            },
+            DropdownMenu{},
         });
-    }
-
-    fn toggleDropdown() void {
-        state.show_dropdown = !state.show_dropdown;
-    }
-};
-
-/// Wrapper for conditional dropdown rendering
-const DropdownOverlay = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        if (state.show_dropdown) {
-            b.box(.{}, .{DropdownMenu{}});
-        }
     }
 };
 
 const DropdownMenu = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .width = 150,
+    pub fn render(_: @This(), cx: *Cx) void {
+        const s = cx.state(AppState);
+        if (!s.show_dropdown) return;
+
+        cx.box(.{
+            .width = 160,
             .padding = .{ .all = 8 },
             .background = ui.Color.white,
-            .corner_radius = 6,
+            .corner_radius = 8,
             .direction = .column,
-            .gap = 4,
-            .shadow = .{ .blur_radius = 8, .offset_y = 4 },
+            .gap = 2,
+            .shadow = .{ .blur_radius = 12, .offset_y = 4, .color = ui.Color.rgba(0, 0, 0, 0.15) },
+            .floating = ui.Floating.dropdown(),
+            .on_click_outside_handler = cx.update(AppState, AppState.closeDropdown),
         }, .{
             MenuItem{ .label = "Profile" },
             MenuItem{ .label = "Settings" },
+            MenuItem{ .label = "Help" },
+            MenuDivider{},
             MenuItem{ .label = "Logout" },
         });
     }
@@ -120,249 +139,61 @@ const MenuItem = struct {
             .fill_width = true,
             .padding = .{ .symmetric = .{ .x = 12, .y = 8 } },
             .corner_radius = 4,
+            .background = ui.Color.white,
+            .hover_background = ui.Color.rgb(0.95, 0.95, 0.95),
         }, .{
-            ui.text(self.label, .{ .size = 14 }),
+            ui.text(self.label, .{ .size = 14, .color = ui.Color.rgb(0.2, 0.2, 0.2) }),
         });
     }
 };
 
-const MainContent = struct {
+const MenuDivider = struct {
     pub fn render(_: @This(), b: *ui.Builder) void {
         b.box(.{
+            .fill_width = true,
+            .height = 1,
+            .background = ui.Color.rgb(0.9, 0.9, 0.9),
+        }, .{});
+    }
+};
+
+const ContentArea = struct {
+    pub fn render(_: @This(), b: *ui.Builder) void {
+        b.box(.{
+            .fill_width = true,
             .grow = true,
-            .direction = .column,
-            .gap = 20,
-        }, .{
-            TextWrapDemo{},
-            ShrinkDemo{},
-            AspectRatioDemo{},
-            PercentSizingDemo{},
-        });
-    }
-};
-
-// =============================================================================
-// TEXT WRAPPING DEMO
-// =============================================================================
-
-const TextWrapDemo = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
-            .padding = .{ .all = 16 },
+            .padding = .{ .all = 20 },
             .background = ui.Color.white,
             .corner_radius = 8,
             .direction = .column,
-            .gap = 12,
-        }, .{
-            ui.text("Text Wrapping", .{ .size = 18 }),
-            ui.text("Resize window to see text wrap:", .{ .size = 12, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
-            TextWrapRow{},
-        });
-    }
-};
-
-const TextWrapRow = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
-            .direction = .column,
             .gap = 16,
         }, .{
-            TextWrapBox{
-                .title = "No Wrap",
-                .wrap = .none,
-                .color = ui.Color.rgb(0.95, 0.9, 0.9),
-            },
-            TextWrapBox{
-                .title = "Word Wrap",
-                .wrap = .words,
-                .color = ui.Color.rgb(0.9, 0.95, 0.9),
-            },
-            TextWrapBox{
-                .title = "Newline Wrap",
-                .wrap = .newlines,
-                .color = ui.Color.rgb(0.9, 0.9, 0.95),
-            },
-        });
-    }
-};
-
-const TextWrapBox = struct {
-    title: []const u8,
-    wrap: ui.TextStyle.WrapMode,
-    color: ui.Color,
-
-    const sample_text = "The quick brown fox jumps over the lazy dog. This text demonstrates wrapping behavior.";
-    const newline_text = "Line one here.\nLine two here.\nLine three.";
-
-    pub fn render(self: @This(), b: *ui.Builder) void {
-        const text_content = if (self.wrap == .newlines) newline_text else sample_text;
-
-        b.box(.{
-            .grow_width = true, // Grow horizontally to share space
-            .min_width = 100,
-            .padding = .{ .all = 12 },
-            .background = self.color,
-            .corner_radius = 8,
-            .direction = .column,
-            .gap = 8,
-        }, .{
-            ui.text(self.title, .{ .size = 14, .color = ui.Color.rgb(0.3, 0.3, 0.3) }),
-            ui.text(text_content, .{
-                .size = 13,
-                .wrap = self.wrap,
-                .color = ui.Color.rgb(0.2, 0.2, 0.2),
+            ui.text("Content Area", .{ .size = 20 }),
+            ui.text("Click the Menu button above to toggle the dropdown.", .{
+                .size = 14,
+                .color = ui.Color.rgb(0.5, 0.5, 0.5),
             }),
+            ui.text("The dropdown should:", .{ .size = 14, .color = ui.Color.rgb(0.3, 0.3, 0.3) }),
+            BulletPoint{ .text = "Appear below the button" },
+            BulletPoint{ .text = "Have a white background" },
+            BulletPoint{ .text = "Show a subtle shadow" },
+            BulletPoint{ .text = "Not gray out other content" },
+            BulletPoint{ .text = "Close when clicking outside" },
+            BulletPoint{ .text = "Close with Escape key" },
         });
     }
 };
 
-// =============================================================================
-// SHRINK BEHAVIOR DEMO
-// =============================================================================
+const BulletPoint = struct {
+    text: []const u8,
 
-const ShrinkDemo = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
+    pub fn render(self: @This(), b: *ui.Builder) void {
         b.box(.{
-            .fill_width = true,
-            .padding = .{ .all = 16 },
-            .background = ui.Color.white,
-            .corner_radius = 8,
-            .direction = .column,
-            .gap = 12,
-        }, .{
-            ui.text("Shrink Behavior", .{ .size = 18 }),
-            ui.text("These boxes shrink when window is too small:", .{ .size = 12, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
-            ShrinkRow{},
-        });
-    }
-};
-
-const ShrinkRow = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
             .direction = .row,
             .gap = 8,
         }, .{
-            ShrinkBox{ .label = "Box A", .color = ui.Color.rgb(0.9, 0.3, 0.3) },
-            ShrinkBox{ .label = "Box B", .color = ui.Color.rgb(0.3, 0.9, 0.3) },
-            ShrinkBox{ .label = "Box C", .color = ui.Color.rgb(0.3, 0.3, 0.9) },
-            ShrinkBox{ .label = "Box D", .color = ui.Color.rgb(0.9, 0.9, 0.3) },
-        });
-    }
-};
-
-const ShrinkBox = struct {
-    label: []const u8,
-    color: ui.Color,
-
-    pub fn render(self: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .width = 150,
-            .min_width = 60,
-            .height = 60,
-            .background = self.color,
-            .corner_radius = 8,
-            .alignment = .{ .main = .center, .cross = .center },
-        }, .{
-            ui.text(self.label, .{ .size = 14, .color = ui.Color.white }),
-        });
-    }
-};
-
-// =============================================================================
-// ASPECT RATIO DEMO
-// =============================================================================
-
-const AspectRatioDemo = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
-            .padding = .{ .all = 16 },
-            .background = ui.Color.white,
-            .corner_radius = 8,
-            .direction = .column,
-            .gap = 12,
-        }, .{
-            ui.text("Aspect Ratio", .{ .size = 18 }),
-            ui.text("Boxes maintain their aspect ratio as width changes:", .{ .size = 12, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
-            AspectRatioRow{},
-        });
-    }
-};
-
-const AspectRatioRow = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
-            .direction = .row,
-            .gap = 16,
-            .alignment = .{ .cross = .start },
-        }, .{
-            AspectBox{ .label = "16:9", .ratio = 16.0 / 9.0, .color = ui.Color.rgb(0.2, 0.2, 0.3) },
-            AspectBox{ .label = "1:1", .ratio = 1.0, .color = ui.Color.rgb(0.3, 0.2, 0.2) },
-            AspectBox{ .label = "4:3", .ratio = 4.0 / 3.0, .color = ui.Color.rgb(0.2, 0.3, 0.2) },
-        });
-    }
-};
-
-const AspectBox = struct {
-    label: []const u8,
-    ratio: f32,
-    color: ui.Color,
-
-    pub fn render(self: @This(), b: *ui.Builder) void {
-        const width: f32 = 150;
-        const height = width / self.ratio;
-
-        b.box(.{
-            .width = width,
-            .height = height,
-            .background = self.color,
-            .corner_radius = 8,
-            .alignment = .{ .main = .center, .cross = .center },
-        }, .{
-            ui.text(self.label, .{ .size = 16, .color = ui.Color.white }),
-        });
-    }
-};
-
-// =============================================================================
-// PERCENT SIZING DEMO
-// =============================================================================
-
-const PercentSizingDemo = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        b.box(.{
-            .fill_width = true,
-            .padding = .{ .all = 16 },
-            .background = ui.Color.white,
-            .corner_radius = 8,
-            .direction = .column,
-            .gap = 12,
-        }, .{
-            ui.text("Percent Sizing with Min/Max", .{ .size = 18 }),
-            ui.text("50% width, clamped between 200-400px:", .{ .size = 12, .color = ui.Color.rgb(0.5, 0.5, 0.5) }),
-            PercentBar{},
-        });
-    }
-};
-
-const PercentBar = struct {
-    pub fn render(_: @This(), b: *ui.Builder) void {
-        const parent_width = state.window_width - 40 - 32;
-        const computed = @max(200, @min(400, parent_width * 0.5));
-
-        b.box(.{
-            .width = computed,
-            .height = 40,
-            .background = ui.Color.rgb(0.6, 0.2, 0.8),
-            .corner_radius = 8,
-            .alignment = .{ .main = .center, .cross = .center },
-        }, .{
-            ui.text("50% (min:200, max:400)", .{ .size = 12, .color = ui.Color.white }),
+            ui.text("•", .{ .size = 14, .color = ui.Color.rgb(0.4, 0.4, 0.4) }),
+            ui.text(self.text, .{ .size = 14, .color = ui.Color.rgb(0.4, 0.4, 0.4) }),
         });
     }
 };
@@ -371,15 +202,13 @@ const PercentBar = struct {
 // Event Handling
 // =============================================================================
 
-fn onEvent(_: *gooey.Cx, event: gooey.InputEvent) bool {
+fn onEvent(cx: *Cx, event: gooey.InputEvent) bool {
     if (event == .key_down) {
         const key = event.key_down;
-
-        if (key.key == .escape) {
-            if (state.show_dropdown) {
-                state.show_dropdown = false;
-                return true;
-            }
+        const s = cx.state(AppState);
+        if (key.key == .escape and s.show_dropdown) {
+            state.show_dropdown = false;
+            return true;
         }
     }
     return false;

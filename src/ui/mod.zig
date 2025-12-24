@@ -52,3 +52,7 @@ pub const CenterStyle = ui_impl.CenterStyle;
 pub const ShadowConfig = ui_impl.ShadowConfig;
 pub const InputStyle = ui_impl.InputStyle;
 pub const ScrollStyle = ui_impl.ScrollStyle;
+
+// Floating positioning
+pub const Floating = ui_impl.Floating;
+pub const AttachPoint = ui_impl.AttachPoint;

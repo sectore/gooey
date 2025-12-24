@@ -4,6 +4,10 @@ const std = @import("std");
 const scene = @import("scene.zig");
 
 pub const SvgInstance = extern struct {
+    // Draw order for z-index interleaving
+    order: scene.DrawOrder = 0,
+    _pad0: u32 = 0, // Maintain 8-byte alignment
+
     // Screen position (top-left, logical pixels)
     pos_x: f32 = 0,
     pos_y: f32 = 0,
@@ -15,7 +19,11 @@ pub const SvgInstance = extern struct {
     uv_top: f32 = 0,
     uv_right: f32 = 0,
     uv_bottom: f32 = 0,
-    // Fill color (HSLA)
+    // Padding to align color (float4) to 16-byte boundary
+    // Without this, color is at offset 40; Metal requires float4 at 16-byte aligned offset (48)
+    _pad1: u32 = 0,
+    _pad2: u32 = 0,
+    // Fill color (HSLA) - must be at 16-byte aligned offset for Metal float4
     color: scene.Hsla = scene.Hsla.black,
     // Stroke color (HSLA)
     stroke_color: scene.Hsla = scene.Hsla.transparent,
@@ -71,10 +79,17 @@ pub const SvgInstance = extern struct {
 };
 
 comptime {
-    if (@sizeOf(SvgInstance) != 80) {
+    if (@sizeOf(SvgInstance) != 96) {
         @compileError(std.fmt.comptimePrint(
-            "SvgInstance must be 80 bytes, got {}",
+            "SvgInstance must be 96 bytes, got {}",
             .{@sizeOf(SvgInstance)},
+        ));
+    }
+    // Verify color is at 16-byte aligned offset for Metal float4
+    if (@offsetOf(SvgInstance, "color") != 48) {
+        @compileError(std.fmt.comptimePrint(
+            "SvgInstance.color must be at offset 48 for Metal float4 alignment, got {}",
+            .{@offsetOf(SvgInstance, "color")},
         ));
     }
 }

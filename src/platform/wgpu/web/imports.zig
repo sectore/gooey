@@ -114,6 +114,9 @@ pub extern "env" fn setBindGroup(group_index: u32, bind_group_handle: u32) void;
 /// Draw instanced primitives
 pub extern "env" fn drawInstanced(vertex_count: u32, instance_count: u32) void;
 
+/// Draw instanced primitives with first instance offset (for batched rendering)
+pub extern "env" fn drawInstancedWithOffset(vertex_count: u32, instance_count: u32, first_instance: u32) void;
+
 /// End the render pass and submit
 pub extern "env" fn endRenderPass() void;
 

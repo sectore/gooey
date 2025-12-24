@@ -72,6 +72,7 @@ pub fn build(b: *std.Build) void {
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "glass", "src/examples/glass.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "counter", "src/examples/counter.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "layout", "src/examples/layout.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "select", "src/examples/select.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "dynamic-counters", "src/examples/dynamic_counters.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "actions", "src/examples/actions.zig", false);
 
@@ -187,6 +188,8 @@ pub fn build(b: *std.Build) void {
     addWasmExample(b, gooey_wasm_module, wasm_target, "dynamic-counters", "src/examples/dynamic_counters.zig", "web/dynamic");
     addWasmExample(b, gooey_wasm_module, wasm_target, "pomodoro", "src/examples/pomodoro.zig", "web/pomodoro");
     addWasmExample(b, gooey_wasm_module, wasm_target, "spaceship", "src/examples/spaceship.zig", "web/spaceship");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "layout", "src/examples/layout.zig", "web/layout");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "select", "src/examples/select.zig", "web/select");
 }
 
 /// Helper to add a native macOS example with minimal boilerplate.

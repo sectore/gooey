@@ -140,6 +140,7 @@ pub const WebWindow = struct {
     // Scene/Atlas (no-op - web manages these separately in WebApp)
     pub fn setScene(_: *Self, _: *const scene_mod.Scene) void {}
     pub fn setTextAtlas(_: *Self, _: *const text_mod.Atlas) void {}
+    pub fn setSvgAtlas(_: *Self, _: *const text_mod.Atlas) void {}
 
     // IME (not yet supported on web)
     pub fn setMarkedText(_: *Self, _: []const u8) void {}

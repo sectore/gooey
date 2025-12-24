@@ -267,9 +267,10 @@ pub const Renderer = struct {
 
         const shadows = scene.getShadows();
         const quads = scene.getQuads();
+        const glyphs = scene.getGlyphs();
         const svg_instances = scene.getSvgInstances();
 
-        if (shadows.len == 0 and quads.len == 0 and svg_instances.len == 0) {
+        if (shadows.len == 0 and quads.len == 0 and glyphs.len == 0 and svg_instances.len == 0) {
             self.renderInternal(clear_color, synchronous);
             return;
         }
@@ -297,17 +298,13 @@ pub const Renderer = struct {
             return;
         };
 
-        scene_renderer.drawScenePrimitives(encoder, scene, unit_verts, viewport_size, self.unified_pipeline_state);
-
-        if (self.svg_pipeline_state) |*sp| {
-            if (svg_instances.len > 0) {
-                try sp.render(encoder, svg_instances, viewport_size);
-            }
-        }
-
-        if (self.text_pipeline_state) |*tp| {
-            scene_renderer.drawText(tp, encoder, scene, viewport_size);
-        }
+        // Use batch-based rendering for correct z-ordering
+        scene_renderer.drawScene(encoder, scene, .{
+            .unified = self.unified_pipeline_state,
+            .text = if (self.text_pipeline_state) |*tp| tp else null,
+            .svg = if (self.svg_pipeline_state) |*sp| sp else null,
+            .unit_vertex_buffer = unit_verts,
+        }, viewport_size);
 
         if (synchronous) {
             render_pass.finishAndPresentSync(encoder, command_buffer, drawable_info.drawable);

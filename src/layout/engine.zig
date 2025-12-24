@@ -82,6 +82,8 @@ pub const LayoutElement = struct {
     computed: ComputedLayout = .{},
     element_type: ElementType = .container,
     text_data: ?TextData = null,
+    /// Cached z_index (set during generateRenderCommands for O(1) lookup)
+    cached_z_index: i16 = 0,
 };
 
 /// Element storage (unmanaged ArrayList pattern)
@@ -336,7 +338,7 @@ pub const LayoutEngine = struct {
         self.computeFloatingPositions();
 
         // Phase 4: Generate render commands
-        try self.generateRenderCommands(self.root_index.?);
+        try self.generateRenderCommands(self.root_index.?, 0);
 
         // Sort by z-index to handle floating elements properly
         self.commands.sortByZIndex();
@@ -429,6 +431,11 @@ pub const LayoutEngine = struct {
             const elem = self.elements.get(float_idx);
             const floating = elem.config.floating orelse continue;
 
+            // Compute sizes for floating element and its children
+            // Floating elements size themselves based on their content (min sizes),
+            // not constrained by parent layout flow
+            self.computeFinalSizes(float_idx, self.viewport_width, self.viewport_height);
+
             // Find parent bounding box
             var parent_bbox: BoundingBox = .{
                 .width = self.viewport_width,
@@ -490,6 +497,14 @@ pub const LayoutEngine = struct {
         return self.elements.getConst(index).computed.bounding_box;
     }
 
+    /// Get z-index for an element by ID (O(1) lookup using cached value)
+    /// Returns the z_index from the nearest floating ancestor, or 0 for non-floating subtrees.
+    /// The z_index is cached during generateRenderCommands.
+    pub fn getZIndex(self: *const Self, id: u32) i16 {
+        const index = self.id_to_index.get(id) orelse return 0;
+        return self.elements.getConst(index).cached_z_index;
+    }
+
     // =========================================================================
     // Phase 1: Compute minimum sizes (bottom-up)
     // =========================================================================
@@ -511,16 +526,19 @@ pub const LayoutEngine = struct {
                 self.computeMinSizes(ci);
                 const child = self.elements.getConst(ci);
 
-                if (layout.layout_direction.isHorizontal()) {
-                    content_width += child.computed.min_width;
-                    content_height = @max(content_height, child.computed.min_height);
-                } else {
-                    content_width = @max(content_width, child.computed.min_width);
-                    content_height += child.computed.min_height;
+                // Skip floating elements - they don't affect parent's min size
+                if (child.config.floating == null) {
+                    if (layout.layout_direction.isHorizontal()) {
+                        content_width += child.computed.min_width;
+                        content_height = @max(content_height, child.computed.min_height);
+                    } else {
+                        content_width = @max(content_width, child.computed.min_width);
+                        content_height += child.computed.min_height;
+                    }
+                    child_count += 1;
                 }
 
                 child_idx = child.next_sibling_index;
-                child_count += 1;
             }
 
             // Add gaps between children
@@ -594,6 +612,13 @@ pub const LayoutEngine = struct {
         var child_idx: ?u32 = first_child;
         while (child_idx) |ci| {
             const child = self.elements.getConst(ci);
+
+            // Skip floating elements - they don't participate in space distribution
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
+
             const child_sizing = if (is_horizontal)
                 child.config.layout.sizing.width
             else
@@ -637,6 +662,13 @@ pub const LayoutEngine = struct {
             child_idx = first_child;
             while (child_idx) |ci| {
                 const child = self.elements.get(ci);
+
+                // Skip floating elements
+                if (child.config.floating != null) {
+                    child_idx = child.next_sibling_index;
+                    continue;
+                }
+
                 const child_sizing = if (is_horizontal)
                     child.config.layout.sizing.width
                 else
@@ -705,6 +737,13 @@ pub const LayoutEngine = struct {
         child_idx = first_child;
         while (child_idx) |ci| {
             const child = self.elements.get(ci);
+
+            // Skip floating elements
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
+
             const child_sizing_main = if (is_horizontal)
                 child.config.layout.sizing.width
             else
@@ -784,16 +823,19 @@ pub const LayoutEngine = struct {
         const offset_x: f32 = if (scroll_offset) |s| -s.x else 0;
         const offset_y: f32 = if (scroll_offset) |s| -s.y else 0;
 
-        // Calculate total children size for alignment
+        // Calculate total children size for alignment (skip floating elements)
         var total_main: f32 = 0;
         var child_count: u32 = 0;
         var child_idx: ?u32 = first_child;
 
         while (child_idx) |ci| {
             const child = self.elements.getConst(ci);
-            total_main += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
+            // Skip floating elements - they don't participate in normal flow
+            if (child.config.floating == null) {
+                total_main += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
+                child_count += 1;
+            }
             child_idx = child.next_sibling_index;
-            child_count += 1;
         }
 
         if (child_count > 1) {
@@ -822,6 +864,12 @@ pub const LayoutEngine = struct {
         child_idx = first_child;
         while (child_idx) |ci| {
             const child = self.elements.get(ci);
+
+            // Skip floating elements - they are positioned separately in computeFloatingPositions
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
 
             // Cross-axis alignment
             var child_x = cursor_x;
@@ -858,9 +906,15 @@ pub const LayoutEngine = struct {
     // Phase 4: Generate render commands
     // =========================================================================
 
-    fn generateRenderCommands(self: *Self, index: u32) !void {
-        const elem = self.elements.getConst(index);
+    fn generateRenderCommands(self: *Self, index: u32, inherited_z_index: i16) !void {
+        const elem = self.elements.get(index);
         const bbox = elem.computed.bounding_box;
+
+        // Floating elements override z_index for themselves and their children
+        const z_index: i16 = if (elem.config.floating) |f| f.z_index else inherited_z_index;
+
+        // Cache z_index for O(1) lookup via getZIndex()
+        elem.cached_z_index = z_index;
 
         // Shadow (renders BEFORE background rectangle)
         if (elem.config.shadow) |shadow| {
@@ -868,6 +922,7 @@ pub const LayoutEngine = struct {
                 try self.commands.append(.{
                     .bounding_box = bbox,
                     .command_type = .shadow,
+                    .z_index = z_index,
                     .id = elem.id,
                     .data = .{ .shadow = .{
                         .blur_radius = shadow.blur_radius,
@@ -885,6 +940,7 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .rectangle,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .rectangle = .{
                     .background_color = bg,
@@ -898,6 +954,7 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .border,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .border = .{
                     .color = border.color,
@@ -922,6 +979,7 @@ pub const LayoutEngine = struct {
                             .height = line_height,
                         },
                         .command_type = .text,
+                        .z_index = z_index,
                         .id = elem.id,
                         .data = .{ .text = .{
                             .text = td.text[line.start_offset..][0..line.length],
@@ -939,6 +997,7 @@ pub const LayoutEngine = struct {
                 try self.commands.append(.{
                     .bounding_box = bbox,
                     .command_type = .text,
+                    .z_index = z_index,
                     .id = elem.id,
                     .data = .{ .text = .{
                         .text = td.text,
@@ -958,6 +1017,7 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .scissor_start,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .scissor_start = .{ .clip_bounds = bbox } },
             });
@@ -967,7 +1027,7 @@ pub const LayoutEngine = struct {
         if (elem.first_child_index) |first_child| {
             var child_idx: ?u32 = first_child;
             while (child_idx) |ci| {
-                try self.generateRenderCommands(ci);
+                try self.generateRenderCommands(ci, z_index);
                 child_idx = self.elements.getConst(ci).next_sibling_index;
             }
         }
@@ -977,6 +1037,7 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .scissor_end,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .scissor_end = {} },
             });
@@ -1314,6 +1375,66 @@ test "floating positioning" {
     try std.testing.expectEqual(parent.computed.bounding_box.y + parent.computed.bounding_box.height, floating.computed.bounding_box.y);
 }
 
+test "floating elements don't affect parent sizing or sibling layout" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Parent with fit-content sizing
+    try engine.openElement(.{
+        .id = LayoutId.init("parent"),
+        .layout = .{
+            .sizing = Sizing.fitContent(),
+            .layout_direction = .top_to_bottom,
+            .child_gap = 10,
+        },
+        .background_color = Color.white,
+    });
+    {
+        // Regular child - should determine parent size
+        try engine.openElement(.{
+            .id = LayoutId.init("regular-child"),
+            .layout = .{ .sizing = Sizing.fixed(100, 50) },
+            .background_color = Color.red,
+        });
+        engine.closeElement();
+
+        // Floating child - should NOT affect parent size
+        try engine.openElement(.{
+            .id = LayoutId.init("floating-child"),
+            .layout = .{ .sizing = Sizing.fixed(200, 300) }, // Much larger than regular child
+            .floating = types.FloatingConfig.dropdown(),
+            .background_color = Color.blue,
+        });
+        engine.closeElement();
+
+        // Another regular child - should be positioned ignoring floating sibling
+        try engine.openElement(.{
+            .id = LayoutId.init("second-child"),
+            .layout = .{ .sizing = Sizing.fixed(100, 50) },
+            .background_color = Color.green,
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const parent = engine.elements.getConst(0);
+    const regular_child = engine.elements.getConst(1);
+    const second_child = engine.elements.getConst(3);
+
+    // Parent should only be sized by regular children (100x50 + gap + 100x50 = 100x110)
+    // NOT affected by floating child's 200x300
+    try std.testing.expectEqual(@as(f32, 100), parent.computed.sized_width);
+    try std.testing.expectEqual(@as(f32, 110), parent.computed.sized_height); // 50 + 10 gap + 50
+
+    // Second child should be positioned right after first child (ignoring floating)
+    // First child at y=0, height=50, gap=10, so second child at y=60
+    try std.testing.expectEqual(regular_child.computed.bounding_box.y + 50 + 10, second_child.computed.bounding_box.y);
+}
+
 test "text wrapping creates multiple lines" {
     var engine = LayoutEngine.init(std.testing.allocator);
     defer engine.deinit();
@@ -1528,4 +1649,95 @@ test "propagateHeightChange stops at fixed-height parent" {
 
     // Inner (fit-content) should have grown
     try std.testing.expect(inner.computed.sized_height >= 40.0);
+}
+
+test "z-index propagates to render commands" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Parent element (z_index = 0)
+    try engine.openElement(.{
+        .id = LayoutId.init("parent"),
+        .layout = .{ .sizing = Sizing.fixed(200, 100) },
+        .background_color = Color.white,
+    });
+    {
+        // Floating child with z_index = 100
+        try engine.openElement(.{
+            .id = LayoutId.init("dropdown"),
+            .layout = .{ .sizing = Sizing.fixed(150, 80) },
+            .floating = .{ .z_index = 100, .element_attach = .left_top, .parent_attach = .left_bottom },
+            .background_color = Color.blue,
+        });
+        {
+            // Nested child inside floating - should inherit z_index
+            try engine.openElement(.{
+                .id = LayoutId.init("dropdown-item"),
+                .layout = .{ .sizing = Sizing.fixed(140, 30) },
+                .background_color = Color.red,
+            });
+            engine.closeElement();
+        }
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    const commands = try engine.endFrame();
+
+    // Find commands by element ID
+    var parent_z: ?i16 = null;
+    var dropdown_z: ?i16 = null;
+    var dropdown_item_z: ?i16 = null;
+
+    for (commands) |cmd| {
+        if (cmd.id == LayoutId.init("parent").id) parent_z = cmd.z_index;
+        if (cmd.id == LayoutId.init("dropdown").id) dropdown_z = cmd.z_index;
+        if (cmd.id == LayoutId.init("dropdown-item").id) dropdown_item_z = cmd.z_index;
+    }
+
+    // Parent should have z_index = 0
+    try std.testing.expectEqual(@as(i16, 0), parent_z.?);
+    // Floating dropdown should have z_index = 100
+    try std.testing.expectEqual(@as(i16, 100), dropdown_z.?);
+    // Nested item inside dropdown should inherit z_index = 100
+    try std.testing.expectEqual(@as(i16, 100), dropdown_item_z.?);
+}
+
+test "getZIndex returns inherited z-index" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    try engine.openElement(.{
+        .id = LayoutId.init("root"),
+        .layout = .{ .sizing = Sizing.fixed(400, 300) },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("floating"),
+            .layout = .{ .sizing = Sizing.fixed(100, 100) },
+            .floating = .{ .z_index = 50 },
+        });
+        {
+            try engine.openElement(.{
+                .id = LayoutId.init("nested"),
+                .layout = .{ .sizing = Sizing.fixed(50, 50) },
+            });
+            engine.closeElement();
+        }
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    // Root has no floating ancestor
+    try std.testing.expectEqual(@as(i16, 0), engine.getZIndex(LayoutId.init("root").id));
+    // Floating element itself
+    try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("floating").id));
+    // Nested element inherits from floating ancestor
+    try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("nested").id));
 }

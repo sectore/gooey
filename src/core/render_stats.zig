@@ -14,15 +14,19 @@ pub const RenderStats = struct {
     quads_rendered: u32 = 0,
     shadows_rendered: u32 = 0,
     glyphs_rendered: u32 = 0,
+    svgs_rendered: u32 = 0,
 
     // Culling stats
     quads_culled: u32 = 0,
     shadows_culled: u32 = 0,
     glyphs_culled: u32 = 0,
+    svgs_culled: u32 = 0,
 
     // Batch stats
     quad_batches: u32 = 0,
     shadow_batches: u32 = 0,
+    glyph_batches: u32 = 0,
+    svg_batches: u32 = 0,
 
     const Self = @This();
 
@@ -56,6 +60,13 @@ pub const RenderStats = struct {
     /// Record rendered glyphs
     pub inline fn recordGlyphs(self: *Self, count: u32) void {
         self.glyphs_rendered += count;
+        self.glyph_batches += 1;
+    }
+
+    /// Record rendered SVGs
+    pub inline fn recordSvgs(self: *Self, count: u32) void {
+        self.svgs_rendered += count;
+        self.svg_batches += 1;
     }
 
     /// Record culled quads (skipped due to being off-screen)
@@ -71,6 +82,11 @@ pub const RenderStats = struct {
     /// Record culled glyphs
     pub inline fn recordGlyphsCulled(self: *Self, count: u32) void {
         self.glyphs_culled += count;
+    }
+
+    /// Record culled SVGs
+    pub inline fn recordSvgsCulled(self: *Self, count: u32) void {
+        self.svgs_culled += count;
     }
 
     /// Calculate culling efficiency (0.0 = no culling, 1.0 = 100% culled)
@@ -105,9 +121,12 @@ pub const RenderStats = struct {
             \\  Quads:    {d} rendered, {d} culled
             \\  Shadows:  {d} rendered, {d} culled
             \\  Glyphs:   {d} rendered, {d} culled
+            \\  SVGs:     {d} rendered, {d} culled
             \\───────────────────────────────────────
             \\  Quad batches:   {d} (avg {d:.1} per batch)
             \\  Shadow batches: {d} (avg {d:.1} per batch)
+            \\  Glyph batches:  {d}
+            \\  SVG batches:    {d}
             \\  Culling efficiency: {d:.1}%
             \\═══════════════════════════════════════
             \\
@@ -120,23 +139,28 @@ pub const RenderStats = struct {
             self.shadows_culled,
             self.glyphs_rendered,
             self.glyphs_culled,
+            self.svgs_rendered,
+            self.svgs_culled,
             self.quad_batches,
             self.avgQuadBatchSize(),
             self.shadow_batches,
             self.avgShadowBatchSize(),
+            self.glyph_batches,
+            self.svg_batches,
             self.cullingEfficiency() * 100.0,
         });
     }
 
     /// Format stats as a single-line summary (for HUD overlay)
     pub fn summary(self: *const Self, buf: []u8) []const u8 {
-        const result = std.fmt.bufPrint(buf, "DC:{d} PS:{d} Q:{d}/{d} S:{d} G:{d}", .{
+        const result = std.fmt.bufPrint(buf, "DC:{d} PS:{d} Q:{d}/{d} S:{d} G:{d} V:{d}", .{
             self.draw_calls,
             self.pipeline_switches,
             self.quads_rendered,
             self.quads_culled,
             self.shadows_rendered,
             self.glyphs_rendered,
+            self.svgs_rendered,
         }) catch return "stats error";
         return result;
     }

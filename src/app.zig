@@ -255,10 +255,11 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     // End frame and get render commands
     const commands = try cx.gooey().endFrame();
 
-    // Sync bounds from layout to dispatch tree
+    // Sync bounds and z_index from layout to dispatch tree
     for (cx.gooey().dispatch.nodes.items) |*node| {
         if (node.layout_id) |layout_id| {
             node.bounds = cx.gooey().layout.getBoundingBox(layout_id);
+            node.z_index = cx.gooey().layout.getZIndex(layout_id);
         }
     }
 
@@ -477,7 +478,16 @@ pub fn handleInputCx(
             }
         }
 
-        if (cx.gooey().dispatch.hitTest(x, y)) |target| {
+        // Compute hit target once for both click-outside and click dispatch
+        const hit_target = cx.gooey().dispatch.hitTest(x, y);
+
+        // Dispatch click-outside events first (for closing dropdowns, modals, etc.)
+        // This fires for any click, regardless of what was hit
+        if (cx.gooey().dispatch.dispatchClickOutsideWithTarget(x, y, hit_target, cx.gooey())) {
+            cx.notify();
+        }
+
+        if (hit_target) |target| {
             if (cx.gooey().dispatch.getNodeConst(target)) |node| {
                 if (node.focus_id) |focus_id| {
                     if (cx.gooey().focus.getHandleById(focus_id)) |handle| {
@@ -647,10 +657,11 @@ fn renderFrameWithContext(
     // End frame and get render commands
     const commands = try ctx.gooey.endFrame();
 
-    // Sync bounds from layout to dispatch tree
+    // Sync bounds and z_index from layout to dispatch tree
     for (ctx.gooey.dispatch.nodes.items) |*node| {
         if (node.layout_id) |layout_id| {
             node.bounds = ctx.gooey.layout.getBoundingBox(layout_id);
+            node.z_index = ctx.gooey.layout.getZIndex(layout_id);
         }
     }
 
@@ -820,7 +831,16 @@ fn handleInputWithContext(
             }
         }
 
-        if (ctx.gooey.dispatch.hitTest(x, y)) |target| {
+        // Compute hit target once for both click-outside and click dispatch
+        const hit_target = ctx.gooey.dispatch.hitTest(x, y);
+
+        // Dispatch click-outside events first (for closing dropdowns, modals, etc.)
+        // This fires for any click, regardless of what was hit
+        if (ctx.gooey.dispatch.dispatchClickOutsideWithTarget(x, y, hit_target, ctx.gooey)) {
+            ctx.notify();
+        }
+
+        if (hit_target) |target| {
             if (ctx.gooey.dispatch.getNodeConst(target)) |node| {
                 if (node.focus_id) |focus_id| {
                     if (ctx.gooey.focus.getHandleById(focus_id)) |handle| {
