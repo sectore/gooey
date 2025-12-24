@@ -1682,6 +1682,39 @@
           });
         },
 
+        // Begin an MSAA render pass that resolves to a texture (for post-process)
+        beginMSAATextureRenderPass: (
+          msaaTextureHandle,
+          resolveTextureHandle,
+          r,
+          g,
+          b,
+          a,
+        ) => {
+          const msaaTexture = handles.textures.get(msaaTextureHandle);
+          const resolveTexture = handles.textures.get(resolveTextureHandle);
+
+          if (!msaaTexture || !resolveTexture) {
+            console.error("beginMSAATextureRenderPass: invalid handles");
+            return;
+          }
+
+          const msaaView = msaaTexture.createView();
+          const resolveView = resolveTexture.createView();
+          env.currentEncoder = device.createCommandEncoder();
+          env.currentPass = env.currentEncoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view: msaaView,
+                resolveTarget: resolveView,
+                clearValue: { r, g, b, a },
+                loadOp: "clear",
+                storeOp: "discard",
+              },
+            ],
+          });
+        },
+
         // Copy the current screen to a texture for post-processing
         copyToTexture: (srcViewHandle, dstTextureHandle, width, height) => {
           const srcView = handles.textureViews.get(srcViewHandle);

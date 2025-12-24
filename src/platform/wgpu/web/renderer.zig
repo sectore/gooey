@@ -670,8 +670,8 @@ pub const WebRenderer = struct {
         prim_count: u32,
         glyph_count: u32,
         svg_count: u32,
-        viewport_width: f32,
-        viewport_height: f32,
+        _: f32, // viewport_width - unused, we use device pixels instead
+        _: f32, // viewport_height - unused, we use device pixels instead
         clear_r: f32,
         clear_g: f32,
         clear_b: f32,
@@ -682,16 +682,27 @@ pub const WebRenderer = struct {
             return; // shouldn't happen if hasCustomShaders was true
         };
 
-        // Ensure textures are the right size
-        state.ensureSize(@intFromFloat(viewport_width), @intFromFloat(viewport_height)) catch return;
+        // Ensure textures are the right size (use device pixels for sharp rendering)
+        const device_width = imports.getCanvasPixelWidth();
+        const device_height = imports.getCanvasPixelHeight();
+        state.ensureSize(device_width, device_height) catch return;
+
+        // Ensure MSAA texture matches post-process texture size
+        if (self.sample_count > 1) {
+            self.ensureMSAATexture(device_width, device_height);
+        }
 
         // Update timing uniforms
         state.updateTiming();
         state.uploadUniforms();
 
-        // Step 1: Render scene to front texture
-        const front_view = state.getFrontTextureView();
-        imports.beginTextureRenderPass(front_view, clear_r, clear_g, clear_b, clear_a);
+        // Step 1: Render scene to front texture (with MSAA if available)
+        if (self.sample_count > 1 and self.msaa_texture != 0) {
+            imports.beginMSAATextureRenderPass(self.msaa_texture, state.front_texture, clear_r, clear_g, clear_b, clear_a);
+        } else {
+            const front_view = state.getFrontTextureView();
+            imports.beginTextureRenderPass(front_view, clear_r, clear_g, clear_b, clear_a);
+        }
 
         if (prim_count > 0) {
             imports.setPipeline(self.pipeline);

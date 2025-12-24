@@ -283,6 +283,16 @@ pub extern "env" fn beginMSAARenderPass(
     a: f32,
 ) void;
 
+/// Begin an MSAA render pass that resolves to a texture (for post-process)
+pub extern "env" fn beginMSAATextureRenderPass(
+    msaa_texture_handle: u32,
+    resolve_texture_handle: u32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) void;
+
 /// Get the current MSAA sample count (4 if supported, 1 otherwise)
 pub extern "env" fn getMSAASampleCount() u32;
 
