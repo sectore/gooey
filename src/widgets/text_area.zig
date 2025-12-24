@@ -8,7 +8,21 @@
 //! - Multi-line selection rendering
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("../platform/mod.zig");
+
+// Clipboard support (platform-specific)
+const clipboard = if (builtin.os.tag == .macos)
+    @import("../platform/mac/clipboard.zig")
+else
+    struct {
+        pub fn getText(_: std.mem.Allocator) ?[]const u8 {
+            return null;
+        }
+        pub fn setText(_: []const u8) bool {
+            return false;
+        }
+    };
 
 const scene_mod = @import("../core/scene.zig");
 const input_mod = @import("../core/input.zig");
@@ -598,6 +612,37 @@ pub const TextArea = struct {
                     self.selection_anchor = 0;
                     self.cursor_byte = self.buffer.items.len;
                     self.updateCursorPosition();
+                }
+            },
+            .c => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Copy selection to clipboard
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                }
+            },
+            .v => {
+                if (mods.cmd) {
+                    // Paste from clipboard
+                    if (clipboard.getText(self.allocator)) |text| {
+                        defer self.allocator.free(text);
+                        if (self.hasSelection()) {
+                            self.deleteSelection();
+                        }
+                        self.insertText(text) catch {};
+                    }
+                }
+            },
+            .x => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Cut = Copy + Delete
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                    self.deleteSelection();
                 }
             },
             .@"return" => {

@@ -22,7 +22,21 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("../platform/mod.zig");
+
+// Clipboard support (platform-specific)
+const clipboard = if (builtin.os.tag == .macos)
+    @import("../platform/mac/clipboard.zig")
+else
+    struct {
+        pub fn getText(_: std.mem.Allocator) ?[]const u8 {
+            return null;
+        }
+        pub fn setText(_: []const u8) bool {
+            return false;
+        }
+    };
 
 // Direct imports from core modules (not through root.zig to avoid cycles)
 const scene_mod = @import("../core/scene.zig");
@@ -423,6 +437,37 @@ pub const TextInput = struct {
                     // Select all
                     self.selection_anchor = 0;
                     self.cursor_byte = self.buffer.items.len;
+                }
+            },
+            .c => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Copy selection to clipboard
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                }
+            },
+            .v => {
+                if (mods.cmd) {
+                    // Paste from clipboard
+                    if (clipboard.getText(self.allocator)) |text| {
+                        defer self.allocator.free(text);
+                        if (self.hasSelection()) {
+                            self.deleteSelection();
+                        }
+                        self.insertText(text) catch {};
+                    }
+                }
+            },
+            .x => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Cut = Copy + Delete
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                    self.deleteSelection();
                 }
             },
             .@"return" => {

@@ -94,6 +94,7 @@ pub const mac = if (!is_wasm) struct {
     pub const display_link = @import("mac/display_link.zig");
     pub const appkit = @import("mac/appkit.zig");
     pub const metal = @import("mac/metal/metal.zig");
+    pub const clipboard = @import("mac/clipboard.zig");
 } else struct {};
 
 pub const web = if (is_wasm) struct {
