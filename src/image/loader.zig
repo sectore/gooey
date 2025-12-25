@@ -68,7 +68,17 @@ pub fn loadFromMemory(allocator: std.mem.Allocator, data: []const u8) LoadError!
 }
 
 /// Load image from file path
-pub fn loadFromPath(allocator: std.mem.Allocator, path: []const u8) LoadError!DecodedImage {
+/// Note: Not supported on WASM - use embedded images or URL loading instead.
+pub const loadFromPath = if (builtin.cpu.arch == .wasm32)
+    loadFromPathUnsupported
+else
+    loadFromPathNative;
+
+fn loadFromPathUnsupported(_: std.mem.Allocator, _: []const u8) LoadError!DecodedImage {
+    return LoadError.UnsupportedSource;
+}
+
+fn loadFromPathNative(allocator: std.mem.Allocator, path: []const u8) LoadError!DecodedImage {
     // Read file into memory
     const file = std.fs.cwd().openFile(path, .{}) catch |err| {
         return switch (err) {
@@ -210,11 +220,34 @@ fn unpremultiplyAlpha(pixels: []u8, width: usize, height: usize) void {
 }
 
 // =============================================================================
-// WebAssembly Backend (placeholder)
+// WebAssembly Backend
 // =============================================================================
 
+/// Synchronous loading is not supported on WASM.
+/// Use the async API instead:
+///
+/// ```
+/// const wasm_loader = @import("platform/wgpu/web/image_loader.zig");
+///
+/// // Initialize once at startup
+/// wasm_loader.init(allocator);
+///
+/// // Request async decode
+/// _ = wasm_loader.loadFromMemoryAsync(image_bytes, myCallback);
+///
+/// fn myCallback(request_id: u32, result: ?wasm_loader.DecodedImage) void {
+///     if (result) |decoded| {
+///         // Use decoded.width, decoded.height, decoded.pixels
+///         // Don't forget to call decoded.deinit(allocator) when done
+///     } else {
+///         // Decode failed
+///     }
+/// }
+/// ```
 fn loadFromMemoryWasm(allocator: std.mem.Allocator, data: []const u8) LoadError!DecodedImage {
-    // TODO: Use browser's createImageBitmap or Canvas API
+    // Synchronous image decoding is not possible on WASM.
+    // The browser's image decoding APIs (createImageBitmap) are async.
+    // Use the async API in src/platform/wgpu/web/image_loader.zig instead.
     _ = allocator;
     _ = data;
     return LoadError.UnsupportedSource;

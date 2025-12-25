@@ -41,7 +41,7 @@ const LayoutId = layout_mod.LayoutId;
 const Sizing = layout_mod.Sizing;
 const SizingAxis = layout_mod.SizingAxis;
 const Padding = layout_mod.Padding;
-const CornerRadius = layout_mod.CornerRadius;
+pub const CornerRadius = layout_mod.CornerRadius;
 const ChildAlignment = layout_mod.ChildAlignment;
 const LayoutDirection = layout_mod.LayoutDirection;
 const LayoutConfig = layout_mod.LayoutConfig;
@@ -622,8 +622,6 @@ pub const Builder = struct {
     pending_inputs: std.ArrayList(PendingInput),
     pending_text_areas: std.ArrayList(PendingTextArea),
     pending_scrolls: std.ArrayListUnmanaged(PendingScroll),
-    pending_svgs: std.ArrayListUnmanaged(PendingSvg),
-    pending_images: std.ArrayListUnmanaged(PendingImage),
 
     const PendingInput = struct {
         id: []const u8,
@@ -648,28 +646,6 @@ pub const Builder = struct {
         content_layout_id: LayoutId,
     };
 
-    const PendingSvg = struct {
-        layout_id: LayoutId,
-        path: []const u8,
-        color: Hsla,
-        stroke_color: ?Hsla,
-        stroke_width: f32,
-        has_fill: bool,
-        viewbox: f32,
-    };
-
-    const PendingImage = struct {
-        layout_id: LayoutId,
-        source: []const u8,
-        width: ?f32,
-        height: ?f32,
-        fit: ObjectFit,
-        corner_radius: ?CornerRadius,
-        tint: ?Hsla,
-        grayscale: f32,
-        opacity: f32,
-    };
-
     const Self = @This();
 
     pub fn init(
@@ -686,8 +662,6 @@ pub const Builder = struct {
             .pending_inputs = .{},
             .pending_scrolls = .{},
             .pending_text_areas = .{},
-            .pending_svgs = .{},
-            .pending_images = .{},
         };
     }
 
@@ -695,8 +669,6 @@ pub const Builder = struct {
         self.pending_inputs.deinit(self.allocator);
         self.pending_text_areas.deinit(self.allocator);
         self.pending_scrolls.deinit(self.allocator);
-        self.pending_svgs.deinit(self.allocator);
-        self.pending_images.deinit(self.allocator);
     }
 
     // =========================================================================
@@ -1160,14 +1132,6 @@ pub const Builder = struct {
         }
     }
 
-    pub fn getPendingSvgs(self: *const Self) []const PendingSvg {
-        return self.pending_svgs.items;
-    }
-
-    pub fn getPendingImages(self: *const Self) []const PendingImage {
-        return self.pending_images.items;
-    }
-
     // =========================================================================
     // Internal: Child Processing
     // =========================================================================
@@ -1574,82 +1538,51 @@ pub const Builder = struct {
         // Generate a unique layout ID for this SVG instance
         const layout_id = self.generateId();
 
-        // Create a fixed-size element for layout
-        self.layout.openElement(.{
-            .id = layout_id,
-            .layout = .{
-                .sizing = .{
-                    .width = SizingAxis.fixed(prim.width),
-                    .height = SizingAxis.fixed(prim.height),
-                },
-            },
-        }) catch return;
-        self.layout.closeElement();
-
-        // Convert Colors to Hsla
-        const fill_hsla = Hsla.fromRgba(prim.color.r, prim.color.g, prim.color.b, prim.color.a);
-        const stroke_hsla: ?Hsla = if (prim.stroke_color) |sc|
-            Hsla.fromRgba(sc.r, sc.g, sc.b, sc.a)
-        else
-            null;
-
-        // Store for later rendering (after layout is computed)
-        self.pending_svgs.append(self.allocator, .{
-            .layout_id = layout_id,
+        // Use layout engine's svg method - this creates the element AND
+        // ensures the SVG command is emitted inline with other primitives
+        // for correct z-ordering
+        self.layout.svg(layout_id, prim.width, prim.height, .{
             .path = prim.path,
-            .color = fill_hsla,
-            .stroke_color = stroke_hsla,
+            .color = prim.color,
+            .stroke_color = prim.stroke_color,
             .stroke_width = prim.stroke_width,
             .has_fill = prim.has_fill,
             .viewbox = prim.viewbox,
-        }) catch {};
+        }) catch return;
     }
 
     fn renderImage(self: *Self, prim: ImagePrimitive) void {
         // Generate a unique layout ID for this image instance
         const layout_id = self.generateId();
 
-        // Determine sizing
-        const width_sizing: SizingAxis = if (prim.width) |w|
-            SizingAxis.fixed(w)
-        else
-            SizingAxis.grow();
+        // Convert fit enum to u8
+        const fit_u8: u8 = switch (prim.fit) {
+            .contain => 0,
+            .cover => 1,
+            .fill => 2,
+            .none => 3,
+            .scale_down => 4,
+        };
 
-        const height_sizing: SizingAxis = if (prim.height) |h|
-            SizingAxis.fixed(h)
-        else
-            SizingAxis.grow();
-
-        // Create layout element
-        self.layout.openElement(.{
-            .id = layout_id,
-            .layout = .{
-                .sizing = .{
-                    .width = width_sizing,
-                    .height = height_sizing,
-                },
-            },
-        }) catch return;
-        self.layout.closeElement();
-
-        // Convert tint color to Hsla if present
-        const tint_hsla: ?Hsla = if (prim.tint) |t|
-            Hsla.fromRgba(t.r, t.g, t.b, t.a)
+        // Convert corner radius to layout type if present
+        const corner_rad: ?CornerRadius = if (prim.corner_radius) |cr|
+            cr
         else
             null;
 
-        // Store for later rendering (after layout is computed)
-        self.pending_images.append(self.allocator, .{
-            .layout_id = layout_id,
+        // Use layout engine's image method - this creates the element AND
+        // ensures the image command is emitted inline with other primitives
+        // for correct z-ordering
+        self.layout.image(layout_id, prim.width, prim.height, .{
             .source = prim.source,
             .width = prim.width,
             .height = prim.height,
-            .fit = prim.fit,
-            .corner_radius = prim.corner_radius,
-            .tint = tint_hsla,
+            .fit = fit_u8,
+            .corner_radius = corner_rad,
+            .tint = prim.tint,
             .grayscale = prim.grayscale,
             .opacity = prim.opacity,
-        }) catch {};
+        }) catch return;
     }
 
     fn renderActionHandlerRef(self: *Self, ah: ActionHandlerRefPrimitive) void {

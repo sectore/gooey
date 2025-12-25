@@ -250,8 +250,6 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     cx.builder().pending_inputs.clearRetainingCapacity();
     cx.builder().pending_text_areas.clearRetainingCapacity();
     cx.builder().pending_scrolls.clearRetainingCapacity();
-    cx.builder().pending_svgs.clearRetainingCapacity();
-    cx.builder().pending_images.clearRetainingCapacity();
 
     // Call user's render function with Cx
     render_fn(cx);
@@ -273,166 +271,9 @@ pub fn renderFrameCx(cx: *Cx, comptime render_fn: fn (*Cx) void) !void {
     // Clear scene
     cx.gooey().scene.clear();
 
-    // Render all commands
+    // Render all commands (includes SVGs and images inline for correct z-ordering)
     for (commands) |cmd| {
         try renderCommand(cx.gooey(), cmd);
-    }
-
-    // Render pending SVGs (after layout is computed)
-    const pending_svgs = cx.builder().getPendingSvgs();
-    for (pending_svgs) |pending| {
-        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
-        if (bounds) |b| {
-            const scale_factor = cx.gooey().scale_factor;
-
-            // Determine stroke width for caching
-            const stroke_w: ?f32 = if (pending.stroke_color != null)
-                pending.stroke_width
-            else
-                null;
-
-            // Get from atlas (rasterizes if not cached)
-            const cached = try cx.gooey().svg_atlas.getOrRasterize(
-                pending.path,
-                pending.viewbox,
-                @max(b.width, b.height), // Use larger dimension for size
-                pending.has_fill,
-                stroke_w,
-            );
-
-            if (cached.region.width == 0) continue;
-
-            // Get UV coordinates
-            const atlas = cx.gooey().svg_atlas.getAtlas();
-            const uv = cached.region.uv(atlas.size);
-
-            // Snap to device pixel grid (like text rendering)
-            const device_x = b.x * scale_factor;
-            const device_y = b.y * scale_factor;
-            const snapped_x = @floor(device_x) / scale_factor;
-            const snapped_y = @floor(device_y) / scale_factor;
-
-            // Get fill and stroke colors
-            const fill_color = if (pending.has_fill) pending.color else Hsla.transparent;
-            const stroke_col = if (pending.stroke_color) |sc| sc else Hsla.transparent;
-
-            const instance = svg_instance_mod.SvgInstance.init(
-                snapped_x,
-                snapped_y,
-                b.width,
-                b.height,
-                uv.u0,
-                uv.v0,
-                uv.u1,
-                uv.v1,
-                fill_color,
-                stroke_col,
-            );
-
-            try cx.gooey().scene.insertSvgClipped(instance);
-        }
-    }
-
-    // Render pending images (after layout is computed)
-    const pending_images = cx.builder().getPendingImages();
-    for (pending_images) |pending| {
-        const bounds = cx.gooey().layout.getBoundingBox(pending.layout_id.id);
-        if (bounds) |b| {
-            // Try to load and cache the image
-            const key = image_mod.ImageKey.initFromPath(
-                pending.source,
-                pending.width,
-                pending.height,
-                cx.gooey().scale_factor,
-            );
-
-            // Check if image is already cached, or try to load it
-            const cached = cx.gooey().image_atlas.get(key) orelse blk: {
-                // WARNING: Synchronous disk I/O - causes frame hitch on first load of each image.
-                // This is acceptable for v1 since images are cached after first load.
-                // TODO(v1.1): Add cx.preloadImage(path) API for init-time loading
-                // TODO(v2): Consider async loading with placeholder until ready
-                var decoded = image_mod.loader.loadFromPath(
-                    cx.gooey().allocator,
-                    pending.source,
-                ) catch |err| {
-                    std.debug.print("Failed to load image '{s}': {}\n", .{ pending.source, err });
-                    continue;
-                };
-                defer decoded.deinit();
-
-                // Cache it
-                break :blk cx.gooey().image_atlas.cacheImage(key, decoded.toImageData()) catch |err| {
-                    std.debug.print("Failed to cache image '{s}': {}\n", .{ pending.source, err });
-                    continue;
-                };
-            };
-
-            if (cached.region.width == 0) continue;
-
-            // Get base UV coordinates from atlas region
-            const atlas = cx.gooey().image_atlas.getAtlas();
-            const base_uv = cached.region.uv(atlas.size);
-
-            // Calculate fit dimensions and UV adjustments
-            const src_w: f32 = @floatFromInt(cached.source_width);
-            const src_h: f32 = @floatFromInt(cached.source_height);
-            const fit = image_mod.ImageAtlas.calculateFitResult(
-                src_w,
-                src_h,
-                b.width,
-                b.height,
-                pending.fit,
-            );
-
-            // Apply UV adjustments for cover/none modes (fit.uv_* are 0-1 normalized)
-            const uv_width = base_uv.u1 - base_uv.u0;
-            const uv_height = base_uv.v1 - base_uv.v0;
-            const final_u0 = base_uv.u0 + fit.uv_left * uv_width;
-            const final_v0 = base_uv.v0 + fit.uv_top * uv_height;
-            const final_u1 = base_uv.u0 + fit.uv_right * uv_width;
-            const final_v1 = base_uv.v0 + fit.uv_bottom * uv_height;
-
-            // Snap to device pixel grid
-            const scale_factor = cx.gooey().scale_factor;
-            const device_x = (b.x + fit.offset_x) * scale_factor;
-            const device_y = (b.y + fit.offset_y) * scale_factor;
-            const snapped_x = @floor(device_x) / scale_factor;
-            const snapped_y = @floor(device_y) / scale_factor;
-
-            // Create image instance
-            var instance = image_instance_mod.ImageInstance.init(
-                snapped_x,
-                snapped_y,
-                fit.width,
-                fit.height,
-                final_u0,
-                final_v0,
-                final_u1,
-                final_v1,
-            );
-
-            // Apply tint if specified
-            if (pending.tint) |t| {
-                instance = instance.withTint(t);
-            }
-
-            // Apply effects
-            instance = instance.withOpacity(pending.opacity);
-            instance = instance.withGrayscale(pending.grayscale);
-
-            // Apply corner radius if specified
-            if (pending.corner_radius) |cr| {
-                instance = instance.withCornerRadii(
-                    cr.top_left,
-                    cr.top_right,
-                    cr.bottom_right,
-                    cr.bottom_left,
-                );
-            }
-
-            try cx.gooey().scene.insertImageClipped(instance);
-        }
     }
 
     // Render text inputs
@@ -1163,6 +1004,160 @@ fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
                 },
             );
         },
+        .svg => {
+            const svg_data = cmd.data.svg;
+            const b = cmd.bounding_box;
+            const scale_factor = gooey_ctx.scale_factor;
+
+            // Determine stroke width for caching
+            const stroke_w: ?f32 = if (svg_data.stroke_color != null)
+                svg_data.stroke_width
+            else
+                null;
+
+            // Get from atlas (rasterizes if not cached)
+            const cached = gooey_ctx.svg_atlas.getOrRasterize(
+                svg_data.path,
+                svg_data.viewbox,
+                @max(b.width, b.height),
+                svg_data.has_fill,
+                stroke_w,
+            ) catch return;
+
+            if (cached.region.width == 0) return;
+
+            // Get UV coordinates
+            const atlas = gooey_ctx.svg_atlas.getAtlas();
+            const uv = cached.region.uv(atlas.size);
+
+            // Snap to device pixel grid
+            const device_x = b.x * scale_factor;
+            const device_y = b.y * scale_factor;
+            const snapped_x = @floor(device_x) / scale_factor;
+            const snapped_y = @floor(device_y) / scale_factor;
+
+            // Get fill and stroke colors
+            const fill_color = if (svg_data.has_fill) render_bridge.colorToHsla(svg_data.color) else Hsla.transparent;
+            const stroke_col = if (svg_data.stroke_color) |sc| render_bridge.colorToHsla(sc) else Hsla.transparent;
+
+            const instance = svg_instance_mod.SvgInstance.init(
+                snapped_x,
+                snapped_y,
+                b.width,
+                b.height,
+                uv.u0,
+                uv.v0,
+                uv.u1,
+                uv.v1,
+                fill_color,
+                stroke_col,
+            );
+
+            try gooey_ctx.scene.insertSvgClipped(instance);
+        },
+        .image => {
+            const img_data = cmd.data.image;
+            const b = cmd.bounding_box;
+            const scale_factor = gooey_ctx.scale_factor;
+
+            // Detect if source is a URL or file path
+            const is_url = std.mem.startsWith(u8, img_data.source, "http://") or
+                std.mem.startsWith(u8, img_data.source, "https://");
+
+            // Create image key
+            const key = if (is_url)
+                image_mod.ImageKey.init(
+                    .{ .url = img_data.source },
+                    null,
+                    null,
+                    scale_factor,
+                )
+            else
+                image_mod.ImageKey.initFromPath(
+                    img_data.source,
+                    img_data.width,
+                    img_data.height,
+                    scale_factor,
+                );
+
+            // Check if image is already cached, or try to load it
+            const cached = gooey_ctx.image_atlas.get(key) orelse blk: {
+                if (is_url) return; // URLs handled by async loader
+
+                var decoded = image_mod.loader.loadFromPath(
+                    gooey_ctx.allocator,
+                    img_data.source,
+                ) catch return;
+                defer decoded.deinit();
+
+                break :blk gooey_ctx.image_atlas.cacheImage(key, decoded.toImageData()) catch return;
+            };
+
+            if (cached.region.width == 0) return;
+
+            // Get base UV coordinates from atlas region
+            const atlas = gooey_ctx.image_atlas.getAtlas();
+            const base_uv = cached.region.uv(atlas.size);
+
+            // Calculate fit dimensions and UV adjustments
+            const src_w: f32 = @floatFromInt(cached.source_width);
+            const src_h: f32 = @floatFromInt(cached.source_height);
+            const fit_mode: image_mod.ObjectFit = @enumFromInt(img_data.fit);
+            const fit = image_mod.ImageAtlas.calculateFitResult(
+                src_w,
+                src_h,
+                b.width,
+                b.height,
+                fit_mode,
+            );
+
+            // Adjust UVs for cropping (cover mode)
+            const uv_width = base_uv.u1 - base_uv.u0;
+            const uv_height = base_uv.v1 - base_uv.v0;
+            const final_uv_left = base_uv.u0 + fit.uv_left * uv_width;
+            const final_uv_top = base_uv.v0 + fit.uv_top * uv_height;
+            const final_uv_right = base_uv.u0 + fit.uv_right * uv_width;
+            const final_uv_bottom = base_uv.v0 + fit.uv_bottom * uv_height;
+
+            // Snap to device pixel grid
+            const device_x = (b.x + fit.offset_x) * scale_factor;
+            const device_y = (b.y + fit.offset_y) * scale_factor;
+            const snapped_x = @floor(device_x) / scale_factor;
+            const snapped_y = @floor(device_y) / scale_factor;
+
+            // Create image instance
+            var instance = image_instance_mod.ImageInstance.init(
+                snapped_x,
+                snapped_y,
+                fit.width,
+                fit.height,
+                final_uv_left,
+                final_uv_top,
+                final_uv_right,
+                final_uv_bottom,
+            );
+
+            // Apply tint if specified
+            if (img_data.tint) |t| {
+                instance = instance.withTint(render_bridge.colorToHsla(t));
+            }
+
+            // Apply effects
+            instance = instance.withOpacity(img_data.opacity);
+            instance = instance.withGrayscale(img_data.grayscale);
+
+            // Apply corner radius if specified
+            if (img_data.corner_radius) |cr| {
+                instance = instance.withCornerRadii(
+                    cr.top_left,
+                    cr.top_right,
+                    cr.bottom_right,
+                    cr.bottom_left,
+                );
+            }
+
+            try gooey_ctx.scene.insertImageClipped(instance);
+        },
         .scissor_start => {
             const scissor = cmd.data.scissor_start;
             try gooey_ctx.scene.pushClip(.{
@@ -1323,6 +1318,11 @@ pub fn WebApp(
         else
             null;
 
+        const on_init: ?*const fn (*Cx) void = if (@hasField(@TypeOf(config), "init"))
+            config.init
+        else
+            null;
+
         /// Initialize the application (called from JavaScript)
         pub fn init() callconv(.c) void {
             initImpl() catch |err| {
@@ -1403,6 +1403,11 @@ pub fn WebApp(
             g_initialized = true;
             web_imports.log("Gooey app ready!", .{});
 
+            // Call user init callback if provided
+            if (on_init) |init_fn| {
+                init_fn(&g_cx.?);
+            }
+
             // Start the animation loop
             if (g_platform) |*p| p.run();
         }
@@ -1480,9 +1485,10 @@ pub fn WebApp(
             const vw: f32 = @floatCast(w.size.width);
             const vh: f32 = @floatCast(w.size.height);
 
-            // Sync atlas textures if glyphs/icons were added
+            // Sync atlas textures if glyphs/icons/images were added
             g_renderer.?.syncAtlas(g_gooey.?.text_system);
             g_renderer.?.syncSvgAtlas(&g_gooey.?.svg_atlas);
+            g_renderer.?.syncImageAtlas(&g_gooey.?.image_atlas);
 
             // Render to GPU
             const bg = w.background_color;

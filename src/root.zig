@@ -133,6 +133,28 @@ pub const ImageSource = image.ImageSource;
 pub const ImageData = image.ImageData;
 pub const ObjectFit = image.ObjectFit;
 
+// WASM async image loader (only available on WASM targets)
+pub const wasm_image_loader = if (platform.is_wasm)
+    @import("platform/wgpu/web/image_loader.zig")
+else
+    struct {
+        pub const DecodedImage = struct {
+            width: u32,
+            height: u32,
+            pixels: []u8,
+            owned: bool,
+            pub fn deinit(_: *@This(), _: @import("std").mem.Allocator) void {}
+        };
+        pub const DecodeCallback = *const fn (u32, ?DecodedImage) void;
+        pub fn init(_: @import("std").mem.Allocator) void {}
+        pub fn loadFromUrlAsync(_: []const u8, _: DecodeCallback) ?u32 {
+            return null;
+        }
+        pub fn loadFromMemoryAsync(_: []const u8, _: DecodeCallback) ?u32 {
+            return null;
+        }
+    };
+
 // Render bridge
 pub const render_bridge = core.render_bridge;
 

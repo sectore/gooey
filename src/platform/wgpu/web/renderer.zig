@@ -10,12 +10,15 @@ const scene_mod = @import("../../../core/scene.zig");
 const batch_iter = @import("../../../core/batch_iterator.zig");
 const text_mod = @import("../../../text/mod.zig");
 const svg_mod = @import("../../../svg/mod.zig");
+const image_mod = @import("../../../image/mod.zig");
 const custom_shader = @import("custom_shader.zig");
 
 const Scene = scene_mod.Scene;
 const SvgInstance = scene_mod.SvgInstance;
 const TextSystem = text_mod.TextSystem;
 const SvgAtlas = svg_mod.SvgAtlas;
+const ImageAtlas = image_mod.ImageAtlas;
+const ImageInstance = scene_mod.ImageInstance;
 const PostProcessState = custom_shader.PostProcessState;
 
 // =============================================================================
@@ -25,6 +28,7 @@ const PostProcessState = custom_shader.PostProcessState;
 pub const MAX_PRIMITIVES: u32 = 4096;
 pub const MAX_GLYPHS: u32 = 8192;
 pub const MAX_SVGS: u32 = 1024;
+pub const MAX_IMAGES: u32 = 512;
 
 // =============================================================================
 // GPU Types
@@ -182,6 +186,14 @@ pub const WebRenderer = struct {
     svg_atlas_generation: u32 = 0,
     gpu_svgs: [MAX_SVGS]GpuSvgInstance = undefined,
 
+    // Image rendering
+    image_pipeline: u32 = 0,
+    image_buffer: u32 = 0,
+    image_bind_group: u32 = 0,
+    image_atlas_texture: u32 = 0,
+    image_atlas_generation: u32 = 0,
+    gpu_images: [MAX_IMAGES]ImageInstance = undefined,
+
     initialized: bool = false,
 
     // MSAA state
@@ -201,6 +213,7 @@ pub const WebRenderer = struct {
     const unified_shader = @embedFile("unified_wgsl");
     const text_shader = @embedFile("text_wgsl");
     const svg_shader = @embedFile("svg_wgsl");
+    const image_shader = @embedFile("image_wgsl");
 
     pub fn init(allocator: std.mem.Allocator) !Self {
         var self = Self{
@@ -214,17 +227,20 @@ pub const WebRenderer = struct {
         const unified_module = imports.createShaderModule(unified_shader.ptr, unified_shader.len);
         const text_module = imports.createShaderModule(text_shader.ptr, text_shader.len);
         const svg_module = imports.createShaderModule(svg_shader.ptr, svg_shader.len);
+        const image_module = imports.createShaderModule(image_shader.ptr, image_shader.len);
 
         // Create MSAA-enabled pipelines
         if (self.sample_count > 1) {
             self.pipeline = imports.createMSAARenderPipeline(unified_module, "vs_main", 7, "fs_main", 7, self.sample_count);
             self.text_pipeline = imports.createMSAARenderPipeline(text_module, "vs_main", 7, "fs_main", 7, self.sample_count);
             self.svg_pipeline = imports.createMSAARenderPipeline(svg_module, "vs_main", 7, "fs_main", 7, self.sample_count);
+            self.image_pipeline = imports.createMSAARenderPipeline(image_module, "vs_main", 7, "fs_main", 7, self.sample_count);
         } else {
             // Fallback to non-MSAA pipelines
             self.pipeline = imports.createRenderPipeline(unified_module, "vs_main", 7, "fs_main", 7);
             self.text_pipeline = imports.createRenderPipeline(text_module, "vs_main", 7, "fs_main", 7);
             self.svg_pipeline = imports.createRenderPipeline(svg_module, "vs_main", 7, "fs_main", 7);
+            self.image_pipeline = imports.createRenderPipeline(image_module, "vs_main", 7, "fs_main", 7);
         }
 
         const storage_copy = 0x0080 | 0x0008; // STORAGE | COPY_DST
@@ -234,6 +250,7 @@ pub const WebRenderer = struct {
         self.primitive_buffer = imports.createBuffer(@sizeOf(unified.Primitive) * MAX_PRIMITIVES, storage_copy);
         self.glyph_buffer = imports.createBuffer(@sizeOf(GpuGlyph) * MAX_GLYPHS, storage_copy);
         self.svg_buffer = imports.createBuffer(@sizeOf(GpuSvgInstance) * MAX_SVGS, storage_copy);
+        self.image_buffer = imports.createBuffer(@sizeOf(ImageInstance) * MAX_IMAGES, storage_copy);
         self.uniform_buffer = imports.createBuffer(@sizeOf(Uniforms), uniform_copy);
 
         // Create bind groups
@@ -374,6 +391,50 @@ pub const WebRenderer = struct {
     }
 
     // =========================================================================
+    // Image Atlas Management
+    // =========================================================================
+
+    pub fn uploadImageAtlas(self: *Self, image_atlas: *ImageAtlas) void {
+        const atlas = image_atlas.getAtlas();
+        const pixels = atlas.getData();
+        const size = atlas.size;
+
+        if (self.image_atlas_texture == 0) {
+            // Image atlas uses RGBA format
+            self.image_atlas_texture = imports.createRgbaTexture(size, size, pixels.ptr, @intCast(pixels.len));
+        }
+
+        self.image_bind_group = imports.createImageBindGroup(
+            self.image_pipeline,
+            0,
+            self.image_buffer,
+            self.uniform_buffer,
+            self.image_atlas_texture,
+            self.sampler,
+        );
+
+        self.image_atlas_generation = atlas.generation;
+    }
+
+    pub fn syncImageAtlas(self: *Self, image_atlas: *ImageAtlas) void {
+        const atlas = image_atlas.getAtlas();
+        const generation = image_atlas.getGeneration();
+
+        // Only update if generation changed
+        if (generation == self.image_atlas_generation) return;
+
+        if (self.image_atlas_texture != 0) {
+            const pixels = atlas.getData();
+            const size = atlas.size;
+            imports.updateRgbaTexture(self.image_atlas_texture, size, size, pixels.ptr, @intCast(pixels.len));
+            self.image_atlas_generation = generation;
+        } else {
+            // First time - create the texture
+            self.uploadImageAtlas(image_atlas);
+        }
+    }
+
+    // =========================================================================
     // Rendering
     // =========================================================================
 
@@ -484,6 +545,7 @@ pub const WebRenderer = struct {
         var prim_offset: u32 = 0;
         var glyph_offset: u32 = 0;
         var svg_offset: u32 = 0;
+        var image_offset: u32 = 0;
 
         while (iter.next()) |batch| {
             if (batch_count >= MAX_BATCHES) break;
@@ -553,6 +615,23 @@ pub const WebRenderer = struct {
                     svg_offset += count;
                     batch_count += 1;
                 },
+                .image => |images| {
+                    const count: u32 = @intCast(@min(images.len, MAX_IMAGES - image_offset));
+                    if (count == 0) continue;
+
+                    // ImageInstance is already GPU-ready (extern struct), direct copy
+                    for (images[0..count], 0..) |img, i| {
+                        self.gpu_images[image_offset + i] = img;
+                    }
+
+                    self.batches[batch_count] = .{
+                        .kind = .image,
+                        .start = image_offset,
+                        .count = count,
+                    };
+                    image_offset += count;
+                    batch_count += 1;
+                },
             }
         }
 
@@ -579,6 +658,14 @@ pub const WebRenderer = struct {
                 0,
                 std.mem.sliceAsBytes(self.gpu_svgs[0..svg_offset]).ptr,
                 @intCast(@sizeOf(GpuSvgInstance) * svg_offset),
+            );
+        }
+        if (image_offset > 0) {
+            imports.writeBuffer(
+                self.image_buffer,
+                0,
+                std.mem.sliceAsBytes(self.gpu_images[0..image_offset]).ptr,
+                @intCast(@sizeOf(ImageInstance) * image_offset),
             );
         }
 
@@ -609,6 +696,13 @@ pub const WebRenderer = struct {
                     if (self.svg_bind_group != 0) {
                         imports.setPipeline(self.svg_pipeline);
                         imports.setBindGroup(0, self.svg_bind_group);
+                        imports.drawInstancedWithOffset(6, batch_desc.count, batch_desc.start);
+                    }
+                },
+                .image => {
+                    if (self.image_bind_group != 0) {
+                        imports.setPipeline(self.image_pipeline);
+                        imports.setBindGroup(0, self.image_bind_group);
                         imports.drawInstancedWithOffset(6, batch_desc.count, batch_desc.start);
                     }
                 },

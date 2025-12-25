@@ -157,6 +157,9 @@ pub fn build(b: *std.Build) void {
     gooey_wasm_module.addAnonymousImport("svg_wgsl", .{
         .root_source_file = b.path("src/platform/wgpu/shaders/svg.wgsl"),
     });
+    gooey_wasm_module.addAnonymousImport("image_wgsl", .{
+        .root_source_file = b.path("src/platform/wgpu/shaders/image.wgsl"),
+    });
 
     // -------------------------------------------------------------------------
     // WASM Examples
@@ -193,6 +196,7 @@ pub fn build(b: *std.Build) void {
     addWasmExample(b, gooey_wasm_module, wasm_target, "layout", "src/examples/layout.zig", "web/layout");
     addWasmExample(b, gooey_wasm_module, wasm_target, "select", "src/examples/select.zig", "web/select");
     addWasmExample(b, gooey_wasm_module, wasm_target, "text", "src/examples/text_debug_example.zig", "web/text");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "images", "src/examples/images_wasm.zig", "web/images");
 }
 
 /// Helper to add a native macOS example with minimal boilerplate.

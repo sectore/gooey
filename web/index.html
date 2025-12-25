@@ -1405,6 +1405,148 @@
         },
 
         // =====================================================================
+        // Image Rendering Support
+        // =====================================================================
+
+        // Create bind group for image pipeline (same layout as SVG - RGBA texture)
+        createImageBindGroup: (
+          pipelineHandle,
+          groupIndex,
+          imageBuffer,
+          uniformBuffer,
+          textureHandle,
+          samplerHandle,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const texture = handles.textures.get(textureHandle);
+          const sampler = handles.samplers.get(samplerHandle);
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(groupIndex),
+            entries: [
+              {
+                binding: 0,
+                resource: { buffer: handles.buffers.get(imageBuffer) },
+              },
+              {
+                binding: 1,
+                resource: { buffer: handles.buffers.get(uniformBuffer) },
+              },
+              { binding: 2, resource: texture.createView() },
+              { binding: 3, resource: sampler },
+            ],
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // Request async image decode - JS decodes using createImageBitmap
+        // and calls back via onImageDecoded export when complete
+        requestImageDecode: (dataPtr, dataLen, requestId) => {
+          const memory = wasmInstance.exports.memory;
+          const bytes = new Uint8Array(memory.buffer, dataPtr, dataLen);
+          // Make a copy since memory might change during async operation
+          const bytesCopy = new Uint8Array(bytes);
+          const blob = new Blob([bytesCopy]);
+
+          createImageBitmap(blob)
+            .then((bitmap) => {
+              // Draw to canvas to get RGBA pixels
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(bitmap, 0, 0);
+              const imageData = ctx.getImageData(
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+              );
+
+              // Allocate WASM memory and copy pixels
+              const pixelsLen = imageData.data.length;
+              const pixelsPtr = wasmInstance.exports.wasmAlloc(pixelsLen);
+              const dest = new Uint8Array(
+                wasmInstance.exports.memory.buffer,
+                pixelsPtr,
+                pixelsLen,
+              );
+              dest.set(imageData.data);
+
+              // Callback into WASM
+              wasmInstance.exports.onImageDecoded(
+                requestId,
+                bitmap.width,
+                bitmap.height,
+                pixelsPtr,
+                pixelsLen,
+              );
+
+              bitmap.close();
+            })
+            .catch((err) => {
+              console.error("[Gooey] Image decode failed:", err);
+              // Signal error with zero dimensions
+              wasmInstance.exports.onImageDecoded(requestId, 0, 0, 0, 0);
+            });
+        },
+
+        // Request async image fetch from URL - fetches and decodes using fetch + createImageBitmap
+        // and calls back via onImageDecoded export when complete
+        requestUrlFetch: (urlPtr, urlLen, requestId) => {
+          const memory = wasmInstance.exports.memory;
+          const urlBytes = new Uint8Array(memory.buffer, urlPtr, urlLen);
+          const url = new TextDecoder().decode(urlBytes);
+
+          fetch(url)
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(
+                  `HTTP ${response.status}: ${response.statusText}`,
+                );
+              }
+              return response.blob();
+            })
+            .then((blob) => createImageBitmap(blob))
+            .then((bitmap) => {
+              // Draw to canvas to get RGBA pixels
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(bitmap, 0, 0);
+              const imageData = ctx.getImageData(
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+              );
+
+              // Allocate WASM memory and copy pixels
+              const pixelsLen = imageData.data.length;
+              const pixelsPtr = wasmInstance.exports.wasmAlloc(pixelsLen);
+              const dest = new Uint8Array(
+                wasmInstance.exports.memory.buffer,
+                pixelsPtr,
+                pixelsLen,
+              );
+              dest.set(imageData.data);
+
+              // Callback into WASM
+              wasmInstance.exports.onImageDecoded(
+                requestId,
+                bitmap.width,
+                bitmap.height,
+                pixelsPtr,
+                pixelsLen,
+              );
+
+              bitmap.close();
+            })
+            .catch((err) => {
+              console.error("[Gooey] URL fetch failed:", url, err);
+              // Signal error with zero dimensions
+              wasmInstance.exports.onImageDecoded(requestId, 0, 0, 0, 0);
+            });
+        },
+
+        // =====================================================================
         // Post-Processing Support
         // =====================================================================
 

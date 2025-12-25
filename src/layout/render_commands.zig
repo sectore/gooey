@@ -21,6 +21,7 @@ pub const RenderCommandType = enum {
     rectangle,
     border,
     text,
+    svg,
     image,
     scissor_start,
     scissor_end,
@@ -50,6 +51,7 @@ pub const RenderData = union(RenderCommandType) {
     rectangle: RectangleData,
     border: BorderData,
     text: TextData,
+    svg: SvgData,
     image: ImageData,
     scissor_start: ScissorData,
     scissor_end: void,
@@ -89,10 +91,40 @@ pub const TextData = struct {
     strikethrough: bool = false,
 };
 
+/// Data for SVG rendering
+pub const SvgData = struct {
+    /// SVG path data (the `d` attribute)
+    path: []const u8,
+    /// Fill color
+    color: Color,
+    /// Stroke color (null = no stroke)
+    stroke_color: ?Color = null,
+    /// Stroke width
+    stroke_width: f32 = 1.0,
+    /// Whether to fill the SVG
+    has_fill: bool = true,
+    /// Viewbox size of the source SVG
+    viewbox: f32 = 24,
+};
+
 /// Data for image rendering
 pub const ImageData = struct {
-    image_data: *anyopaque,
-    source_rect: ?BoundingBox = null,
+    /// Image source path or URL
+    source: []const u8,
+    /// Requested width (null = intrinsic)
+    width: ?f32 = null,
+    /// Requested height (null = intrinsic)
+    height: ?f32 = null,
+    /// Object fit mode (0=contain, 1=cover, 2=fill, 3=none, 4=scale_down)
+    fit: u8 = 0,
+    /// Corner radius for rounded images
+    corner_radius: ?CornerRadius = null,
+    /// Tint color (null = no tint)
+    tint: ?Color = null,
+    /// Grayscale amount (0.0 = color, 1.0 = grayscale)
+    grayscale: f32 = 0,
+    /// Opacity (0.0 = transparent, 1.0 = opaque)
+    opacity: f32 = 1,
 };
 
 /// Data for scissor/clip regions

@@ -39,9 +39,11 @@ pub const Input = ui_impl.Input;
 pub const Spacer = ui_impl.Spacer;
 pub const Empty = ui_impl.Empty;
 pub const SvgPrimitive = ui_impl.SvgPrimitive;
+pub const ImagePrimitive = ui_impl.ImagePrimitive;
 pub const KeyContextPrimitive = ui_impl.KeyContextPrimitive;
 pub const ActionHandlerPrimitive = ui_impl.ActionHandlerPrimitive;
 pub const PrimitiveType = ui_impl.PrimitiveType;
+pub const CornerRadius = ui_impl.CornerRadius;
 
 // Styles
 pub const Color = ui_impl.Color;

@@ -461,6 +461,19 @@ pub const Scene = struct {
     }
 
     // ========================================================================
+    // Draw Order Management
+    // ========================================================================
+
+    /// Reserve a draw order for later use (e.g., for deferred SVG/image rendering).
+    /// This allows primitives to maintain correct z-ordering even when their
+    /// actual insertion is deferred until after layout computation.
+    pub fn reserveOrder(self: *Self) DrawOrder {
+        const order = self.next_order;
+        self.next_order += 1;
+        return order;
+    }
+
+    // ========================================================================
     // SVG Insertion
     // ========================================================================
 
@@ -478,6 +491,16 @@ pub const Scene = struct {
         var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
         inst.order = self.next_order;
         self.next_order += 1;
+        try self.svg_instances.append(self.allocator, inst);
+    }
+
+    /// Insert an SVG instance with a pre-reserved draw order and saved clip bounds.
+    /// Use this when the draw order was reserved earlier via reserveOrder().
+    /// The clip bounds should be captured at the same time as the draw order.
+    pub fn insertSvgWithOrder(self: *Self, instance: SvgInstance, order: DrawOrder, clip: ContentMask.ClipBounds) !void {
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = order;
+        self.needs_sort = true; // Out-of-order insert requires sorting
         try self.svg_instances.append(self.allocator, inst);
     }
 
@@ -507,6 +530,16 @@ pub const Scene = struct {
         var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
         inst.order = self.next_order;
         self.next_order += 1;
+        try self.images.append(self.allocator, inst);
+    }
+
+    /// Insert an image instance with a pre-reserved draw order and saved clip bounds.
+    /// Use this when the draw order was reserved earlier via reserveOrder().
+    /// The clip bounds should be captured at the same time as the draw order.
+    pub fn insertImageWithOrder(self: *Self, instance: ImageInstance, order: DrawOrder, clip: ContentMask.ClipBounds) !void {
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = order;
+        self.needs_sort = true; // Out-of-order insert requires sorting
         try self.images.append(self.allocator, inst);
     }
 

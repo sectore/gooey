@@ -53,6 +53,8 @@ pub const ElementDeclaration = struct {
 pub const ElementType = enum {
     container,
     text,
+    svg,
+    image,
 };
 
 pub const TextData = struct {
@@ -61,6 +63,26 @@ pub const TextData = struct {
     measured_width: f32 = 0,
     measured_height: f32 = 0,
     wrapped_lines: ?[]const types.WrappedLine = null,
+};
+
+pub const SvgData = struct {
+    path: []const u8,
+    color: Color,
+    stroke_color: ?Color = null,
+    stroke_width: f32 = 1.0,
+    has_fill: bool = true,
+    viewbox: f32 = 24,
+};
+
+pub const ImageData = struct {
+    source: []const u8,
+    width: ?f32 = null,
+    height: ?f32 = null,
+    fit: u8 = 0, // 0=contain, 1=cover, 2=fill, 3=none, 4=scale_down
+    corner_radius: ?CornerRadius = null,
+    tint: ?Color = null,
+    grayscale: f32 = 0,
+    opacity: f32 = 1,
 };
 
 pub const ComputedLayout = struct {
@@ -82,6 +104,8 @@ pub const LayoutElement = struct {
     computed: ComputedLayout = .{},
     element_type: ElementType = .container,
     text_data: ?TextData = null,
+    svg_data: ?SvgData = null,
+    image_data: ?ImageData = null,
     /// Cached z_index (set during generateRenderCommands for O(1) lookup)
     cached_z_index: i16 = 0,
 };
@@ -257,6 +281,64 @@ pub const LayoutEngine = struct {
             elem.text_data.?.measured_width = @as(f32, @floatFromInt(content.len)) * font_size_f * 0.6;
             elem.text_data.?.measured_height = font_size_f * 1.2;
         }
+    }
+
+    /// Add an SVG element (leaf node) - renders inline with correct z-order
+    pub fn svg(self: *Self, id: LayoutId, width: f32, height: f32, data: SvgData) !void {
+        std.debug.assert(self.open_element_stack.items.len > 0);
+
+        var decl = ElementDeclaration{};
+        decl.id = id;
+        decl.layout.sizing = .{
+            .width = .{ .value = .{ .fixed = .{ .min = width, .max = width } } },
+            .height = .{ .value = .{ .fixed = .{ .min = height, .max = height } } },
+        };
+
+        const index = try self.createElement(decl, .svg);
+        const elem = self.elements.get(index);
+        const path_copy = try self.arena.dupe(data.path);
+        elem.svg_data = SvgData{
+            .path = path_copy,
+            .color = data.color,
+            .stroke_color = data.stroke_color,
+            .stroke_width = data.stroke_width,
+            .has_fill = data.has_fill,
+            .viewbox = data.viewbox,
+        };
+    }
+
+    /// Add an image element (leaf node) - renders inline with correct z-order
+    pub fn image(self: *Self, id: LayoutId, width: ?f32, height: ?f32, data: ImageData) !void {
+        std.debug.assert(self.open_element_stack.items.len > 0);
+
+        var decl = ElementDeclaration{};
+        decl.id = id;
+
+        // Determine sizing - use fixed if specified, otherwise grow
+        decl.layout.sizing = .{
+            .width = if (width) |w|
+                .{ .value = .{ .fixed = .{ .min = w, .max = w } } }
+            else
+                .{ .value = .{ .grow = .{} } },
+            .height = if (height) |h|
+                .{ .value = .{ .fixed = .{ .min = h, .max = h } } }
+            else
+                .{ .value = .{ .grow = .{} } },
+        };
+
+        const index = try self.createElement(decl, .image);
+        const elem = self.elements.get(index);
+        const source_copy = try self.arena.dupe(data.source);
+        elem.image_data = ImageData{
+            .source = source_copy,
+            .width = data.width,
+            .height = data.height,
+            .fit = data.fit,
+            .corner_radius = data.corner_radius,
+            .tint = data.tint,
+            .grayscale = data.grayscale,
+            .opacity = data.opacity,
+        };
     }
 
     /// Create an element and link it into the tree
@@ -1010,6 +1092,44 @@ pub const LayoutEngine = struct {
                     } },
                 });
             }
+        }
+
+        // SVG
+        if (elem.svg_data) |sd| {
+            try self.commands.append(.{
+                .bounding_box = bbox,
+                .command_type = .svg,
+                .z_index = z_index,
+                .id = elem.id,
+                .data = .{ .svg = .{
+                    .path = sd.path,
+                    .color = sd.color,
+                    .stroke_color = sd.stroke_color,
+                    .stroke_width = sd.stroke_width,
+                    .has_fill = sd.has_fill,
+                    .viewbox = sd.viewbox,
+                } },
+            });
+        }
+
+        // Image
+        if (elem.image_data) |id| {
+            try self.commands.append(.{
+                .bounding_box = bbox,
+                .command_type = .image,
+                .z_index = z_index,
+                .id = elem.id,
+                .data = .{ .image = .{
+                    .source = id.source,
+                    .width = id.width,
+                    .height = id.height,
+                    .fit = id.fit,
+                    .corner_radius = id.corner_radius,
+                    .tint = id.tint,
+                    .grayscale = id.grayscale,
+                    .opacity = id.opacity,
+                } },
+            });
         }
 
         // Scissor for scroll containers

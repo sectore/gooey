@@ -302,3 +302,35 @@ pub extern "env" fn getMSAASampleCount() u32;
 
 /// Write text to clipboard. Fire-and-forget from WASM side (async in JS).
 pub extern "env" fn clipboardWriteText(ptr: [*]const u8, len: u32) void;
+
+// =============================================================================
+// Image Loading (Async)
+// =============================================================================
+
+/// Request async image decode - JS will decode using createImageBitmap
+/// and call back via onImageDecoded export when complete.
+/// request_id is used to correlate the callback with the original request.
+pub extern "env" fn requestImageDecode(
+    data_ptr: [*]const u8,
+    data_len: u32,
+    request_id: u32,
+) void;
+
+/// Request async image fetch from URL - JS will fetch and decode using fetch + createImageBitmap
+/// and call back via onImageDecoded export when complete.
+/// request_id is used to correlate the callback with the original request.
+pub extern "env" fn requestUrlFetch(
+    url_ptr: [*]const u8,
+    url_len: u32,
+    request_id: u32,
+) void;
+
+/// Create bind group for image pipeline (RGBA texture, same pattern as SVG)
+pub extern "env" fn createImageBindGroup(
+    pipeline_handle: u32,
+    group_index: u32,
+    image_buffer: u32,
+    uniform_buffer: u32,
+    texture_handle: u32,
+    sampler_handle: u32,
+) u32;
