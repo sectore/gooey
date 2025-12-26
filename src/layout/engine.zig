@@ -231,6 +231,7 @@ pub const LayoutEngine = struct {
         self.elements.clear();
         self.commands.clear();
         self.open_element_stack.clearRetainingCapacity();
+        self.floating_roots.clearRetainingCapacity();
         self.seen_ids.clearRetainingCapacity();
         self.id_to_index.clearRetainingCapacity();
         self.root_index = null;
@@ -416,8 +417,8 @@ pub const LayoutEngine = struct {
         // Phase 3: Compute positions (top-down)
         self.computePositions(self.root_index.?, 0, 0);
 
-        // Phase 3b: Position floating elements
-        self.computeFloatingPositions();
+        // Phase 3b: Position floating elements (includes text wrapping for floats)
+        try self.computeFloatingPositions();
 
         // Phase 4: Generate render commands
         try self.generateRenderCommands(self.root_index.?, 0);
@@ -508,7 +509,7 @@ pub const LayoutEngine = struct {
         }
     }
 
-    fn computeFloatingPositions(self: *Self) void {
+    fn computeFloatingPositions(self: *Self) !void {
         for (self.floating_roots.items) |float_idx| {
             const elem = self.elements.get(float_idx);
             const floating = elem.config.floating orelse continue;
@@ -516,6 +517,17 @@ pub const LayoutEngine = struct {
             // Compute sizes for floating element and its children
             // Floating elements size themselves based on their content (min sizes),
             // not constrained by parent layout flow
+            self.computeFinalSizes(float_idx, self.viewport_width, self.viewport_height);
+
+            // Wrap text for floating elements now that they're sized
+            // (main text wrapping pass happens before floating elements are sized)
+            try self.computeTextWrapping(float_idx);
+
+            // Recompute min sizes after text wrapping changed text dimensions
+            // This propagates the new text height up to parent containers
+            self.computeMinSizes(float_idx);
+
+            // Recompute final sizes with updated min sizes
             self.computeFinalSizes(float_idx, self.viewport_width, self.viewport_height);
 
             // Find parent bounding box
@@ -542,9 +554,18 @@ pub const LayoutEngine = struct {
             const elem_offset_x = elem.computed.sized_width * floating.element_attach.normalizedX();
             const elem_offset_y = elem.computed.sized_height * floating.element_attach.normalizedY();
 
-            // Final position
-            const final_x = parent_x - elem_offset_x + floating.offset.x;
-            const final_y = parent_y - elem_offset_y + floating.offset.y;
+            // Final position (before clamping)
+            var final_x = parent_x - elem_offset_x + floating.offset.x;
+            var final_y = parent_y - elem_offset_y + floating.offset.y;
+
+            // Clamp to viewport bounds (keep floating elements on-screen)
+            // Only clamp if actually going off-screen, don't add margin otherwise
+            if (final_x < 0) final_x = 0;
+            if (final_y < 0) final_y = 0;
+            const max_x = self.viewport_width - elem.computed.sized_width;
+            const max_y = self.viewport_height - elem.computed.sized_height;
+            if (final_x > max_x) final_x = @max(0, max_x);
+            if (final_y > max_y) final_y = @max(0, max_y);
 
             // Update bounding boxes
             elem.computed.bounding_box = .{

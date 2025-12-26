@@ -16,3 +16,4 @@ pub const Icons = @import("svg.zig").Icons;
 pub const Select = @import("select.zig").Select;
 pub const Image = @import("image.zig").Image;
 pub const AspectRatio = @import("image.zig").AspectRatio;
+pub const Tooltip = @import("tooltip.zig").Tooltip;
