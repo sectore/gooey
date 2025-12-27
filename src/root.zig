@@ -86,6 +86,7 @@ pub const Select = components.Select;
 pub const Image = components.Image;
 pub const AspectRatio = components.AspectRatio;
 pub const Tooltip = components.Tooltip;
+pub const Modal = components.Modal;
 
 // =============================================================================
 // App Entry Point (most common usage)
