@@ -14,6 +14,8 @@ pub const text_shader_source =
     \\using namespace metal;
     \\
     \\struct GlyphInstance {
+    \\    uint order;
+    \\    uint _pad0;
     \\    float pos_x;
     \\    float pos_y;
     \\    float size_x;
@@ -22,7 +24,9 @@ pub const text_shader_source =
     \\    float uv_top;
     \\    float uv_right;
     \\    float uv_bottom;
-    \\    float4 color;  // HSLA
+    \\    uint _pad1;  // Align float4 color to 16-byte boundary
+    \\    uint _pad2;
+    \\    float4 color;  // HSLA - must be at 16-byte aligned offset
     \\    float clip_x;
     \\    float clip_y;
     \\    float clip_width;
@@ -129,6 +133,8 @@ pub const TextPipeline = struct {
     instance_buffers: [FRAME_COUNT]objc.Object,
     instance_capacities: [FRAME_COUNT]usize,
     frame_index: usize,
+    // Current offset within frame's buffer (for batched rendering)
+    current_offset: usize,
 
     atlas_texture: ?objc.Object,
     atlas_generation: u32,
@@ -243,6 +249,7 @@ pub const TextPipeline = struct {
             instance_buffers[i] = objc.Object.fromId(buffer_ptr);
             instance_capacities[i] = INITIAL_CAPACITY;
         }
+
         // Create sampler state
         const MTLSamplerDescriptor = objc.getClass("MTLSamplerDescriptor") orelse
             return error.ClassNotFound;
@@ -264,6 +271,7 @@ pub const TextPipeline = struct {
             .instance_buffers = instance_buffers,
             .instance_capacities = instance_capacities,
             .frame_index = 0,
+            .current_offset = 0,
             .atlas_texture = null,
             .atlas_generation = 0,
             .sampler_state = sampler_state,
@@ -284,6 +292,7 @@ pub const TextPipeline = struct {
     /// Advance to next buffer (call at start of frame)
     pub fn nextFrame(self: *Self) void {
         self.frame_index = (self.frame_index + 1) % FRAME_COUNT;
+        self.current_offset = 0; // Reset offset for new frame
     }
 
     /// Update atlas texture if generation changed
@@ -338,7 +347,7 @@ pub const TextPipeline = struct {
         self.atlas_generation = atlas.generation;
     }
 
-    /// Render glyphs
+    /// Render glyphs (legacy - single call per frame)
     pub fn render(
         self: *Self,
         encoder: objc.Object,
@@ -372,6 +381,77 @@ pub const TextPipeline = struct {
         encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
             self.instance_buffers[idx], // Current frame's buffer
             @as(c_ulong, 0),
+            @as(c_ulong, 1),
+        });
+        encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+            @as(*const anyopaque, @ptrCast(&viewport_size)),
+            @as(c_ulong, @sizeOf([2]f32)),
+            @as(c_ulong, 2),
+        });
+
+        // Set fragment texture
+        encoder.msgSend(void, "setFragmentTexture:atIndex:", .{
+            self.atlas_texture.?,
+            @as(c_ulong, 0),
+        });
+        encoder.msgSend(void, "setFragmentSamplerState:atIndex:", .{
+            self.sampler_state,
+            @as(c_ulong, 0),
+        });
+
+        // Draw instanced
+        encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{
+            mtl.MTLPrimitiveType.triangle,
+            @as(c_ulong, 0),
+            @as(c_ulong, 6),
+            @as(c_ulong, glyphs.len),
+        });
+    }
+
+    /// Render a batch of glyphs using triple-buffered storage with offset tracking.
+    /// Safe for multiple calls per frame - appends to buffer at current offset.
+    /// More efficient than setVertexBytes for larger batches.
+    pub fn renderBatch(
+        self: *Self,
+        encoder: objc.Object,
+        glyphs: []const scene.GlyphInstance,
+        viewport_size: [2]f32,
+    ) !void {
+        if (glyphs.len == 0) return;
+        if (self.atlas_texture == null) return;
+
+        const idx = self.frame_index;
+        const byte_offset = self.current_offset * @sizeOf(scene.GlyphInstance);
+        const needed_capacity = self.current_offset + glyphs.len;
+
+        // Grow buffer if needed
+        if (needed_capacity > self.instance_capacities[idx]) {
+            try self.growInstanceBuffer(idx, needed_capacity);
+        }
+
+        // Upload glyphs at current offset
+        const buffer_ptr = self.instance_buffers[idx].msgSend(*anyopaque, "contents", .{});
+        const base: [*]scene.GlyphInstance = @ptrCast(@alignCast(buffer_ptr));
+        const dest = base + self.current_offset;
+        @memcpy(dest[0..glyphs.len], glyphs);
+
+        // Advance offset for next batch
+        self.current_offset += glyphs.len;
+
+        // Set pipeline state
+        encoder.msgSend(void, "setRenderPipelineState:", .{self.pipeline_state});
+
+        // Set unit vertex buffer
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+            self.unit_vertex_buffer,
+            @as(c_ulong, 0),
+            @as(c_ulong, 0),
+        });
+
+        // Set instance buffer with offset for this batch
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+            self.instance_buffers[idx],
+            @as(c_ulong, byte_offset),
             @as(c_ulong, 1),
         });
         encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{

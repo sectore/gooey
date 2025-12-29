@@ -48,11 +48,15 @@ pub const ElementDeclaration = struct {
     scroll: ?types.ScrollConfig = null,
     floating: ?types.FloatingConfig = null,
     user_data: ?*anyopaque = null,
+    /// Opacity for the entire element subtree (0.0 = transparent, 1.0 = opaque)
+    opacity: f32 = 1.0,
 };
 
 pub const ElementType = enum {
     container,
     text,
+    svg,
+    image,
 };
 
 pub const TextData = struct {
@@ -61,6 +65,26 @@ pub const TextData = struct {
     measured_width: f32 = 0,
     measured_height: f32 = 0,
     wrapped_lines: ?[]const types.WrappedLine = null,
+};
+
+pub const SvgData = struct {
+    path: []const u8,
+    color: Color,
+    stroke_color: ?Color = null,
+    stroke_width: f32 = 1.0,
+    has_fill: bool = true,
+    viewbox: f32 = 24,
+};
+
+pub const ImageData = struct {
+    source: []const u8,
+    width: ?f32 = null,
+    height: ?f32 = null,
+    fit: u8 = 0, // 0=contain, 1=cover, 2=fill, 3=none, 4=scale_down
+    corner_radius: ?CornerRadius = null,
+    tint: ?Color = null,
+    grayscale: f32 = 0,
+    opacity: f32 = 1,
 };
 
 pub const ComputedLayout = struct {
@@ -82,6 +106,10 @@ pub const LayoutElement = struct {
     computed: ComputedLayout = .{},
     element_type: ElementType = .container,
     text_data: ?TextData = null,
+    svg_data: ?SvgData = null,
+    image_data: ?ImageData = null,
+    /// Cached z_index (set during generateRenderCommands for O(1) lookup)
+    cached_z_index: i16 = 0,
 };
 
 /// Element storage (unmanaged ArrayList pattern)
@@ -205,6 +233,7 @@ pub const LayoutEngine = struct {
         self.elements.clear();
         self.commands.clear();
         self.open_element_stack.clearRetainingCapacity();
+        self.floating_roots.clearRetainingCapacity();
         self.seen_ids.clearRetainingCapacity();
         self.id_to_index.clearRetainingCapacity();
         self.root_index = null;
@@ -255,6 +284,64 @@ pub const LayoutEngine = struct {
             elem.text_data.?.measured_width = @as(f32, @floatFromInt(content.len)) * font_size_f * 0.6;
             elem.text_data.?.measured_height = font_size_f * 1.2;
         }
+    }
+
+    /// Add an SVG element (leaf node) - renders inline with correct z-order
+    pub fn svg(self: *Self, id: LayoutId, width: f32, height: f32, data: SvgData) !void {
+        std.debug.assert(self.open_element_stack.items.len > 0);
+
+        var decl = ElementDeclaration{};
+        decl.id = id;
+        decl.layout.sizing = .{
+            .width = .{ .value = .{ .fixed = .{ .min = width, .max = width } } },
+            .height = .{ .value = .{ .fixed = .{ .min = height, .max = height } } },
+        };
+
+        const index = try self.createElement(decl, .svg);
+        const elem = self.elements.get(index);
+        const path_copy = try self.arena.dupe(data.path);
+        elem.svg_data = SvgData{
+            .path = path_copy,
+            .color = data.color,
+            .stroke_color = data.stroke_color,
+            .stroke_width = data.stroke_width,
+            .has_fill = data.has_fill,
+            .viewbox = data.viewbox,
+        };
+    }
+
+    /// Add an image element (leaf node) - renders inline with correct z-order
+    pub fn image(self: *Self, id: LayoutId, width: ?f32, height: ?f32, data: ImageData) !void {
+        std.debug.assert(self.open_element_stack.items.len > 0);
+
+        var decl = ElementDeclaration{};
+        decl.id = id;
+
+        // Determine sizing - use fixed if specified, otherwise grow
+        decl.layout.sizing = .{
+            .width = if (width) |w|
+                .{ .value = .{ .fixed = .{ .min = w, .max = w } } }
+            else
+                .{ .value = .{ .grow = .{} } },
+            .height = if (height) |h|
+                .{ .value = .{ .fixed = .{ .min = h, .max = h } } }
+            else
+                .{ .value = .{ .grow = .{} } },
+        };
+
+        const index = try self.createElement(decl, .image);
+        const elem = self.elements.get(index);
+        const source_copy = try self.arena.dupe(data.source);
+        elem.image_data = ImageData{
+            .source = source_copy,
+            .width = data.width,
+            .height = data.height,
+            .fit = data.fit,
+            .corner_radius = data.corner_radius,
+            .tint = data.tint,
+            .grayscale = data.grayscale,
+            .opacity = data.opacity,
+        };
     }
 
     /// Create an element and link it into the tree
@@ -332,11 +419,11 @@ pub const LayoutEngine = struct {
         // Phase 3: Compute positions (top-down)
         self.computePositions(self.root_index.?, 0, 0);
 
-        // Phase 3b: Position floating elements
-        self.computeFloatingPositions();
+        // Phase 3b: Position floating elements (includes text wrapping for floats)
+        try self.computeFloatingPositions();
 
         // Phase 4: Generate render commands
-        try self.generateRenderCommands(self.root_index.?);
+        try self.generateRenderCommands(self.root_index.?, 0, 1.0);
 
         // Sort by z-index to handle floating elements properly
         self.commands.sortByZIndex();
@@ -424,10 +511,26 @@ pub const LayoutEngine = struct {
         }
     }
 
-    fn computeFloatingPositions(self: *Self) void {
+    fn computeFloatingPositions(self: *Self) !void {
         for (self.floating_roots.items) |float_idx| {
             const elem = self.elements.get(float_idx);
             const floating = elem.config.floating orelse continue;
+
+            // Compute sizes for floating element and its children
+            // Floating elements size themselves based on their content (min sizes),
+            // not constrained by parent layout flow
+            self.computeFinalSizes(float_idx, self.viewport_width, self.viewport_height);
+
+            // Wrap text for floating elements now that they're sized
+            // (main text wrapping pass happens before floating elements are sized)
+            try self.computeTextWrapping(float_idx);
+
+            // Recompute min sizes after text wrapping changed text dimensions
+            // This propagates the new text height up to parent containers
+            self.computeMinSizes(float_idx);
+
+            // Recompute final sizes with updated min sizes
+            self.computeFinalSizes(float_idx, self.viewport_width, self.viewport_height);
 
             // Find parent bounding box
             var parent_bbox: BoundingBox = .{
@@ -453,9 +556,18 @@ pub const LayoutEngine = struct {
             const elem_offset_x = elem.computed.sized_width * floating.element_attach.normalizedX();
             const elem_offset_y = elem.computed.sized_height * floating.element_attach.normalizedY();
 
-            // Final position
-            const final_x = parent_x - elem_offset_x + floating.offset.x;
-            const final_y = parent_y - elem_offset_y + floating.offset.y;
+            // Final position (before clamping)
+            var final_x = parent_x - elem_offset_x + floating.offset.x;
+            var final_y = parent_y - elem_offset_y + floating.offset.y;
+
+            // Clamp to viewport bounds (keep floating elements on-screen)
+            // Only clamp if actually going off-screen, don't add margin otherwise
+            if (final_x < 0) final_x = 0;
+            if (final_y < 0) final_y = 0;
+            const max_x = self.viewport_width - elem.computed.sized_width;
+            const max_y = self.viewport_height - elem.computed.sized_height;
+            if (final_x > max_x) final_x = @max(0, max_x);
+            if (final_y > max_y) final_y = @max(0, max_y);
 
             // Update bounding boxes
             elem.computed.bounding_box = .{
@@ -490,6 +602,14 @@ pub const LayoutEngine = struct {
         return self.elements.getConst(index).computed.bounding_box;
     }
 
+    /// Get z-index for an element by ID (O(1) lookup using cached value)
+    /// Returns the z_index from the nearest floating ancestor, or 0 for non-floating subtrees.
+    /// The z_index is cached during generateRenderCommands.
+    pub fn getZIndex(self: *const Self, id: u32) i16 {
+        const index = self.id_to_index.get(id) orelse return 0;
+        return self.elements.getConst(index).cached_z_index;
+    }
+
     // =========================================================================
     // Phase 1: Compute minimum sizes (bottom-up)
     // =========================================================================
@@ -511,16 +631,19 @@ pub const LayoutEngine = struct {
                 self.computeMinSizes(ci);
                 const child = self.elements.getConst(ci);
 
-                if (layout.layout_direction.isHorizontal()) {
-                    content_width += child.computed.min_width;
-                    content_height = @max(content_height, child.computed.min_height);
-                } else {
-                    content_width = @max(content_width, child.computed.min_width);
-                    content_height += child.computed.min_height;
+                // Skip floating elements - they don't affect parent's min size
+                if (child.config.floating == null) {
+                    if (layout.layout_direction.isHorizontal()) {
+                        content_width += child.computed.min_width;
+                        content_height = @max(content_height, child.computed.min_height);
+                    } else {
+                        content_width = @max(content_width, child.computed.min_width);
+                        content_height += child.computed.min_height;
+                    }
+                    child_count += 1;
                 }
 
                 child_idx = child.next_sibling_index;
-                child_count += 1;
             }
 
             // Add gaps between children
@@ -594,6 +717,13 @@ pub const LayoutEngine = struct {
         var child_idx: ?u32 = first_child;
         while (child_idx) |ci| {
             const child = self.elements.getConst(ci);
+
+            // Skip floating elements - they don't participate in space distribution
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
+
             const child_sizing = if (is_horizontal)
                 child.config.layout.sizing.width
             else
@@ -637,6 +767,13 @@ pub const LayoutEngine = struct {
             child_idx = first_child;
             while (child_idx) |ci| {
                 const child = self.elements.get(ci);
+
+                // Skip floating elements
+                if (child.config.floating != null) {
+                    child_idx = child.next_sibling_index;
+                    continue;
+                }
+
                 const child_sizing = if (is_horizontal)
                     child.config.layout.sizing.width
                 else
@@ -705,6 +842,13 @@ pub const LayoutEngine = struct {
         child_idx = first_child;
         while (child_idx) |ci| {
             const child = self.elements.get(ci);
+
+            // Skip floating elements
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
+
             const child_sizing_main = if (is_horizontal)
                 child.config.layout.sizing.width
             else
@@ -784,16 +928,19 @@ pub const LayoutEngine = struct {
         const offset_x: f32 = if (scroll_offset) |s| -s.x else 0;
         const offset_y: f32 = if (scroll_offset) |s| -s.y else 0;
 
-        // Calculate total children size for alignment
+        // Calculate total children size for alignment (skip floating elements)
         var total_main: f32 = 0;
         var child_count: u32 = 0;
         var child_idx: ?u32 = first_child;
 
         while (child_idx) |ci| {
             const child = self.elements.getConst(ci);
-            total_main += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
+            // Skip floating elements - they don't participate in normal flow
+            if (child.config.floating == null) {
+                total_main += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
+                child_count += 1;
+            }
             child_idx = child.next_sibling_index;
-            child_count += 1;
         }
 
         if (child_count > 1) {
@@ -822,6 +969,12 @@ pub const LayoutEngine = struct {
         child_idx = first_child;
         while (child_idx) |ci| {
             const child = self.elements.get(ci);
+
+            // Skip floating elements - they are positioned separately in computeFloatingPositions
+            if (child.config.floating != null) {
+                child_idx = child.next_sibling_index;
+                continue;
+            }
 
             // Cross-axis alignment
             var child_x = cursor_x;
@@ -858,9 +1011,18 @@ pub const LayoutEngine = struct {
     // Phase 4: Generate render commands
     // =========================================================================
 
-    fn generateRenderCommands(self: *Self, index: u32) !void {
-        const elem = self.elements.getConst(index);
+    fn generateRenderCommands(self: *Self, index: u32, inherited_z_index: i16, inherited_opacity: f32) !void {
+        const elem = self.elements.get(index);
         const bbox = elem.computed.bounding_box;
+
+        // Floating elements override z_index for themselves and their children
+        const z_index: i16 = if (elem.config.floating) |f| f.z_index else inherited_z_index;
+
+        // Combine element opacity with inherited opacity (multiplicative)
+        const opacity = elem.config.opacity * inherited_opacity;
+
+        // Cache z_index for O(1) lookup via getZIndex()
+        elem.cached_z_index = z_index;
 
         // Shadow (renders BEFORE background rectangle)
         if (elem.config.shadow) |shadow| {
@@ -868,10 +1030,11 @@ pub const LayoutEngine = struct {
                 try self.commands.append(.{
                     .bounding_box = bbox,
                     .command_type = .shadow,
+                    .z_index = z_index,
                     .id = elem.id,
                     .data = .{ .shadow = .{
                         .blur_radius = shadow.blur_radius,
-                        .color = shadow.color,
+                        .color = shadow.color.withAlpha(shadow.color.a * opacity),
                         .offset_x = shadow.offset_x,
                         .offset_y = shadow.offset_y,
                         .corner_radius = elem.config.corner_radius,
@@ -885,9 +1048,10 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .rectangle,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .rectangle = .{
-                    .background_color = bg,
+                    .background_color = bg.withAlpha(bg.a * opacity),
                     .corner_radius = elem.config.corner_radius,
                 } },
             });
@@ -898,9 +1062,10 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .border,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .border = .{
-                    .color = border.color,
+                    .color = border.color.withAlpha(border.color.a * opacity),
                     .width = border.width,
                     .corner_radius = elem.config.corner_radius,
                 } },
@@ -909,6 +1074,7 @@ pub const LayoutEngine = struct {
 
         // Text
         if (elem.text_data) |td| {
+            const text_color = td.config.color.withAlpha(td.config.color.a * opacity);
             if (td.wrapped_lines) |lines| {
                 // Render each wrapped line
                 const line_height = td.config.lineHeightPx();
@@ -922,10 +1088,11 @@ pub const LayoutEngine = struct {
                             .height = line_height,
                         },
                         .command_type = .text,
+                        .z_index = z_index,
                         .id = elem.id,
                         .data = .{ .text = .{
                             .text = td.text[line.start_offset..][0..line.length],
-                            .color = td.config.color,
+                            .color = text_color,
                             .font_id = td.config.font_id,
                             .font_size = td.config.font_size,
                             .letter_spacing = td.config.letter_spacing,
@@ -939,10 +1106,11 @@ pub const LayoutEngine = struct {
                 try self.commands.append(.{
                     .bounding_box = bbox,
                     .command_type = .text,
+                    .z_index = z_index,
                     .id = elem.id,
                     .data = .{ .text = .{
                         .text = td.text,
-                        .color = td.config.color,
+                        .color = text_color,
                         .font_id = td.config.font_id,
                         .font_size = td.config.font_size,
                         .letter_spacing = td.config.letter_spacing,
@@ -953,21 +1121,60 @@ pub const LayoutEngine = struct {
             }
         }
 
+        // SVG
+        if (elem.svg_data) |sd| {
+            try self.commands.append(.{
+                .bounding_box = bbox,
+                .command_type = .svg,
+                .z_index = z_index,
+                .id = elem.id,
+                .data = .{ .svg = .{
+                    .path = sd.path,
+                    .color = sd.color.withAlpha(sd.color.a * opacity),
+                    .stroke_color = if (sd.stroke_color) |sc| sc.withAlpha(sc.a * opacity) else null,
+                    .stroke_width = sd.stroke_width,
+                    .has_fill = sd.has_fill,
+                    .viewbox = sd.viewbox,
+                } },
+            });
+        }
+
+        // Image
+        if (elem.image_data) |id| {
+            try self.commands.append(.{
+                .bounding_box = bbox,
+                .command_type = .image,
+                .z_index = z_index,
+                .id = elem.id,
+                .data = .{ .image = .{
+                    .source = id.source,
+                    .width = id.width,
+                    .height = id.height,
+                    .fit = id.fit,
+                    .corner_radius = id.corner_radius,
+                    .tint = id.tint,
+                    .grayscale = id.grayscale,
+                    .opacity = id.opacity * opacity,
+                } },
+            });
+        }
+
         // Scissor for scroll containers
         if (elem.config.scroll) |_| {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .scissor_start,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .scissor_start = .{ .clip_bounds = bbox } },
             });
         }
 
-        // Recurse to children
+        // Recurse to children (passing inherited opacity)
         if (elem.first_child_index) |first_child| {
             var child_idx: ?u32 = first_child;
             while (child_idx) |ci| {
-                try self.generateRenderCommands(ci);
+                try self.generateRenderCommands(ci, z_index, opacity);
                 child_idx = self.elements.getConst(ci).next_sibling_index;
             }
         }
@@ -977,6 +1184,7 @@ pub const LayoutEngine = struct {
             try self.commands.append(.{
                 .bounding_box = bbox,
                 .command_type = .scissor_end,
+                .z_index = z_index,
                 .id = elem.id,
                 .data = .{ .scissor_end = {} },
             });
@@ -1314,6 +1522,66 @@ test "floating positioning" {
     try std.testing.expectEqual(parent.computed.bounding_box.y + parent.computed.bounding_box.height, floating.computed.bounding_box.y);
 }
 
+test "floating elements don't affect parent sizing or sibling layout" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Parent with fit-content sizing
+    try engine.openElement(.{
+        .id = LayoutId.init("parent"),
+        .layout = .{
+            .sizing = Sizing.fitContent(),
+            .layout_direction = .top_to_bottom,
+            .child_gap = 10,
+        },
+        .background_color = Color.white,
+    });
+    {
+        // Regular child - should determine parent size
+        try engine.openElement(.{
+            .id = LayoutId.init("regular-child"),
+            .layout = .{ .sizing = Sizing.fixed(100, 50) },
+            .background_color = Color.red,
+        });
+        engine.closeElement();
+
+        // Floating child - should NOT affect parent size
+        try engine.openElement(.{
+            .id = LayoutId.init("floating-child"),
+            .layout = .{ .sizing = Sizing.fixed(200, 300) }, // Much larger than regular child
+            .floating = types.FloatingConfig.dropdown(),
+            .background_color = Color.blue,
+        });
+        engine.closeElement();
+
+        // Another regular child - should be positioned ignoring floating sibling
+        try engine.openElement(.{
+            .id = LayoutId.init("second-child"),
+            .layout = .{ .sizing = Sizing.fixed(100, 50) },
+            .background_color = Color.green,
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const parent = engine.elements.getConst(0);
+    const regular_child = engine.elements.getConst(1);
+    const second_child = engine.elements.getConst(3);
+
+    // Parent should only be sized by regular children (100x50 + gap + 100x50 = 100x110)
+    // NOT affected by floating child's 200x300
+    try std.testing.expectEqual(@as(f32, 100), parent.computed.sized_width);
+    try std.testing.expectEqual(@as(f32, 110), parent.computed.sized_height); // 50 + 10 gap + 50
+
+    // Second child should be positioned right after first child (ignoring floating)
+    // First child at y=0, height=50, gap=10, so second child at y=60
+    try std.testing.expectEqual(regular_child.computed.bounding_box.y + 50 + 10, second_child.computed.bounding_box.y);
+}
+
 test "text wrapping creates multiple lines" {
     var engine = LayoutEngine.init(std.testing.allocator);
     defer engine.deinit();
@@ -1528,4 +1796,95 @@ test "propagateHeightChange stops at fixed-height parent" {
 
     // Inner (fit-content) should have grown
     try std.testing.expect(inner.computed.sized_height >= 40.0);
+}
+
+test "z-index propagates to render commands" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Parent element (z_index = 0)
+    try engine.openElement(.{
+        .id = LayoutId.init("parent"),
+        .layout = .{ .sizing = Sizing.fixed(200, 100) },
+        .background_color = Color.white,
+    });
+    {
+        // Floating child with z_index = 100
+        try engine.openElement(.{
+            .id = LayoutId.init("dropdown"),
+            .layout = .{ .sizing = Sizing.fixed(150, 80) },
+            .floating = .{ .z_index = 100, .element_attach = .left_top, .parent_attach = .left_bottom },
+            .background_color = Color.blue,
+        });
+        {
+            // Nested child inside floating - should inherit z_index
+            try engine.openElement(.{
+                .id = LayoutId.init("dropdown-item"),
+                .layout = .{ .sizing = Sizing.fixed(140, 30) },
+                .background_color = Color.red,
+            });
+            engine.closeElement();
+        }
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    const commands = try engine.endFrame();
+
+    // Find commands by element ID
+    var parent_z: ?i16 = null;
+    var dropdown_z: ?i16 = null;
+    var dropdown_item_z: ?i16 = null;
+
+    for (commands) |cmd| {
+        if (cmd.id == LayoutId.init("parent").id) parent_z = cmd.z_index;
+        if (cmd.id == LayoutId.init("dropdown").id) dropdown_z = cmd.z_index;
+        if (cmd.id == LayoutId.init("dropdown-item").id) dropdown_item_z = cmd.z_index;
+    }
+
+    // Parent should have z_index = 0
+    try std.testing.expectEqual(@as(i16, 0), parent_z.?);
+    // Floating dropdown should have z_index = 100
+    try std.testing.expectEqual(@as(i16, 100), dropdown_z.?);
+    // Nested item inside dropdown should inherit z_index = 100
+    try std.testing.expectEqual(@as(i16, 100), dropdown_item_z.?);
+}
+
+test "getZIndex returns inherited z-index" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    try engine.openElement(.{
+        .id = LayoutId.init("root"),
+        .layout = .{ .sizing = Sizing.fixed(400, 300) },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("floating"),
+            .layout = .{ .sizing = Sizing.fixed(100, 100) },
+            .floating = .{ .z_index = 50 },
+        });
+        {
+            try engine.openElement(.{
+                .id = LayoutId.init("nested"),
+                .layout = .{ .sizing = Sizing.fixed(50, 50) },
+            });
+            engine.closeElement();
+        }
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    // Root has no floating ancestor
+    try std.testing.expectEqual(@as(i16, 0), engine.getZIndex(LayoutId.init("root").id));
+    // Floating element itself
+    try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("floating").id));
+    // Nested element inherits from floating ancestor
+    try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("nested").id));
 }

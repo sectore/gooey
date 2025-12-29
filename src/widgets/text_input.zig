@@ -22,7 +22,23 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("../platform/mod.zig");
+
+// Clipboard support (platform-specific)
+const clipboard = if (builtin.os.tag == .macos)
+    @import("../platform/mac/clipboard.zig")
+else if (builtin.os.tag == .freestanding and builtin.cpu.arch == .wasm32)
+    @import("../platform/wgpu/web/clipboard.zig")
+else
+    struct {
+        pub fn getText(_: std.mem.Allocator) ?[]const u8 {
+            return null;
+        }
+        pub fn setText(_: []const u8) bool {
+            return false;
+        }
+    };
 
 // Direct imports from core modules (not through root.zig to avoid cycles)
 const scene_mod = @import("../core/scene.zig");
@@ -118,7 +134,10 @@ pub const TextInput = struct {
     // Callbacks
     on_change: ?*const fn (*TextInput) void = null,
     on_submit: ?*const fn (*TextInput) void = null,
-    on_cursor_rect_changed: ?*const fn (x: f32, y: f32, width: f32, height: f32) void = null, // NEW
+    on_cursor_rect_changed: ?*const fn (x: f32, y: f32, width: f32, height: f32) void = null,
+
+    /// Cursor rect for IME candidate window positioning (set during render)
+    cursor_rect: struct { x: f32 = 0, y: f32 = 0, width: f32 = 1.5, height: f32 = 20 } = .{},
 
     const Self = @This();
 
@@ -422,6 +441,37 @@ pub const TextInput = struct {
                     self.cursor_byte = self.buffer.items.len;
                 }
             },
+            .c => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Copy selection to clipboard
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                }
+            },
+            .v => {
+                if (mods.cmd) {
+                    // Paste from clipboard
+                    if (clipboard.getText(self.allocator)) |text| {
+                        defer self.allocator.free(text);
+                        if (self.hasSelection()) {
+                            self.deleteSelection();
+                        }
+                        self.insertText(text) catch {};
+                    }
+                }
+            },
+            .x => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Cut = Copy + Delete
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                    self.deleteSelection();
+                }
+            },
             .@"return" => {
                 if (self.on_submit) |callback| {
                     callback(self);
@@ -614,7 +664,10 @@ pub const TextInput = struct {
             );
             try scene.insertQuad(cursor);
 
-            // Notify about cursor rect for IME positioning
+            // Store cursor rect for IME positioning
+            self.cursor_rect = .{ .x = cursor_x, .y = cursor_y, .width = 1.5, .height = cursor_height };
+
+            // Notify about cursor rect for IME positioning (legacy callback)
             if (self.on_cursor_rect_changed) |callback| {
                 callback(cursor_x, cursor_y, 1.5, cursor_height);
             }

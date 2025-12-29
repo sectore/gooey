@@ -25,6 +25,7 @@ const std = @import("std");
 const layout_mod = @import("../layout/layout.zig");
 const engine_mod = @import("../layout/engine.zig");
 const svg_mod = @import("../svg/mod.zig");
+const image_mod = @import("../image/mod.zig");
 const LayoutEngine = layout_mod.LayoutEngine;
 const LayoutId = layout_mod.LayoutId;
 const ElementDeclaration = layout_mod.ElementDeclaration;
@@ -89,6 +90,7 @@ pub const Gooey = struct {
     text_system_owned: bool = false,
 
     svg_atlas: svg_mod.SvgAtlas,
+    image_atlas: image_mod.ImageAtlas,
 
     // Widgets (retained across frames)
     widgets: WidgetStore,
@@ -99,6 +101,11 @@ pub const Gooey = struct {
     // Hover state - tracks which layout element is currently hovered
     // This is the layout_id (hash) of the hovered element, persists across frames
     hovered_layout_id: ?u32 = null,
+
+    // Cached ancestor layout_ids of the hovered element (for isHoveredOrDescendant)
+    // This is populated in updateHover before dispatch tree is reset
+    hovered_ancestors: [32]u32 = [_]u32{0} ** 32,
+    hovered_ancestor_count: u8 = 0,
 
     // Track if hover changed to trigger re-render
     hover_changed: bool = false,
@@ -182,6 +189,7 @@ pub const Gooey = struct {
             .text_system = text_system,
             .text_system_owned = true,
             .svg_atlas = try svg_mod.SvgAtlas.init(allocator, window.scale_factor),
+            .image_atlas = try image_mod.ImageAtlas.init(allocator, window.scale_factor),
             .widgets = WidgetStore.init(allocator),
             .window = window,
             .width = @floatCast(window.size.width),
@@ -196,6 +204,7 @@ pub const Gooey = struct {
         self.entities.deinit();
 
         self.svg_atlas.deinit();
+        self.image_atlas.deinit();
 
         // Clean up dispatch tree
         self.dispatch.deinit();
@@ -226,6 +235,7 @@ pub const Gooey = struct {
         self.frame_count += 1;
         self.widgets.beginFrame();
         self.focus.beginFrame();
+        self.image_atlas.beginFrame();
 
         // Clear stale entity observations from last frame
         self.entities.beginFrame();
@@ -286,10 +296,28 @@ pub const Gooey = struct {
     pub fn updateHover(self: *Self, x: f32, y: f32) bool {
         const old_hovered = self.hovered_layout_id;
 
+        // Reset ancestor cache
+        self.hovered_ancestor_count = 0;
+
         // Hit test using dispatch tree (which has bounds from last frame)
         if (self.dispatch.hitTest(x, y)) |node_id| {
             if (self.dispatch.getNodeConst(node_id)) |node| {
                 self.hovered_layout_id = node.layout_id;
+
+                // Cache the ancestor chain (walk up parent links)
+                // This must happen NOW before dispatch tree is reset next frame
+                var current = node_id;
+                while (current.isValid() and self.hovered_ancestor_count < 32) {
+                    if (self.dispatch.getNodeConst(current)) |n| {
+                        if (n.layout_id) |lid| {
+                            self.hovered_ancestors[self.hovered_ancestor_count] = lid;
+                            self.hovered_ancestor_count += 1;
+                        }
+                        current = n.parent;
+                    } else {
+                        break;
+                    }
+                }
             } else {
                 self.hovered_layout_id = null;
             }
@@ -313,6 +341,17 @@ pub const Gooey = struct {
     /// Check if a layout element (by LayoutId) is currently hovered.
     pub fn isLayoutIdHovered(self: *const Self, id: LayoutId) bool {
         return self.hovered_layout_id == id.id;
+    }
+
+    /// Check if the hovered element is the given layout_id OR a descendant of it.
+    /// This is useful for tooltips where we want to show when hovering any child element.
+    /// Uses the cached ancestor chain from the last updateHover call.
+    pub fn isHoveredOrDescendant(self: *const Self, layout_id: u32) bool {
+        // Check cached ancestor chain (populated during updateHover, before dispatch reset)
+        for (self.hovered_ancestors[0..self.hovered_ancestor_count]) |ancestor_id| {
+            if (ancestor_id == layout_id) return true;
+        }
+        return false;
     }
 
     /// Clear hover state (e.g., when mouse exits window)

@@ -8,7 +8,23 @@
 //! - Multi-line selection rendering
 
 const std = @import("std");
+const builtin = @import("builtin");
 const platform = @import("../platform/mod.zig");
+
+// Clipboard support (platform-specific)
+const clipboard = if (builtin.os.tag == .macos)
+    @import("../platform/mac/clipboard.zig")
+else if (builtin.os.tag == .freestanding and builtin.cpu.arch == .wasm32)
+    @import("../platform/wgpu/web/clipboard.zig")
+else
+    struct {
+        pub fn getText(_: std.mem.Allocator) ?[]const u8 {
+            return null;
+        }
+        pub fn setText(_: []const u8) bool {
+            return false;
+        }
+    };
 
 const scene_mod = @import("../core/scene.zig");
 const input_mod = @import("../core/input.zig");
@@ -131,6 +147,9 @@ pub const TextArea = struct {
     // Callbacks
     on_change: ?*const fn (*TextArea) void = null,
     on_cursor_rect_changed: ?*const fn (x: f32, y: f32, width: f32, height: f32) void = null,
+
+    /// Cursor rect for IME candidate window positioning (set during render)
+    cursor_rect: struct { x: f32 = 0, y: f32 = 0, width: f32 = 1.5, height: f32 = 20 } = .{},
 
     const Self = @This();
 
@@ -597,6 +616,37 @@ pub const TextArea = struct {
                     self.updateCursorPosition();
                 }
             },
+            .c => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Copy selection to clipboard
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                }
+            },
+            .v => {
+                if (mods.cmd) {
+                    // Paste from clipboard
+                    if (clipboard.getText(self.allocator)) |text| {
+                        defer self.allocator.free(text);
+                        if (self.hasSelection()) {
+                            self.deleteSelection();
+                        }
+                        self.insertText(text) catch {};
+                    }
+                }
+            },
+            .x => {
+                if (mods.cmd and self.hasSelection()) {
+                    // Cut = Copy + Delete
+                    const start = self.selectionStart();
+                    const end = self.selectionEnd();
+                    const selected_text = self.buffer.items[start..end];
+                    _ = clipboard.setText(selected_text);
+                    self.deleteSelection();
+                }
+            },
             .@"return" => {
                 // Insert newline (multi-line support!)
                 try self.insertText("\n");
@@ -906,7 +956,10 @@ pub const TextArea = struct {
         );
         try scene.insertQuadClipped(cursor);
 
-        // Notify about cursor rect for IME positioning
+        // Store cursor rect for IME positioning
+        self.cursor_rect = .{ .x = cursor_x, .y = cursor_y, .width = 1.5, .height = cursor_height };
+
+        // Notify about cursor rect for IME positioning (legacy callback)
         if (self.on_cursor_rect_changed) |callback| {
             callback(cursor_x, cursor_y, 1.5, cursor_height);
         }

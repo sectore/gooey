@@ -55,7 +55,7 @@
         spellcheck="false"
         style="
           position: absolute;
-          left: -9999px;
+          left: 0;
           top: 0;
           width: 1px;
           height: 1px;
@@ -531,11 +531,33 @@
           }
         });
 
-        // Handle composition (IME) on hidden input
+        // Handle composition start
+        hiddenInput.addEventListener("compositionstart", (e) => {
+          setCompositionActive(true);
+        });
+
+        // Handle composition updates (preedit text)
+        hiddenInput.addEventListener("compositionupdate", (e) => {
+          if (e.data) {
+            updateCompositionText(e.data);
+          }
+        });
+
+        // Handle composition end
         hiddenInput.addEventListener("compositionend", (e) => {
+          setCompositionActive(false);
           if (e.data) {
             appendText(e.data);
             hiddenInput.value = "";
+          }
+        });
+
+        // Handle paste events - capture clipboard text synchronously
+        hiddenInput.addEventListener("paste", (e) => {
+          e.preventDefault();
+          const text = e.clipboardData?.getData("text");
+          if (text) {
+            appendText(text);
           }
         });
 
@@ -623,7 +645,11 @@
         ];
 
         if (dominated.includes(e.code)) return true;
-        if (e.metaKey || e.ctrlKey) return true; // Shortcuts
+
+        // Allow Cmd/Ctrl+V through so browser paste event fires
+        if ((e.metaKey || e.ctrlKey) && e.code === "KeyV") return false;
+
+        if (e.metaKey || e.ctrlKey) return true; // Other shortcuts
 
         return false;
       }
@@ -699,9 +725,123 @@
         lenPtr[0] = currentLen + writeLen;
       }
 
+      let compositionBufferPtr = null;
+
+      function initComposition() {
+        compositionBufferPtr = wasmInstance.exports.getCompositionBufferPtr();
+      }
+
+      function setCompositionActive(active) {
+        if (!compositionBufferPtr) return;
+        const mem = new Uint8Array(wasmInstance.exports.memory.buffer);
+        mem[compositionBufferPtr + 4] = active ? 1 : 0; // active flag at offset 4
+      }
+
+      function updateCompositionText(text) {
+        if (!compositionBufferPtr) return;
+        const mem = new Uint8Array(wasmInstance.exports.memory.buffer);
+        const view = new DataView(wasmInstance.exports.memory.buffer);
+        const dataPtr = compositionBufferPtr + 8; // data starts at offset 8
+
+        const encoded = new TextEncoder().encode(text);
+        const writeLen = Math.min(encoded.length, 256);
+
+        // Write text
+        for (let i = 0; i < writeLen; i++) {
+          mem[dataPtr + i] = encoded[i];
+        }
+
+        // Write length
+        view.setUint32(compositionBufferPtr, writeLen, true);
+        // Mark as active
+        mem[compositionBufferPtr + 4] = 1;
+      }
+
       // Text rendering helper
       const textCanvas = new OffscreenCanvas(256, 256);
       const textCtx = textCanvas.getContext("2d", { willReadFrequently: true });
+
+      // SVG rasterization helper
+      const svgCanvas = new OffscreenCanvas(256, 256);
+      const svgCtx = svgCanvas.getContext("2d", { willReadFrequently: true });
+
+      /**
+       * Rasterize an SVG path to an RGBA buffer with two-channel encoding:
+       * R = fill alpha, G = stroke alpha
+       */
+      function rasterizeSvgPathJS(
+        pathData,
+        deviceSize,
+        viewbox,
+        hasFill,
+        strokeWidth,
+      ) {
+        // Calculate scale from viewbox to device pixels
+        const scale = deviceSize / viewbox;
+
+        // Add padding for stroke
+        const padding = Math.ceil(strokeWidth / 2) + 1;
+        const canvasSize = deviceSize + padding * 2;
+
+        // Resize canvas if needed
+        if (svgCanvas.width < canvasSize || svgCanvas.height < canvasSize) {
+          svgCanvas.width = canvasSize;
+          svgCanvas.height = canvasSize;
+        }
+
+        // Parse the SVG path
+        const path = new Path2D(pathData);
+
+        // Clear canvas
+        svgCtx.clearRect(0, 0, canvasSize, canvasSize);
+
+        // Render fill (if enabled)
+        let fillData = null;
+        if (hasFill) {
+          svgCtx.save();
+          svgCtx.translate(padding, padding);
+          svgCtx.scale(scale, scale);
+          svgCtx.fillStyle = "white";
+          svgCtx.fill(path);
+          svgCtx.restore();
+          fillData = svgCtx.getImageData(0, 0, canvasSize, canvasSize);
+        }
+
+        // Render stroke (if enabled)
+        let strokeData = null;
+        if (strokeWidth > 0) {
+          svgCtx.clearRect(0, 0, canvasSize, canvasSize);
+          svgCtx.save();
+          svgCtx.translate(padding, padding);
+          svgCtx.scale(scale, scale);
+          svgCtx.strokeStyle = "white";
+          svgCtx.lineWidth = strokeWidth / scale; // Convert back to viewbox units
+          svgCtx.lineCap = "round";
+          svgCtx.lineJoin = "round";
+          svgCtx.stroke(path);
+          svgCtx.restore();
+          strokeData = svgCtx.getImageData(0, 0, canvasSize, canvasSize);
+        }
+
+        // Combine into RG channels (matching CoreGraphics output format)
+        // R = fill alpha, G = stroke alpha, B = 0, A = max(fill, stroke)
+        const output = new Uint8Array(canvasSize * canvasSize * 4);
+        for (let i = 0; i < canvasSize * canvasSize; i++) {
+          const fillAlpha = fillData ? fillData.data[i * 4 + 3] : 0;
+          const strokeAlpha = strokeData ? strokeData.data[i * 4 + 3] : 0;
+          output[i * 4 + 0] = fillAlpha; // R = fill alpha
+          output[i * 4 + 1] = strokeAlpha; // G = stroke alpha
+          output[i * 4 + 2] = 0; // B = unused
+          output[i * 4 + 3] = Math.max(fillAlpha, strokeAlpha); // A = combined
+        }
+
+        return {
+          pixels: output,
+          width: canvasSize,
+          height: canvasSize,
+          offset: padding,
+        };
+      }
 
       function getFont(fontPtr, fontLen, size) {
         const fontName = getString(fontPtr, fontLen);
@@ -718,12 +858,25 @@
 
         getCanvasWidth: () => canvas.clientWidth,
         getCanvasHeight: () => canvas.clientHeight,
+        getCanvasPixelWidth: () => canvas.width,
+        getCanvasPixelHeight: () => canvas.height,
         getDevicePixelRatio: () => dpr,
         setCanvasSize: (w, h) => {
           canvas.width = w;
           canvas.height = h;
         },
-
+        setDocumentTitle: (ptr, len) => {
+          document.title = getString(ptr, len);
+        },
+        setImeCursorPosition(x, y, width, height) {
+          const hiddenInput = document.getElementById("hiddenInput");
+          const dpr = window.devicePixelRatio || 1;
+          // Convert from logical to CSS pixels and position near cursor
+          hiddenInput.style.left = `${x}px`;
+          hiddenInput.style.top = `${y + height}px`; // Below the cursor line
+          hiddenInput.style.width = `${Math.max(width, 1)}px`;
+          hiddenInput.style.height = `${height}px`;
+        },
         getCurrentTextureView: () => {
           const texture = context.getCurrentTexture();
           const view = texture.createView();
@@ -854,6 +1007,14 @@
           env.currentPass.draw(vertexCount, instanceCount);
         },
 
+        drawInstancedWithOffset: (
+          vertexCount,
+          instanceCount,
+          firstInstance,
+        ) => {
+          env.currentPass.draw(vertexCount, instanceCount, 0, firstInstance);
+        },
+
         endRenderPass: () => {
           env.currentPass.end();
           queue.submit([env.currentEncoder.finish()]);
@@ -973,7 +1134,69 @@
           //   `Rasterized '${char}': ${width}x${height}, bearing=(${-(left + 1)}, ${-(ascent + 1)}), advance=${advance}`,
           // );
         },
+        rasterizeGlyphSubpixel: (
+          fontPtr,
+          fontLen,
+          size,
+          codepoint,
+          subpixelX,
+          subpixelY,
+          outBuffer,
+          bufferSize,
+          outWidth,
+          outHeight,
+          outBearingX,
+          outBearingY,
+          outAdvance,
+        ) => {
+          const font = getFont(fontPtr, fontLen, size);
+          const char = String.fromCodePoint(codepoint);
 
+          textCtx.font = font;
+          textCtx.textBaseline = "alphabetic";
+          const metrics = textCtx.measureText(char);
+
+          const left = Math.ceil(metrics.actualBoundingBoxLeft);
+          const right = Math.ceil(metrics.actualBoundingBoxRight);
+          const ascent = Math.ceil(metrics.actualBoundingBoxAscent);
+          const descent = Math.ceil(metrics.actualBoundingBoxDescent);
+
+          const padding = 2;
+          // Add extra pixel when subpixel variant is non-zero (matches native CoreText)
+          let width = left + right + padding;
+          let height = ascent + descent + padding;
+          if (subpixelX > 0) width += 1;
+          if (subpixelY > 0) height += 1;
+          const advance = metrics.width;
+
+          if (textCanvas.width < width) textCanvas.width = Math.max(256, width);
+          if (textCanvas.height < height)
+            textCanvas.height = Math.max(256, height);
+
+          // Apply subpixel offset when drawing
+          textCtx.clearRect(0, 0, width, height);
+          textCtx.font = font;
+          textCtx.fillStyle = "white";
+          textCtx.textBaseline = "alphabetic";
+          textCtx.fillText(char, left + 1 + subpixelX, ascent + 1 + subpixelY);
+
+          const imageData = textCtx.getImageData(0, 0, width, height);
+          const mem = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            outBuffer,
+            bufferSize,
+          );
+          for (let i = 0; i < width * height && i < bufferSize; i++) {
+            mem[i] = imageData.data[i * 4 + 3];
+          }
+
+          const view = new DataView(wasmInstance.exports.memory.buffer);
+          view.setUint32(outWidth, width, true);
+          view.setUint32(outHeight, height, true);
+          view.setFloat32(outBearingX, -(left + 1), true);
+          view.setFloat32(outBearingY, -(ascent - 1), true);
+          view.setFloat32(outAdvance, advance, true);
+        },
         createTexture: (width, height, dataPtr, dataLen) => {
           const data = new Uint8Array(
             wasmInstance.exports.memory.buffer,
@@ -1052,6 +1275,275 @@
             ],
           });
           return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // =====================================================================
+        // SVG Rasterization Support
+        // =====================================================================
+
+        // Rasterize an SVG path to RGBA buffer using Path2D/Canvas2D
+        rasterizeSvgPath: (
+          pathPtr,
+          pathLen,
+          deviceSize,
+          viewbox,
+          hasFill,
+          strokeWidth,
+          outBuffer,
+          bufferSize,
+          outWidth,
+          outHeight,
+          outOffsetX,
+          outOffsetY,
+        ) => {
+          try {
+            const pathData = getString(pathPtr, pathLen);
+            const result = rasterizeSvgPathJS(
+              pathData,
+              deviceSize,
+              viewbox,
+              hasFill,
+              strokeWidth,
+            );
+
+            // Copy pixels to WASM memory
+            const mem = new Uint8Array(
+              wasmInstance.exports.memory.buffer,
+              outBuffer,
+              bufferSize,
+            );
+            const copyLen = Math.min(result.pixels.length, bufferSize);
+            mem.set(result.pixels.subarray(0, copyLen));
+
+            // Write output dimensions
+            const view = new DataView(wasmInstance.exports.memory.buffer);
+            view.setUint32(outWidth, result.width, true);
+            view.setUint32(outHeight, result.height, true);
+            view.setInt16(outOffsetX, result.offset, true);
+            view.setInt16(outOffsetY, result.offset, true);
+
+            return true; // success
+          } catch (e) {
+            console.error("rasterizeSvgPath failed:", e);
+            return false;
+          }
+        },
+
+        // Create an RGBA texture (for SVG atlas)
+        createRgbaTexture: (width, height, dataPtr, dataLen) => {
+          const data = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            dataPtr,
+            dataLen,
+          );
+          const texture = device.createTexture({
+            size: { width, height },
+            format: "rgba8unorm", // RGBA format for SVG atlas
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+          });
+          queue.writeTexture(
+            { texture },
+            data,
+            { bytesPerRow: width * 4 }, // 4 bytes per pixel (RGBA)
+            { width, height },
+          );
+          return allocHandle(handles.textures, texture);
+        },
+
+        // Update an existing RGBA texture
+        updateRgbaTexture: (textureHandle, width, height, dataPtr, dataLen) => {
+          const texture = handles.textures.get(textureHandle);
+          if (!texture) {
+            console.error(
+              "updateRgbaTexture: invalid texture handle",
+              textureHandle,
+            );
+            return;
+          }
+          const data = new Uint8Array(
+            wasmInstance.exports.memory.buffer,
+            dataPtr,
+            dataLen,
+          );
+          queue.writeTexture(
+            { texture },
+            data,
+            { bytesPerRow: width * 4 }, // 4 bytes per pixel (RGBA)
+            { width, height },
+          );
+        },
+
+        // Create bind group for SVG pipeline (same layout as text)
+        createSvgBindGroup: (
+          pipelineHandle,
+          groupIndex,
+          svgBuffer,
+          uniformBuffer,
+          textureHandle,
+          samplerHandle,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const texture = handles.textures.get(textureHandle);
+          const sampler = handles.samplers.get(samplerHandle);
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(groupIndex),
+            entries: [
+              {
+                binding: 0,
+                resource: { buffer: handles.buffers.get(svgBuffer) },
+              },
+              {
+                binding: 1,
+                resource: { buffer: handles.buffers.get(uniformBuffer) },
+              },
+              { binding: 2, resource: texture.createView() },
+              { binding: 3, resource: sampler },
+            ],
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // =====================================================================
+        // Image Rendering Support
+        // =====================================================================
+
+        // Create bind group for image pipeline (same layout as SVG - RGBA texture)
+        createImageBindGroup: (
+          pipelineHandle,
+          groupIndex,
+          imageBuffer,
+          uniformBuffer,
+          textureHandle,
+          samplerHandle,
+        ) => {
+          const pipeline = handles.pipelines.get(pipelineHandle);
+          const texture = handles.textures.get(textureHandle);
+          const sampler = handles.samplers.get(samplerHandle);
+
+          const bindGroup = device.createBindGroup({
+            layout: pipeline.getBindGroupLayout(groupIndex),
+            entries: [
+              {
+                binding: 0,
+                resource: { buffer: handles.buffers.get(imageBuffer) },
+              },
+              {
+                binding: 1,
+                resource: { buffer: handles.buffers.get(uniformBuffer) },
+              },
+              { binding: 2, resource: texture.createView() },
+              { binding: 3, resource: sampler },
+            ],
+          });
+          return allocHandle(handles.bindGroups, bindGroup);
+        },
+
+        // Request async image decode - JS decodes using createImageBitmap
+        // and calls back via onImageDecoded export when complete
+        requestImageDecode: (dataPtr, dataLen, requestId) => {
+          const memory = wasmInstance.exports.memory;
+          const bytes = new Uint8Array(memory.buffer, dataPtr, dataLen);
+          // Make a copy since memory might change during async operation
+          const bytesCopy = new Uint8Array(bytes);
+          const blob = new Blob([bytesCopy]);
+
+          createImageBitmap(blob)
+            .then((bitmap) => {
+              // Draw to canvas to get RGBA pixels
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(bitmap, 0, 0);
+              const imageData = ctx.getImageData(
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+              );
+
+              // Allocate WASM memory and copy pixels
+              const pixelsLen = imageData.data.length;
+              const pixelsPtr = wasmInstance.exports.wasmAlloc(pixelsLen);
+              const dest = new Uint8Array(
+                wasmInstance.exports.memory.buffer,
+                pixelsPtr,
+                pixelsLen,
+              );
+              dest.set(imageData.data);
+
+              // Callback into WASM
+              wasmInstance.exports.onImageDecoded(
+                requestId,
+                bitmap.width,
+                bitmap.height,
+                pixelsPtr,
+                pixelsLen,
+              );
+
+              bitmap.close();
+            })
+            .catch((err) => {
+              console.error("[Gooey] Image decode failed:", err);
+              // Signal error with zero dimensions
+              wasmInstance.exports.onImageDecoded(requestId, 0, 0, 0, 0);
+            });
+        },
+
+        // Request async image fetch from URL - fetches and decodes using fetch + createImageBitmap
+        // and calls back via onImageDecoded export when complete
+        requestUrlFetch: (urlPtr, urlLen, requestId) => {
+          const memory = wasmInstance.exports.memory;
+          const urlBytes = new Uint8Array(memory.buffer, urlPtr, urlLen);
+          const url = new TextDecoder().decode(urlBytes);
+
+          fetch(url)
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(
+                  `HTTP ${response.status}: ${response.statusText}`,
+                );
+              }
+              return response.blob();
+            })
+            .then((blob) => createImageBitmap(blob))
+            .then((bitmap) => {
+              // Draw to canvas to get RGBA pixels
+              const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(bitmap, 0, 0);
+              const imageData = ctx.getImageData(
+                0,
+                0,
+                bitmap.width,
+                bitmap.height,
+              );
+
+              // Allocate WASM memory and copy pixels
+              const pixelsLen = imageData.data.length;
+              const pixelsPtr = wasmInstance.exports.wasmAlloc(pixelsLen);
+              const dest = new Uint8Array(
+                wasmInstance.exports.memory.buffer,
+                pixelsPtr,
+                pixelsLen,
+              );
+              dest.set(imageData.data);
+
+              // Callback into WASM
+              wasmInstance.exports.onImageDecoded(
+                requestId,
+                bitmap.width,
+                bitmap.height,
+                pixelsPtr,
+                pixelsLen,
+              );
+
+              bitmap.close();
+            })
+            .catch((err) => {
+              console.error("[Gooey] URL fetch failed:", url, err);
+              // Signal error with zero dimensions
+              wasmInstance.exports.onImageDecoded(requestId, 0, 0, 0, 0);
+            });
         },
 
         // =====================================================================
@@ -1194,6 +1686,177 @@
           });
         },
 
+        // =================================================================
+        // MSAA (Multisampling Anti-Aliasing) Support
+        // =================================================================
+
+        // Cache the supported sample count (determined at init)
+        _msaaSampleCount: null,
+
+        getMSAASampleCount: () => {
+          // Return cached value if already determined
+          if (env._msaaSampleCount !== null) {
+            return env._msaaSampleCount;
+          }
+
+          // WebGPU spec: sample counts 1 and 4 are always supported for
+          // render targets. However, some devices may have issues.
+          // Try to create a test texture to verify support.
+          try {
+            const testTexture = device.createTexture({
+              size: { width: 4, height: 4 },
+              format,
+              sampleCount: 4,
+              usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            testTexture.destroy();
+            env._msaaSampleCount = 4;
+            console.log("MSAA 4x supported");
+          } catch (e) {
+            console.warn("MSAA 4x not supported, falling back to no MSAA:", e);
+            env._msaaSampleCount = 1;
+          }
+          return env._msaaSampleCount;
+        },
+
+        createMSAATexture: (width, height, sampleCount) => {
+          if (sampleCount <= 1) return 0;
+
+          try {
+            const texture = device.createTexture({
+              size: { width, height },
+              format,
+              sampleCount,
+              usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            });
+            return allocHandle(handles.textures, texture);
+          } catch (e) {
+            console.error("Failed to create MSAA texture:", e);
+            return 0;
+          }
+        },
+
+        destroyTexture: (textureHandle) => {
+          const texture = handles.textures.get(textureHandle);
+          if (texture) {
+            texture.destroy();
+            handles.textures.delete(textureHandle);
+          }
+        },
+
+        createMSAARenderPipeline: (
+          shaderHandle,
+          vsPtr,
+          vsLen,
+          fsPtr,
+          fsLen,
+          sampleCount,
+        ) => {
+          const module = handles.shaderModules.get(shaderHandle);
+          const vsEntry = getString(vsPtr, vsLen);
+          const fsEntry = getString(fsPtr, fsLen);
+
+          const pipeline = device.createRenderPipeline({
+            layout: "auto",
+            vertex: {
+              module,
+              entryPoint: vsEntry,
+            },
+            fragment: {
+              module,
+              entryPoint: fsEntry,
+              targets: [
+                {
+                  format,
+                  blend: {
+                    color: {
+                      srcFactor: "src-alpha",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                    alpha: {
+                      srcFactor: "one",
+                      dstFactor: "one-minus-src-alpha",
+                      operation: "add",
+                    },
+                  },
+                },
+              ],
+            },
+            primitive: {
+              topology: "triangle-list",
+            },
+            multisample: {
+              count: sampleCount,
+            },
+          });
+          return allocHandle(handles.pipelines, pipeline);
+        },
+
+        beginMSAARenderPass: (
+          msaaTextureHandle,
+          resolveViewHandle,
+          r,
+          g,
+          b,
+          a,
+        ) => {
+          const msaaTexture = handles.textures.get(msaaTextureHandle);
+          const resolveView = handles.textureViews.get(resolveViewHandle);
+
+          if (!msaaTexture || !resolveView) {
+            console.error("beginMSAARenderPass: invalid handles");
+            return;
+          }
+
+          const msaaView = msaaTexture.createView();
+          env.currentEncoder = device.createCommandEncoder();
+          env.currentPass = env.currentEncoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view: msaaView,
+                resolveTarget: resolveView,
+                clearValue: { r, g, b, a },
+                loadOp: "clear",
+                storeOp: "discard",
+              },
+            ],
+          });
+        },
+
+        // Begin an MSAA render pass that resolves to a texture (for post-process)
+        beginMSAATextureRenderPass: (
+          msaaTextureHandle,
+          resolveTextureHandle,
+          r,
+          g,
+          b,
+          a,
+        ) => {
+          const msaaTexture = handles.textures.get(msaaTextureHandle);
+          const resolveTexture = handles.textures.get(resolveTextureHandle);
+
+          if (!msaaTexture || !resolveTexture) {
+            console.error("beginMSAATextureRenderPass: invalid handles");
+            return;
+          }
+
+          const msaaView = msaaTexture.createView();
+          const resolveView = resolveTexture.createView();
+          env.currentEncoder = device.createCommandEncoder();
+          env.currentPass = env.currentEncoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view: msaaView,
+                resolveTarget: resolveView,
+                clearValue: { r, g, b, a },
+                loadOp: "clear",
+                storeOp: "discard",
+              },
+            ],
+          });
+        },
+
         // Copy the current screen to a texture for post-processing
         copyToTexture: (srcViewHandle, dstTextureHandle, width, height) => {
           const srcView = handles.textureViews.get(srcViewHandle);
@@ -1204,6 +1867,148 @@
           }
           // Note: This would need a blit operation or render pass
           // For now, we use render-to-texture approach instead
+        },
+
+        // Clipboard - write text (fire and forget, async in JS)
+        clipboardWriteText: (ptr, len) => {
+          const text = getString(ptr, len);
+          navigator.clipboard.writeText(text).catch((err) => {
+            console.warn("[Gooey] Clipboard write failed:", err);
+          });
+        },
+
+        // =====================================================================
+        // File Dialog
+        // =====================================================================
+
+        // Hidden file input element (created on first use)
+        _fileInput: null,
+        _getFileInput() {
+          if (!this._fileInput) {
+            this._fileInput = document.createElement("input");
+            this._fileInput.type = "file";
+            this._fileInput.style.display = "none";
+            document.body.appendChild(this._fileInput);
+          }
+          return this._fileInput;
+        },
+
+        // Request file open dialog
+        requestFileDialog: (
+          requestId,
+          acceptPtr,
+          acceptLen,
+          multiple,
+          directories,
+        ) => {
+          const fileInput = env._getFileInput();
+
+          // Configure the input
+          const accept = acceptLen > 0 ? getString(acceptPtr, acceptLen) : "";
+          fileInput.accept = accept;
+          fileInput.multiple = multiple;
+
+          // Directory selection (Chrome/Edge only)
+          if (directories) {
+            fileInput.webkitdirectory = true;
+          } else {
+            fileInput.webkitdirectory = false;
+          }
+
+          // Handle file selection
+          fileInput.onchange = async () => {
+            const files = Array.from(fileInput.files);
+
+            if (files.length === 0) {
+              // User cancelled or selected nothing
+              wasmInstance.exports.onFileDialogCancelled(requestId);
+              fileInput.value = ""; // Reset for next use
+              return;
+            }
+
+            // Tell WASM how many files to expect
+            wasmInstance.exports.onFileDialogStart(requestId, files.length);
+
+            // Read each file and send to WASM
+            for (const file of files) {
+              try {
+                const arrayBuffer = await file.arrayBuffer();
+                const content = new Uint8Array(arrayBuffer);
+
+                // Allocate WASM memory for filename
+                const nameBytes = new TextEncoder().encode(file.name);
+                const namePtr = wasmInstance.exports.wasmFileAlloc(
+                  nameBytes.length,
+                );
+                if (namePtr === 0) {
+                  console.error(
+                    "[Gooey] Failed to allocate memory for filename",
+                  );
+                  continue;
+                }
+
+                // Allocate WASM memory for content
+                const contentPtr = wasmInstance.exports.wasmFileAlloc(
+                  content.length,
+                );
+                if (contentPtr === 0) {
+                  console.error(
+                    "[Gooey] Failed to allocate memory for file content",
+                  );
+                  continue;
+                }
+
+                // Copy data to WASM memory
+                const memory = new Uint8Array(
+                  wasmInstance.exports.memory.buffer,
+                );
+                memory.set(nameBytes, namePtr);
+                memory.set(content, contentPtr);
+
+                // Send file to WASM
+                wasmInstance.exports.onFileDialogFile(
+                  requestId,
+                  namePtr,
+                  nameBytes.length,
+                  contentPtr,
+                  content.length,
+                );
+              } catch (err) {
+                console.error("[Gooey] Error reading file:", file.name, err);
+              }
+            }
+
+            fileInput.value = ""; // Reset for next use
+          };
+
+          // Handle cancel (user closes dialog without selecting)
+          fileInput.oncancel = () => {
+            wasmInstance.exports.onFileDialogCancelled(requestId);
+            fileInput.value = "";
+          };
+
+          // Trigger the dialog
+          fileInput.click();
+        },
+
+        // Trigger file download (web "save" dialog)
+        promptSaveFile: (namePtr, nameLen, dataPtr, dataLen) => {
+          const filename = getString(namePtr, nameLen);
+          const memory = new Uint8Array(wasmInstance.exports.memory.buffer);
+          const data = memory.slice(dataPtr, dataPtr + dataLen);
+
+          const blob = new Blob([data], { type: "application/octet-stream" });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename;
+          a.style.display = "none";
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          URL.revokeObjectURL(url);
         },
       };
 
@@ -1255,6 +2060,7 @@
         initKeyboard();
         initScroll();
         initMouse();
+        initComposition();
       }
 
       init().catch((err) => {

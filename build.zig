@@ -73,8 +73,14 @@ pub fn build(b: *std.Build) void {
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "glass", "src/examples/glass.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "counter", "src/examples/counter.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "layout", "src/examples/layout.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "select", "src/examples/select.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "dynamic-counters", "src/examples/dynamic_counters.zig", false);
         addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "actions", "src/examples/actions.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "text-debug", "src/examples/text_debug_example.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "images", "src/examples/images.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "tooltip", "src/examples/tooltip.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "modal", "src/examples/modal.zig", false);
+        addNativeExample(b, mod, objc_dep.module("objc"), target, optimize, "file-dialog", "src/examples/file_dialog.zig", false);
 
         // =====================================================================
         // Tests
@@ -222,6 +228,12 @@ pub fn build(b: *std.Build) void {
     gooey_wasm_module.addAnonymousImport("text_wgsl", .{
         .root_source_file = b.path("src/platform/wgpu/shaders/text.wgsl"),
     });
+    gooey_wasm_module.addAnonymousImport("svg_wgsl", .{
+        .root_source_file = b.path("src/platform/wgpu/shaders/svg.wgsl"),
+    });
+    gooey_wasm_module.addAnonymousImport("image_wgsl", .{
+        .root_source_file = b.path("src/platform/wgpu/shaders/image.wgsl"),
+    });
 
     // -------------------------------------------------------------------------
     // WASM Examples
@@ -255,6 +267,13 @@ pub fn build(b: *std.Build) void {
     addWasmExample(b, gooey_wasm_module, wasm_target, "dynamic-counters", "src/examples/dynamic_counters.zig", "web/dynamic");
     addWasmExample(b, gooey_wasm_module, wasm_target, "pomodoro", "src/examples/pomodoro.zig", "web/pomodoro");
     addWasmExample(b, gooey_wasm_module, wasm_target, "spaceship", "src/examples/spaceship.zig", "web/spaceship");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "layout", "src/examples/layout.zig", "web/layout");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "select", "src/examples/select.zig", "web/select");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "text", "src/examples/text_debug_example.zig", "web/text");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "images", "src/examples/images_wasm.zig", "web/images");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "tooltip", "src/examples/tooltip.zig", "web/tooltip");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "modal", "src/examples/modal.zig", "web/modal");
+    addWasmExample(b, gooey_wasm_module, wasm_target, "file-dialog", "src/examples/web_file_dialog.zig", "web/file-dialog");
 }
 
 /// Helper to add a native macOS example with minimal boilerplate.

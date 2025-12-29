@@ -25,6 +25,8 @@ const std = @import("std");
 const geometry = @import("geometry.zig");
 const svg_instance_mod = @import("svg_instance.zig");
 pub const SvgInstance = svg_instance_mod.SvgInstance;
+const image_instance_mod = @import("image_instance.zig");
+pub const ImageInstance = image_instance_mod.ImageInstance;
 
 pub const DrawOrder = u32;
 
@@ -289,6 +291,9 @@ pub const Shadow = extern struct {
 /// A single glyph instance for GPU rendering
 /// Layout matches Metal shader (must be 16-byte aligned)
 pub const GlyphInstance = extern struct {
+    // Draw order for z-index interleaving
+    order: DrawOrder = 0,
+    _pad0: u32 = 0,
     // Screen position (top-left of glyph quad)
     pos_x: f32 = 0,
     pos_y: f32 = 0,
@@ -300,7 +305,11 @@ pub const GlyphInstance = extern struct {
     uv_top: f32 = 0,
     uv_right: f32 = 0,
     uv_bottom: f32 = 0,
-    // Color (HSLA)
+    // Padding to align color (float4) to 16-byte boundary
+    // Without this, color is at offset 40; Metal requires float4 at 16-byte aligned offset (48)
+    _pad1: u32 = 0,
+    _pad2: u32 = 0,
+    // Color (HSLA) - must be at 16-byte aligned offset for Metal float4
     color: Hsla = Hsla.black,
     // Clip bounds (content mask) - defaults to no clipping
     clip_x: f32 = 0,
@@ -343,6 +352,22 @@ pub const GlyphInstance = extern struct {
     }
 };
 
+comptime {
+    if (@sizeOf(GlyphInstance) != 80) {
+        @compileError(std.fmt.comptimePrint(
+            "GlyphInstance must be 80 bytes, got {}",
+            .{@sizeOf(GlyphInstance)},
+        ));
+    }
+    // Verify color is at 16-byte aligned offset for Metal float4
+    if (@offsetOf(GlyphInstance, "color") != 48) {
+        @compileError(std.fmt.comptimePrint(
+            "GlyphInstance.color must be at offset 48 for Metal float4 alignment, got {}",
+            .{@offsetOf(GlyphInstance, "color")},
+        ));
+    }
+}
+
 // ============================================================================
 // Scene - collects primitives for rendering
 // ============================================================================
@@ -353,6 +378,7 @@ pub const Scene = struct {
     quads: std.ArrayList(Quad),
     glyphs: std.ArrayList(GlyphInstance),
     svg_instances: std.ArrayList(SvgInstance),
+    images: std.ArrayList(ImageInstance),
     next_order: DrawOrder,
     // Clip mask stack for nested clipping regions
     clip_stack: std.ArrayList(ContentMask.ClipBounds),
@@ -376,6 +402,7 @@ pub const Scene = struct {
             .quads = .{},
             .glyphs = .{},
             .svg_instances = .{},
+            .images = .{},
             .next_order = 0,
             .clip_stack = .{},
             .needs_sort = false,
@@ -392,6 +419,7 @@ pub const Scene = struct {
         self.quads.deinit(self.allocator);
         self.glyphs.deinit(self.allocator);
         self.svg_instances.deinit(self.allocator);
+        self.images.deinit(self.allocator);
         self.clip_stack.deinit(self.allocator);
     }
 
@@ -400,6 +428,7 @@ pub const Scene = struct {
         self.quads.clearRetainingCapacity();
         self.glyphs.clearRetainingCapacity();
         self.svg_instances.clearRetainingCapacity();
+        self.images.clearRetainingCapacity();
         self.clip_stack.clearRetainingCapacity();
         self.next_order = 0;
         self.needs_sort = false;
@@ -432,12 +461,26 @@ pub const Scene = struct {
     }
 
     // ========================================================================
+    // Draw Order Management
+    // ========================================================================
+
+    /// Reserve a draw order for later use (e.g., for deferred SVG/image rendering).
+    /// This allows primitives to maintain correct z-ordering even when their
+    /// actual insertion is deferred until after layout computation.
+    pub fn reserveOrder(self: *Self) DrawOrder {
+        const order = self.next_order;
+        self.next_order += 1;
+        return order;
+    }
+
+    // ========================================================================
     // SVG Insertion
     // ========================================================================
 
     /// Insert an SVG instance without clipping
     pub fn insertSvg(self: *Self, instance: SvgInstance) !void {
-        const inst = instance;
+        var inst = instance;
+        inst.order = self.next_order;
         self.next_order += 1;
         try self.svg_instances.append(self.allocator, inst);
     }
@@ -445,8 +488,19 @@ pub const Scene = struct {
     /// Insert an SVG instance with the current clip mask applied
     pub fn insertSvgClipped(self: *Self, instance: SvgInstance) !void {
         const clip = self.currentClip();
-        const inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = self.next_order;
         self.next_order += 1;
+        try self.svg_instances.append(self.allocator, inst);
+    }
+
+    /// Insert an SVG instance with a pre-reserved draw order and saved clip bounds.
+    /// Use this when the draw order was reserved earlier via reserveOrder().
+    /// The clip bounds should be captured at the same time as the draw order.
+    pub fn insertSvgWithOrder(self: *Self, instance: SvgInstance, order: DrawOrder, clip: ContentMask.ClipBounds) !void {
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = order;
+        self.needs_sort = true; // Out-of-order insert requires sorting
         try self.svg_instances.append(self.allocator, inst);
     }
 
@@ -459,18 +513,63 @@ pub const Scene = struct {
     }
 
     // ========================================================================
+    // Image Insertion
+    // ========================================================================
+
+    /// Insert an image instance without clipping
+    pub fn insertImage(self: *Self, instance: ImageInstance) !void {
+        var inst = instance;
+        inst.order = self.next_order;
+        self.next_order += 1;
+        try self.images.append(self.allocator, inst);
+    }
+
+    /// Insert an image instance with the current clip mask applied
+    pub fn insertImageClipped(self: *Self, instance: ImageInstance) !void {
+        const clip = self.currentClip();
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = self.next_order;
+        self.next_order += 1;
+        try self.images.append(self.allocator, inst);
+    }
+
+    /// Insert an image instance with a pre-reserved draw order and saved clip bounds.
+    /// Use this when the draw order was reserved earlier via reserveOrder().
+    /// The clip bounds should be captured at the same time as the draw order.
+    pub fn insertImageWithOrder(self: *Self, instance: ImageInstance, order: DrawOrder, clip: ContentMask.ClipBounds) !void {
+        var inst = instance.withClip(clip.x, clip.y, clip.width, clip.height);
+        inst.order = order;
+        self.needs_sort = true; // Out-of-order insert requires sorting
+        try self.images.append(self.allocator, inst);
+    }
+
+    pub fn imageCount(self: *const Self) usize {
+        return self.images.items.len;
+    }
+
+    pub fn getImages(self: *const Self) []const ImageInstance {
+        return self.images.items;
+    }
+
+    // ========================================================================
     // Glyph Insertion
     // ========================================================================
 
     /// Insert a glyph without clipping
     pub fn insertGlyph(self: *Self, glyph: GlyphInstance) !void {
-        try self.glyphs.append(self.allocator, glyph);
+        var g = glyph;
+        g.order = self.next_order;
+        self.next_order += 1;
+        try self.glyphs.append(self.allocator, g);
     }
 
     /// Insert a glyph with the current clip mask applied
     pub fn insertGlyphClipped(self: *Self, glyph: GlyphInstance) !void {
         const clip = self.currentClip();
-        try self.glyphs.append(self.allocator, glyph.withClipBounds(clip));
+        var g = glyph.withClipBounds(clip);
+        g.order = self.next_order;
+        self.next_order += 1;
+        try self.glyphs.append(self.allocator, g);
     }
 
     pub fn glyphCount(self: *const Self) usize {
@@ -583,6 +682,21 @@ pub const Scene = struct {
         }.lessThan);
         std.sort.pdq(Quad, self.quads.items, {}, struct {
             fn lessThan(_: void, a: Quad, b: Quad) bool {
+                return a.order < b.order;
+            }
+        }.lessThan);
+        std.sort.pdq(GlyphInstance, self.glyphs.items, {}, struct {
+            fn lessThan(_: void, a: GlyphInstance, b: GlyphInstance) bool {
+                return a.order < b.order;
+            }
+        }.lessThan);
+        std.sort.pdq(SvgInstance, self.svg_instances.items, {}, struct {
+            fn lessThan(_: void, a: SvgInstance, b: SvgInstance) bool {
+                return a.order < b.order;
+            }
+        }.lessThan);
+        std.sort.pdq(ImageInstance, self.images.items, {}, struct {
+            fn lessThan(_: void, a: ImageInstance, b: ImageInstance) bool {
                 return a.order < b.order;
             }
         }.lessThan);

@@ -118,7 +118,7 @@ pub fn renderCommandsToScene(commands: []const RenderCommand, s: *scene.Scene) !
             .scissor_start, .scissor_end => {
                 // Scissor handled by renderer directly
             },
-            .none, .image, .custom => {},
+            .none, .svg, .image, .custom => {},
         }
     }
 }

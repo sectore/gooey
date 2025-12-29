@@ -31,7 +31,14 @@ pub fn err(comptime fmt: []const u8, args: anytype) void {
 pub extern "env" fn getCanvasWidth() u32;
 pub extern "env" fn getCanvasHeight() u32;
 pub extern "env" fn getDevicePixelRatio() f32;
+/// Get canvas actual pixel width (canvas.width, not clientWidth)
+pub extern "env" fn getCanvasPixelWidth() u32;
+pub extern "env" fn getCanvasPixelHeight() u32;
 pub extern "env" fn setCanvasSize(width: u32, height: u32) void;
+pub extern "env" fn setDocumentTitle(ptr: [*]const u8, len: u32) void;
+
+/// Position the hidden input element for IME candidate window placement
+pub extern "env" fn setImeCursorPosition(x: f32, y: f32, width: f32, height: f32) void;
 
 // =============================================================================
 // WebGPU - Device/Queue handles are managed by JS
@@ -107,6 +114,9 @@ pub extern "env" fn setBindGroup(group_index: u32, bind_group_handle: u32) void;
 /// Draw instanced primitives
 pub extern "env" fn drawInstanced(vertex_count: u32, instance_count: u32) void;
 
+/// Draw instanced primitives with first instance offset (for batched rendering)
+pub extern "env" fn drawInstancedWithOffset(vertex_count: u32, instance_count: u32, first_instance: u32) void;
+
 /// End the render pass and submit
 pub extern "env" fn endRenderPass() void;
 
@@ -170,6 +180,23 @@ pub extern "env" fn rasterizeGlyph(
     out_advance: *f32,
 ) void;
 
+/// Rasterize a glyph with subpixel positioning
+pub extern "env" fn rasterizeGlyphSubpixel(
+    font_ptr: [*]const u8,
+    font_len: u32,
+    size: f32,
+    codepoint: u32,
+    subpixel_x: f32,
+    subpixel_y: f32,
+    out_buffer: [*]u8,
+    buffer_size: u32,
+    out_width: *u32,
+    out_height: *u32,
+    out_bearing_x: *f32,
+    out_bearing_y: *f32,
+    out_advance: *f32,
+) void;
+
 /// Create a texture from pixel data
 pub extern "env" fn createTexture(width: u32, height: u32, data_ptr: [*]const u8, data_len: u32) u32;
 
@@ -184,6 +211,150 @@ pub extern "env" fn createTextBindGroup(
     pipeline_handle: u32,
     group_index: u32,
     glyph_buffer: u32,
+    uniform_buffer: u32,
+    texture_handle: u32,
+    sampler_handle: u32,
+) u32;
+
+// =============================================================================
+// SVG Rasterization
+// =============================================================================
+
+/// Rasterize an SVG path to an RGBA buffer using JS Path2D/Canvas2D
+/// Returns true on success, false on failure
+pub extern "env" fn rasterizeSvgPath(
+    path_ptr: [*]const u8,
+    path_len: u32,
+    device_size: u32,
+    viewbox: f32,
+    has_fill: bool,
+    stroke_width: f32,
+    out_buffer: [*]u8,
+    buffer_size: u32,
+    out_width: *u32,
+    out_height: *u32,
+    out_offset_x: *i16,
+    out_offset_y: *i16,
+) bool;
+
+/// Create an RGBA texture (for SVG atlas, unlike text atlas which is R8)
+pub extern "env" fn createRgbaTexture(width: u32, height: u32, data_ptr: [*]const u8, data_len: u32) u32;
+
+/// Update an existing RGBA texture with new pixel data
+pub extern "env" fn updateRgbaTexture(handle: u32, width: u32, height: u32, data_ptr: [*]const u8, data_len: u32) void;
+
+/// Create bind group for SVG pipeline (same layout as text but uses RGBA texture)
+pub extern "env" fn createSvgBindGroup(
+    pipeline_handle: u32,
+    group_index: u32,
+    svg_buffer: u32,
+    uniform_buffer: u32,
+    texture_handle: u32,
+    sampler_handle: u32,
+) u32;
+
+// =============================================================================
+// MSAA (Multisampling Anti-Aliasing) Support
+// =============================================================================
+
+/// Create an MSAA texture for multisampled rendering
+pub extern "env" fn createMSAATexture(width: u32, height: u32, sample_count: u32) u32;
+
+/// Destroy an MSAA texture (call on resize)
+pub extern "env" fn destroyTexture(texture_handle: u32) void;
+
+/// Create a render pipeline with MSAA support
+pub extern "env" fn createMSAARenderPipeline(
+    shader_handle: u32,
+    vertex_entry: [*]const u8,
+    vertex_entry_len: u32,
+    fragment_entry: [*]const u8,
+    fragment_entry_len: u32,
+    sample_count: u32,
+) u32;
+
+/// Begin an MSAA render pass (renders to MSAA texture, resolves to target)
+pub extern "env" fn beginMSAARenderPass(
+    msaa_texture_handle: u32,
+    resolve_view_handle: u32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) void;
+
+/// Begin an MSAA render pass that resolves to a texture (for post-process)
+pub extern "env" fn beginMSAATextureRenderPass(
+    msaa_texture_handle: u32,
+    resolve_texture_handle: u32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
+) void;
+
+/// Get the current MSAA sample count (4 if supported, 1 otherwise)
+pub extern "env" fn getMSAASampleCount() u32;
+
+// =============================================================================
+// Clipboard
+// =============================================================================
+
+/// Write text to clipboard. Fire-and-forget from WASM side (async in JS).
+pub extern "env" fn clipboardWriteText(ptr: [*]const u8, len: u32) void;
+
+// =============================================================================
+// File Dialog (Async)
+// =============================================================================
+
+/// Request file open dialog - async, JS calls back with results.
+/// accept_ptr/len: file type filter (e.g., ".txt,.md" or "image/*")
+/// multiple: allow selecting multiple files
+/// directories: allow directory selection (Chrome only)
+pub extern "env" fn requestFileDialog(
+    request_id: u32,
+    accept_ptr: [*]const u8,
+    accept_len: u32,
+    multiple: bool,
+    directories: bool,
+) void;
+
+/// Trigger a file download (web "save" dialog).
+/// Creates a Blob and triggers download - fire-and-forget.
+pub extern "env" fn promptSaveFile(
+    name_ptr: [*]const u8,
+    name_len: u32,
+    data_ptr: [*]const u8,
+    data_len: u32,
+) void;
+
+// =============================================================================
+// Image Loading (Async)
+// =============================================================================
+
+/// Request async image decode - JS will decode using createImageBitmap
+/// and call back via onImageDecoded export when complete.
+/// request_id is used to correlate the callback with the original request.
+pub extern "env" fn requestImageDecode(
+    data_ptr: [*]const u8,
+    data_len: u32,
+    request_id: u32,
+) void;
+
+/// Request async image fetch from URL - JS will fetch and decode using fetch + createImageBitmap
+/// and call back via onImageDecoded export when complete.
+/// request_id is used to correlate the callback with the original request.
+pub extern "env" fn requestUrlFetch(
+    url_ptr: [*]const u8,
+    url_len: u32,
+    request_id: u32,
+) void;
+
+/// Create bind group for image pipeline (RGBA texture, same pattern as SVG)
+pub extern "env" fn createImageBindGroup(
+    pipeline_handle: u32,
+    group_index: u32,
+    image_buffer: u32,
     uniform_buffer: u32,
     texture_handle: u32,
     sampler_handle: u32,

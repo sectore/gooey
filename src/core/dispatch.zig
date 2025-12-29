@@ -73,6 +73,13 @@ pub const DispatchNode = struct {
     /// Bounding box for hit testing (set after layout)
     bounds: ?BoundingBox = null,
 
+    /// Z-index for layering (higher = on top, used in hit testing)
+    z_index: i16 = 0,
+
+    /// Whether this node or any descendant has a floating element
+    /// Used for hit testing optimization - can skip subtrees without floating descendants
+    has_floating_descendant: bool = false,
+
     /// Layout element ID (hash) for linking to layout system
     layout_id: ?u32 = null,
 
@@ -113,6 +120,9 @@ pub const DispatchNode = struct {
     /// Action handlers with HandlerRef (new pattern)
     action_listeners_handler: std.ArrayListUnmanaged(ActionListenerHandler) = .{},
 
+    /// Click-outside listeners (for closing dropdowns, modals, etc.)
+    click_outside_listeners: std.ArrayListUnmanaged(ClickOutsideListener) = .{},
+
     const Self = @This();
 
     pub fn containsPoint(self: Self, x: f32, y: f32) bool {
@@ -134,6 +144,7 @@ pub const DispatchNode = struct {
         // New handler-based listeners
         self.click_listeners_handler.deinit(allocator);
         self.action_listeners_handler.deinit(allocator);
+        self.click_outside_listeners.deinit(allocator);
     }
 
     /// Reset listeners for reuse (keeps capacity)
@@ -147,6 +158,7 @@ pub const DispatchNode = struct {
         // New handler-based listeners
         self.click_listeners_handler.clearRetainingCapacity();
         self.action_listeners_handler.clearRetainingCapacity();
+        self.click_outside_listeners.clearRetainingCapacity();
     }
 };
 
@@ -219,6 +231,15 @@ pub const ActionListenerHandler = struct {
     handler: HandlerRef,
 };
 
+/// Click-outside listener - fires when a click occurs outside this node's bounds
+/// Used for closing dropdowns, modals, popups, etc.
+pub const ClickOutsideListener = struct {
+    /// Simple callback (no context)
+    callback: ?*const fn () void = null,
+    /// Handler-based callback (with context)
+    handler: ?HandlerRef = null,
+};
+
 // =============================================================================
 // Dispatch Tree
 // =============================================================================
@@ -240,6 +261,9 @@ pub const DispatchTree = struct {
     /// Map from focus ID hash to dispatch node (for keyboard routing)
     focus_to_node: std.AutoHashMapUnmanaged(u64, DispatchNodeId) = .{},
 
+    /// Nodes with click-outside listeners (for fast iteration instead of scanning all nodes)
+    click_outside_nodes: std.ArrayListUnmanaged(DispatchNodeId) = .{},
+
     /// Root node ID
     root: DispatchNodeId = .invalid,
 
@@ -257,10 +281,15 @@ pub const DispatchTree = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        // Clean up listeners in all nodes before freeing the nodes array
+        for (self.nodes.items) |*node| {
+            node.deinit(self.allocator);
+        }
         self.nodes.deinit(self.allocator);
         self.node_stack.deinit(self.allocator);
         self.layout_to_node.deinit(self.allocator);
         self.focus_to_node.deinit(self.allocator);
+        self.click_outside_nodes.deinit(self.allocator);
     }
 
     /// Reset tree for a new frame. Clears all nodes but retains capacity.
@@ -274,6 +303,7 @@ pub const DispatchTree = struct {
         self.node_stack.clearRetainingCapacity();
         self.layout_to_node.clearRetainingCapacity();
         self.focus_to_node.clearRetainingCapacity();
+        self.click_outside_nodes.clearRetainingCapacity();
         self.root = .invalid;
     }
 
@@ -400,17 +430,43 @@ pub const DispatchTree = struct {
         }
     }
 
+    /// Set z-index directly for a specific node
+    pub fn setZIndex(self: *Self, node_id: DispatchNodeId, z_index: i16) void {
+        if (self.getNode(node_id)) |node| {
+            node.z_index = z_index;
+        }
+    }
+
+    /// Mark current node as floating and propagate has_floating_descendant up ancestors.
+    /// This enables the hit testing optimization to skip subtrees without floating elements.
+    pub fn markFloating(self: *Self) void {
+        const node_id = self.currentNode();
+        if (!node_id.isValid()) return;
+
+        // Walk up the ancestor chain and mark has_floating_descendant
+        var current = node_id;
+        while (current.isValid()) {
+            const node = self.getNode(current) orelse break;
+            // If already marked, ancestors are already marked too
+            if (node.has_floating_descendant) break;
+            node.has_floating_descendant = true;
+            current = node.parent;
+        }
+    }
+
     // =========================================================================
     // Hit Testing
     // =========================================================================
 
     /// Find the deepest node containing the given point.
+    /// Z-index aware: prefers higher z-index nodes over lower ones.
     /// Returns null if no node contains the point.
     pub fn hitTest(self: *const Self, x: f32, y: f32) ?DispatchNodeId {
         if (!self.root.isValid()) return null;
 
         var result: ?DispatchNodeId = null;
-        self.hitTestRecursive(self.root, x, y, &result);
+        var best_z: i16 = std.math.minInt(i16);
+        self.hitTestRecursive(self.root, x, y, &result, &best_z);
         return result;
     }
 
@@ -420,25 +476,36 @@ pub const DispatchTree = struct {
         x: f32,
         y: f32,
         result: *?DispatchNodeId,
+        best_z: *i16,
     ) void {
         const node = self.getNodeConst(node_id) orelse return;
 
-        // Early exit if this node has bounds and doesn't contain point
-        if (node.bounds) |bounds| {
-            if (x < bounds.x or x >= bounds.x + bounds.width or
-                y < bounds.y or y >= bounds.y + bounds.height)
-            {
-                return; // Point not in this subtree
+        // Check if this node contains the point
+        const contains_point = if (node.bounds) |bounds|
+            x >= bounds.x and x < bounds.x + bounds.width and
+                y >= bounds.y and y < bounds.y + bounds.height
+        else
+            true; // No bounds = assume contains (for structural nodes)
+
+        if (contains_point) {
+            // Only accept this node if z_index >= best so far
+            // (equal z_index: later in tree order wins, which is DOM order)
+            if (node.z_index >= best_z.*) {
+                result.* = node_id;
+                best_z.* = node.z_index;
             }
         }
 
-        // This node contains the point (or has no bounds)
-        result.* = node_id;
+        // Optimization: skip children if point is outside AND no floating descendants
+        // Floating elements can be positioned outside parent bounds, so we must check them
+        if (!contains_point and !node.has_floating_descendant) {
+            return;
+        }
 
-        // Check children (later children are rendered on top, so check all)
+        // Check children
         var child = node.first_child;
         while (child.isValid()) {
-            self.hitTestRecursive(child, x, y, result);
+            self.hitTestRecursive(child, x, y, result, best_z);
             const child_node = self.getNodeConst(child) orelse break;
             child = child_node.next_sibling;
         }
@@ -561,6 +628,36 @@ pub const DispatchTree = struct {
         }
     }
 
+    /// Register a click-outside listener on the current node.
+    /// The callback fires when a mouse click occurs outside this node's bounds.
+    /// Useful for closing dropdowns, modals, popups, etc.
+    pub fn onClickOutside(self: *Self, callback: *const fn () void) void {
+        const node_id = self.currentNode();
+        if (self.getNode(node_id)) |node| {
+            // Track this node for fast iteration (only if first listener)
+            if (node.click_outside_listeners.items.len == 0) {
+                self.click_outside_nodes.append(self.allocator, node_id) catch {};
+            }
+            node.click_outside_listeners.append(self.allocator, .{
+                .callback = callback,
+            }) catch {};
+        }
+    }
+
+    /// Register a click-outside listener using HandlerRef (new pattern with context)
+    pub fn onClickOutsideHandler(self: *Self, ref: HandlerRef) void {
+        const node_id = self.currentNode();
+        if (self.getNode(node_id)) |node| {
+            // Track this node for fast iteration (only if first listener)
+            if (node.click_outside_listeners.items.len == 0) {
+                self.click_outside_nodes.append(self.allocator, node_id) catch {};
+            }
+            node.click_outside_listeners.append(self.allocator, .{
+                .handler = ref,
+            }) catch {};
+        }
+    }
+
     // =========================================================================
     // Event Dispatch
     // =========================================================================
@@ -628,6 +725,83 @@ pub const DispatchTree = struct {
             }
         }
 
+        return false;
+    }
+
+    /// Check nodes with click-outside listeners and fire them if the click
+    /// was outside their bounds AND not on a descendant. Called before normal click handling.
+    /// Returns true if any handler was invoked.
+    ///
+    /// Performance: O(k) where k = nodes with click-outside listeners (typically 0-2)
+    /// Note: This computes hitTest internally. If you already have the hit target,
+    /// use dispatchClickOutsideWithTarget to avoid redundant hit testing.
+    pub fn dispatchClickOutside(self: *Self, x: f32, y: f32, gooey: *Gooey) bool {
+        return self.dispatchClickOutsideWithTarget(x, y, self.hitTest(x, y), gooey);
+    }
+
+    /// Check nodes with click-outside listeners and fire them if the click
+    /// was outside their bounds AND not on a descendant.
+    /// Takes a pre-computed hit_target to avoid redundant hit testing.
+    /// Returns true if any handler was invoked.
+    ///
+    /// Performance: O(k) where k = nodes with click-outside listeners (typically 0-2)
+    pub fn dispatchClickOutsideWithTarget(self: *Self, x: f32, y: f32, hit_target: ?DispatchNodeId, gooey: *Gooey) bool {
+        // Fast path: no click-outside listeners registered
+        if (self.click_outside_nodes.items.len == 0) return false;
+
+        var any_fired = false;
+
+        // Only iterate nodes with listeners (typically 0-2 items)
+        for (self.click_outside_nodes.items) |node_id| {
+            const node = self.getNode(node_id) orelse continue;
+
+            // Check if click is outside this node's bounds
+            const is_outside_bounds = if (node.bounds) |bounds|
+                x < bounds.x or x >= bounds.x + bounds.width or
+                    y < bounds.y or y >= bounds.y + bounds.height
+            else
+                false; // No bounds = can't determine outside, skip
+
+            // Also check if the hit target is a descendant of this node
+            // If so, the click is "inside" even if technically outside bounds
+            const is_on_descendant = if (hit_target) |target|
+                self.isDescendant(target, node_id)
+            else
+                false;
+
+            // Only fire if click is outside bounds AND not on a descendant
+            if (is_outside_bounds and !is_on_descendant) {
+                // Fire all click-outside listeners for this node
+                for (node.click_outside_listeners.items) |listener| {
+                    if (listener.callback) |cb| {
+                        cb();
+                        any_fired = true;
+                    }
+                    if (listener.handler) |handler| {
+                        handler.invoke(gooey);
+                        any_fired = true;
+                    }
+                }
+            }
+        }
+
+        return any_fired;
+    }
+
+    /// Check if `potential_descendant` is a descendant of `ancestor`
+    fn isDescendant(self: *const Self, potential_descendant: DispatchNodeId, ancestor: DispatchNodeId) bool {
+        if (!potential_descendant.isValid() or !ancestor.isValid()) return false;
+        if (potential_descendant == ancestor) return true; // Same node counts as "inside"
+
+        // Walk up from potential_descendant to see if we hit ancestor
+        var current = potential_descendant;
+        while (current.isValid()) {
+            const node = self.getNodeConst(current) orelse return false;
+            if (node.parent.isValid() and node.parent == ancestor) {
+                return true;
+            }
+            current = node.parent;
+        }
         return false;
     }
 
@@ -842,6 +1016,74 @@ test "DispatchTree hit testing" {
     try std.testing.expectEqual(@as(?DispatchNodeId, null), hit3);
 }
 
+test "DispatchTree z-index aware hit testing" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    // Build tree: root with two overlapping children
+    // child1 is earlier in DOM order but has lower z_index
+    // child2 (floating dropdown) is later and has higher z_index
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 200, .height = 200 });
+
+    const child1 = tree.pushNode();
+    tree.setBounds(child1, .{ .x = 10, .y = 10, .width = 100, .height = 100 });
+    tree.setZIndex(child1, 0);
+    tree.popNode();
+
+    // Floating element that overlaps with child1
+    const floating = tree.pushNode();
+    tree.setBounds(floating, .{ .x = 50, .y = 50, .width = 80, .height = 80 });
+    tree.setZIndex(floating, 100); // Higher z-index (like a dropdown)
+    tree.popNode();
+
+    tree.popNode();
+
+    // Hit test in overlap area - should return floating (higher z_index)
+    const hit1 = tree.hitTest(60, 60);
+    try std.testing.expectEqual(floating, hit1.?);
+
+    // Hit test in child1 only area (not overlapping with floating)
+    const hit2 = tree.hitTest(15, 15);
+    try std.testing.expectEqual(child1, hit2.?);
+
+    // Hit test in floating only area
+    const hit3 = tree.hitTest(120, 120);
+    try std.testing.expectEqual(floating, hit3.?);
+
+    // Hit test outside both children but inside root
+    const hit4 = tree.hitTest(180, 180);
+    try std.testing.expectEqual(root, hit4.?);
+}
+
+test "DispatchTree z-index equal prefers DOM order" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    // Two overlapping children with same z-index
+    // Later in DOM order should win (like CSS stacking)
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 200, .height = 200 });
+
+    const child1 = tree.pushNode();
+    tree.setBounds(child1, .{ .x = 10, .y = 10, .width = 100, .height = 100 });
+    tree.setZIndex(child1, 0);
+    tree.popNode();
+
+    const child2 = tree.pushNode();
+    tree.setBounds(child2, .{ .x = 50, .y = 50, .width = 100, .height = 100 });
+    tree.setZIndex(child2, 0); // Same z-index
+    tree.popNode();
+
+    tree.popNode();
+
+    // In overlap area, child2 wins (later in DOM)
+    const hit = tree.hitTest(60, 60);
+    try std.testing.expectEqual(child2, hit.?);
+}
+
 test "DispatchTree dispatch path" {
     const allocator = std.testing.allocator;
     var tree = DispatchTree.init(allocator);
@@ -900,4 +1142,244 @@ test "DispatchTree reset" {
 
     try std.testing.expectEqual(@as(usize, 0), tree.nodeCount());
     try std.testing.expect(!tree.root.isValid());
+}
+
+test "DispatchTree click-outside listener fires when click is outside bounds" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    // Track if callback was fired
+    const State = struct {
+        var fired: bool = false;
+        fn callback() void {
+            fired = true;
+        }
+    };
+    State.fired = false;
+
+    // Create a dropdown-like element with click-outside listener
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 400, .height = 400 });
+
+    const dropdown = tree.pushNode();
+    tree.setBounds(dropdown, .{ .x = 100, .y = 100, .width = 100, .height = 50 });
+    tree.onClickOutside(State.callback);
+    tree.popNode();
+
+    tree.popNode();
+
+    // Click inside dropdown - should NOT fire
+    _ = tree.dispatchClickOutside(150, 125, undefined);
+    try std.testing.expect(!State.fired);
+
+    // Click outside dropdown - should fire
+    _ = tree.dispatchClickOutside(50, 50, undefined);
+    try std.testing.expect(State.fired);
+}
+
+test "DispatchTree click-outside does not fire when click is inside bounds" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    const State = struct {
+        var fired: bool = false;
+        fn callback() void {
+            fired = true;
+        }
+    };
+    State.fired = false;
+
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 200, .height = 200 });
+    tree.onClickOutside(State.callback);
+    tree.popNode();
+
+    // Click inside - should NOT fire
+    _ = tree.dispatchClickOutside(100, 100, undefined);
+    try std.testing.expect(!State.fired);
+
+    // Click at edge (still inside) - should NOT fire
+    _ = tree.dispatchClickOutside(0, 0, undefined);
+    try std.testing.expect(!State.fired);
+
+    // Click just outside right edge - should fire
+    _ = tree.dispatchClickOutside(200, 100, undefined);
+    try std.testing.expect(State.fired);
+}
+
+test "DispatchTree multiple click-outside listeners" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    const State = struct {
+        var dropdown1_closed: bool = false;
+        var dropdown2_closed: bool = false;
+
+        fn closeDropdown1() void {
+            dropdown1_closed = true;
+        }
+        fn closeDropdown2() void {
+            dropdown2_closed = true;
+        }
+    };
+    State.dropdown1_closed = false;
+    State.dropdown2_closed = false;
+
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 400, .height = 400 });
+
+    // Dropdown 1 at left
+    const dropdown1 = tree.pushNode();
+    tree.setBounds(dropdown1, .{ .x = 10, .y = 10, .width = 80, .height = 50 });
+    tree.onClickOutside(State.closeDropdown1);
+    tree.popNode();
+
+    // Dropdown 2 at right
+    const dropdown2 = tree.pushNode();
+    tree.setBounds(dropdown2, .{ .x = 200, .y = 10, .width = 80, .height = 50 });
+    tree.onClickOutside(State.closeDropdown2);
+    tree.popNode();
+
+    tree.popNode();
+
+    // Click inside dropdown1 but outside dropdown2
+    _ = tree.dispatchClickOutside(50, 30, undefined);
+    try std.testing.expect(!State.dropdown1_closed); // Inside dropdown1
+    try std.testing.expect(State.dropdown2_closed); // Outside dropdown2
+
+    // Reset
+    State.dropdown1_closed = false;
+    State.dropdown2_closed = false;
+
+    // Click outside both
+    _ = tree.dispatchClickOutside(150, 200, undefined);
+    try std.testing.expect(State.dropdown1_closed);
+    try std.testing.expect(State.dropdown2_closed);
+}
+
+test "DispatchTree hit testing skips subtrees without floating descendants" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    // Build tree:
+    //   root
+    //   ├── container (no floating) - should early-exit when point outside
+    //   │   └── nested_child
+    //   └── floating_container (has floating descendant)
+    //       └── floating_child (positioned outside parent bounds)
+
+    const root = tree.pushNode();
+    tree.setBounds(root, .{ .x = 0, .y = 0, .width = 500, .height = 500 });
+
+    // Container without floating - hit test should skip its children when outside
+    const container = tree.pushNode();
+    tree.setBounds(container, .{ .x = 10, .y = 10, .width = 100, .height = 100 });
+    // Note: has_floating_descendant defaults to false
+
+    const nested_child = tree.pushNode();
+    tree.setBounds(nested_child, .{ .x = 20, .y = 20, .width = 50, .height = 50 });
+    tree.popNode();
+
+    tree.popNode();
+
+    // Container with floating descendant
+    const floating_container = tree.pushNode();
+    tree.setBounds(floating_container, .{ .x = 200, .y = 10, .width = 100, .height = 100 });
+
+    // Floating child positioned OUTSIDE its parent's bounds
+    const floating_child = tree.pushNode();
+    tree.setBounds(floating_child, .{ .x = 200, .y = 200, .width = 80, .height = 80 }); // Way below parent
+    tree.setZIndex(floating_child, 100);
+    tree.markFloating(); // This marks ancestors as has_floating_descendant
+    tree.popNode();
+
+    tree.popNode();
+
+    tree.popNode();
+
+    // Verify has_floating_descendant was propagated
+    const floating_container_node = tree.getNodeConst(floating_container).?;
+    try std.testing.expect(floating_container_node.has_floating_descendant);
+
+    const container_node = tree.getNodeConst(container).?;
+    try std.testing.expect(!container_node.has_floating_descendant);
+
+    // Hit test inside nested_child - should find it
+    const hit1 = tree.hitTest(30, 30);
+    try std.testing.expectEqual(nested_child, hit1.?);
+
+    // Hit test outside container but where nested_child would be if it floated
+    // Should NOT find nested_child because container has no floating descendants
+    const hit2 = tree.hitTest(150, 50);
+    try std.testing.expectEqual(root, hit2.?);
+
+    // Hit test in floating_child (which is outside its parent's bounds)
+    // Should find it because floating_container has has_floating_descendant=true
+    const hit3 = tree.hitTest(220, 220);
+    try std.testing.expectEqual(floating_child, hit3.?);
+}
+
+test "DispatchTree markFloating propagates up ancestor chain" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    // Build deep tree: root -> a -> b -> c -> floating
+    const root = tree.pushNode();
+    const a = tree.pushNode();
+    const b = tree.pushNode();
+    const c = tree.pushNode();
+    const floating = tree.pushNode();
+    tree.markFloating();
+    tree.popNode();
+    tree.popNode();
+    tree.popNode();
+    tree.popNode();
+    tree.popNode();
+
+    // All ancestors should have has_floating_descendant=true
+    try std.testing.expect(tree.getNodeConst(root).?.has_floating_descendant);
+    try std.testing.expect(tree.getNodeConst(a).?.has_floating_descendant);
+    try std.testing.expect(tree.getNodeConst(b).?.has_floating_descendant);
+    try std.testing.expect(tree.getNodeConst(c).?.has_floating_descendant);
+    try std.testing.expect(tree.getNodeConst(floating).?.has_floating_descendant);
+}
+
+test "DispatchTree click_outside_nodes tracks only nodes with listeners" {
+    const allocator = std.testing.allocator;
+    var tree = DispatchTree.init(allocator);
+    defer tree.deinit();
+
+    const noop = struct {
+        fn callback() void {}
+    }.callback;
+
+    const root = tree.pushNode();
+    // No listener on root
+
+    const child1 = tree.pushNode();
+    tree.onClickOutside(noop); // First listener
+    tree.popNode();
+
+    const child2 = tree.pushNode();
+    // No listener on child2
+    tree.popNode();
+
+    const child3 = tree.pushNode();
+    tree.onClickOutside(noop); // Second listener
+    tree.popNode();
+
+    tree.popNode();
+
+    // Should only have 2 nodes tracked (child1 and child3)
+    try std.testing.expectEqual(@as(usize, 2), tree.click_outside_nodes.items.len);
+    try std.testing.expectEqual(child1, tree.click_outside_nodes.items[0]);
+    try std.testing.expectEqual(child3, tree.click_outside_nodes.items[1]);
+
+    _ = root;
+    _ = child2;
 }

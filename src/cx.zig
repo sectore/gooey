@@ -69,7 +69,7 @@ const std = @import("std");
 // Core imports
 const gooey_mod = @import("core/gooey.zig");
 const Gooey = gooey_mod.Gooey;
-const ui_mod = @import("ui/ui.zig");
+const ui_mod = @import("ui/mod.zig");
 const Builder = ui_mod.Builder;
 const handler_mod = @import("core/handler.zig");
 const entity_mod = @import("core/entity.zig");
@@ -102,6 +102,7 @@ pub const ScrollStyle = ui_mod.ScrollStyle;
 pub const InputStyle = ui_mod.InputStyle;
 pub const TextAreaStyle = ui_mod.TextAreaStyle;
 pub const Color = ui_mod.Color;
+pub const Theme = ui_mod.Theme;
 
 /// Cx - The unified rendering context
 ///
@@ -517,6 +518,30 @@ pub const Cx = struct {
     /// Get the allocator.
     pub fn allocator(self: *Self) std.mem.Allocator {
         return self._allocator;
+    }
+
+    // =========================================================================
+    // Theme API
+    // =========================================================================
+
+    /// Set the theme for this context and all child components.
+    /// Call at the start of render to establish theme context.
+    ///
+    /// ```zig
+    /// fn render(cx: *Cx) void {
+    ///     const s = cx.state(AppState);
+    ///     cx.setTheme(s.theme);  // Set theme once
+    ///     // All children auto-inherit theme colors
+    /// }
+    /// ```
+    pub fn setTheme(self: *Self, theme_ptr: *const Theme) void {
+        self._builder.setTheme(theme_ptr);
+    }
+
+    /// Get the current theme, falling back to light theme if none set.
+    /// Components use this to resolve null color fields.
+    pub fn theme(self: *Self) *const Theme {
+        return self._builder.theme();
     }
 
     // =========================================================================

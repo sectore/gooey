@@ -15,6 +15,8 @@ pub const svg_shader_source =
     \\using namespace metal;
     \\
     \\struct SvgInstance {
+    \\    uint order;
+    \\    uint _pad0;
     \\    float pos_x;
     \\    float pos_y;
     \\    float size_x;
@@ -23,7 +25,9 @@ pub const svg_shader_source =
     \\    float uv_top;
     \\    float uv_right;
     \\    float uv_bottom;
-    \\    float4 color;         // Fill color (HSLA)
+    \\    uint _pad1;  // Align float4 color to 16-byte boundary
+    \\    uint _pad2;
+    \\    float4 color;         // Fill color (HSLA) - must be at 16-byte aligned offset
     \\    float4 stroke_color;  // Stroke color (HSLA)
     \\    float clip_x;
     \\    float clip_y;
@@ -137,6 +141,8 @@ pub const SvgPipeline = struct {
     instance_buffers: [FRAME_COUNT]objc.Object,
     instance_capacities: [FRAME_COUNT]usize,
     frame_index: usize,
+    // Current offset within frame's buffer (for batched rendering)
+    current_offset: usize,
 
     // Atlas texture management
     atlas_texture: ?objc.Object,
@@ -178,6 +184,7 @@ pub const SvgPipeline = struct {
             .instance_buffers = instance_buffers,
             .instance_capacities = instance_capacities,
             .frame_index = 0,
+            .current_offset = 0,
             .atlas_texture = null,
             .atlas_generation = 0,
             .current_atlas = null,
@@ -192,11 +199,13 @@ pub const SvgPipeline = struct {
         if (self.atlas_texture) |tex| tex.msgSend(void, "release", .{});
     }
 
-    /// Call at start of frame to bind atlas reference
+    /// Call at start of frame to bind atlas reference and reset offset
     pub fn prepareFrame(self: *SvgPipeline, atlas: *const Atlas) void {
         self.current_atlas = atlas;
+        self.current_offset = 0; // Reset offset for new frame
     }
 
+    /// Render SVG instances (legacy - single call per frame)
     pub fn render(
         self: *SvgPipeline,
         encoder: objc.Object,
@@ -227,6 +236,76 @@ pub const SvgPipeline = struct {
         encoder.msgSend(void, "setRenderPipelineState:", .{self.pipeline_state.value});
         encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ self.unit_vertex_buffer.value, @as(c_ulong, 0), @as(c_ulong, 0) });
         encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{ self.instance_buffers[idx].value, @as(c_ulong, 0), @as(c_ulong, 1) });
+        encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
+            @as(*const anyopaque, @ptrCast(&viewport_size)),
+            @as(c_ulong, @sizeOf([2]f32)),
+            @as(c_ulong, 2),
+        });
+
+        // Bind atlas texture
+        if (self.atlas_texture) |tex| {
+            encoder.msgSend(void, "setFragmentTexture:atIndex:", .{ tex.value, @as(c_ulong, 0) });
+        }
+
+        // Draw
+        encoder.msgSend(void, "drawPrimitives:vertexStart:vertexCount:instanceCount:", .{
+            @intFromEnum(mtl.MTLPrimitiveType.triangle),
+            @as(c_ulong, 0),
+            @as(c_ulong, 6),
+            @as(c_ulong, instances.len),
+        });
+    }
+
+    /// Render a batch of SVG instances using triple-buffered storage with offset tracking.
+    /// Safe for multiple calls per frame - appends to buffer at current offset.
+    /// More efficient than setVertexBytes for larger batches.
+    pub fn renderBatch(
+        self: *SvgPipeline,
+        encoder: objc.Object,
+        instances: []const SvgInstance,
+        viewport_size: [2]f32,
+    ) !void {
+        if (instances.len == 0) return;
+
+        const atlas = self.current_atlas orelse return;
+
+        // Update atlas texture if needed (only once per frame typically)
+        try self.updateAtlasTexture(atlas);
+
+        const idx = self.frame_index;
+        const byte_offset = self.current_offset * @sizeOf(SvgInstance);
+        const needed_capacity = self.current_offset + instances.len;
+
+        // Grow buffer if needed
+        if (needed_capacity > self.instance_capacities[idx]) {
+            try self.growInstanceBuffer(idx, needed_capacity);
+        }
+
+        // Upload instances at current offset
+        const buffer_ptr = self.instance_buffers[idx].msgSend(*anyopaque, "contents", .{});
+        const base: [*]SvgInstance = @ptrCast(@alignCast(buffer_ptr));
+        const dest = base + self.current_offset;
+        @memcpy(dest[0..instances.len], instances);
+
+        // Advance offset for next batch
+        self.current_offset += instances.len;
+
+        // Bind pipeline
+        encoder.msgSend(void, "setRenderPipelineState:", .{self.pipeline_state.value});
+
+        // Set unit vertex buffer
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+            self.unit_vertex_buffer.value,
+            @as(c_ulong, 0),
+            @as(c_ulong, 0),
+        });
+
+        // Set instance buffer with offset for this batch
+        encoder.msgSend(void, "setVertexBuffer:offset:atIndex:", .{
+            self.instance_buffers[idx].value,
+            @as(c_ulong, byte_offset),
+            @as(c_ulong, 1),
+        });
         encoder.msgSend(void, "setVertexBytes:length:atIndex:", .{
             @as(*const anyopaque, @ptrCast(&viewport_size)),
             @as(c_ulong, @sizeOf([2]f32)),

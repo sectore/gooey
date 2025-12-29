@@ -43,6 +43,15 @@ pub const WindowOptions = interface.WindowOptions;
 /// Renderer capabilities
 pub const RendererCapabilities = interface.RendererCapabilities;
 
+/// File dialog options (open)
+pub const PathPromptOptions = interface.PathPromptOptions;
+
+/// File dialog options (save)
+pub const SavePromptOptions = interface.SavePromptOptions;
+
+/// File dialog result
+pub const PathPromptResult = interface.PathPromptResult;
+
 // =============================================================================
 // Compile-time Platform Selection
 // =============================================================================
@@ -103,6 +112,8 @@ pub const mac = if (!is_wasm and !is_linux) struct {
     pub const display_link = @import("mac/display_link.zig");
     pub const appkit = @import("mac/appkit.zig");
     pub const metal = @import("mac/metal/metal.zig");
+    pub const clipboard = @import("mac/clipboard.zig");
+    pub const file_dialog = @import("mac/file_dialog.zig");
 } else struct {};
 
 pub const linux = if (is_linux) struct {
@@ -117,6 +128,7 @@ pub const web = if (is_wasm) struct {
     pub const platform = @import("wgpu/web/platform.zig");
     pub const window = @import("wgpu/web/window.zig");
     pub const imports = @import("wgpu/web/imports.zig");
+    pub const file_dialog = @import("wgpu/web/file_dialog.zig");
 } else struct {};
 
 // =============================================================================
