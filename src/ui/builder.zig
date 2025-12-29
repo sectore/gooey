@@ -36,10 +36,10 @@ pub const CornerRadius = layout_mod.CornerRadius;
 const ChildAlignment = layout_mod.ChildAlignment;
 const LayoutDirection = layout_mod.LayoutDirection;
 const LayoutConfig = layout_mod.LayoutConfig;
-const ElementDeclaration = layout_mod.ElementDeclaration;
 const TextConfig = layout_mod.TextConfig;
 const RenderCommand = layout_mod.RenderCommand;
 const BoundingBox = layout_mod.BoundingBox;
+const MainAxisDistribution = layout_mod.MainAxisDistribution;
 
 // Scene imports
 const scene_mod = @import("../core/scene.zig");
@@ -378,6 +378,7 @@ pub const Builder = struct {
             .column => .top_to_bottom,
         };
 
+        // Map cross-axis alignment
         const child_alignment = ChildAlignment{
             .x = switch (props.alignment.cross) {
                 .start => .left,
@@ -385,12 +386,22 @@ pub const Builder = struct {
                 .end => .right,
                 .stretch => .left,
             },
-            .y = switch (props.alignment.main) {
+            .y = switch (props.alignment.cross) {
                 .start => .top,
                 .center => .center,
                 .end => .bottom,
-                .space_between, .space_around => .top,
+                .stretch => .top,
             },
+        };
+
+        // Map main-axis distribution (for space-between, space-around, etc.)
+        const main_distribution: MainAxisDistribution = switch (props.alignment.main) {
+            .start => .start,
+            .center => .center,
+            .end => .end,
+            .space_between => .space_between,
+            .space_around => .space_around,
+            .space_evenly => .space_evenly,
         };
 
         // Build border config if we have a border
@@ -413,6 +424,7 @@ pub const Builder = struct {
                 .child_gap = @intFromFloat(props.gap),
                 .child_alignment = child_alignment,
                 .layout_direction = direction,
+                .main_axis_distribution = main_distribution,
             },
             .background_color = resolved_background,
             .corner_radius = CornerRadius.all(props.corner_radius),
@@ -760,6 +772,11 @@ pub const Builder = struct {
                 .none => .none,
                 .words => .words,
                 .newlines => .newlines,
+            },
+            .alignment = switch (txt.style.alignment) {
+                .left => .left,
+                .center => .center,
+                .right => .right,
             },
             .decoration = .{
                 .underline = txt.style.underline,

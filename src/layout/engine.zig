@@ -65,6 +65,8 @@ pub const TextData = struct {
     measured_width: f32 = 0,
     measured_height: f32 = 0,
     wrapped_lines: ?[]const types.WrappedLine = null,
+    /// Container width for text alignment (set during wrapping)
+    container_width: f32 = 0,
 };
 
 pub const SvgData = struct {
@@ -435,28 +437,31 @@ pub const LayoutEngine = struct {
     fn computeTextWrapping(self: *Self, index: u32) !void {
         const elem = self.elements.get(index);
 
-        // Handle text wrapping for this element
+        // Handle text wrapping and alignment for this element
         if (elem.text_data) |*td| {
-            if (td.config.wrap_mode != .none) {
-                const max_width = if (elem.parent_index) |pi| blk: {
-                    const parent = self.elements.getConst(pi);
-                    break :blk parent.computed.sized_width - parent.config.layout.padding.totalX();
-                } else self.viewport_width;
+            // Calculate container width for alignment (used for all text, not just wrapped)
+            const max_width = if (elem.parent_index) |pi| blk: {
+                const parent = self.elements.getConst(pi);
+                break :blk parent.computed.sized_width - parent.config.layout.padding.totalX();
+            } else self.viewport_width;
 
-                if (max_width > 0) {
-                    const wrap_result = try self.wrapText(td.text, td.config, max_width);
-                    td.wrapped_lines = wrap_result.lines;
+            // Always store container width for alignment calculations
+            td.container_width = max_width;
 
-                    if (wrap_result.lines.len > 0) {
-                        td.measured_width = wrap_result.max_line_width;
-                        td.measured_height = wrap_result.total_height;
+            // Handle actual text wrapping if enabled
+            if (td.config.wrap_mode != .none and max_width > 0) {
+                const wrap_result = try self.wrapText(td.text, td.config, max_width);
+                td.wrapped_lines = wrap_result.lines;
 
-                        elem.computed.sized_width = wrap_result.max_line_width;
-                        elem.computed.sized_height = wrap_result.total_height;
+                if (wrap_result.lines.len > 0) {
+                    td.measured_width = wrap_result.max_line_width;
+                    td.measured_height = wrap_result.total_height;
 
-                        // Propagate height change up to fit-content parents
-                        self.propagateHeightChange(elem.parent_index);
-                    }
+                    elem.computed.sized_width = wrap_result.max_line_width;
+                    elem.computed.sized_height = wrap_result.total_height;
+
+                    // Propagate height change up to fit-content parents
+                    self.propagateHeightChange(elem.parent_index);
                 }
             }
         }
@@ -921,15 +926,16 @@ pub const LayoutEngine = struct {
 
     fn positionChildren(self: *Self, first_child: u32, layout: LayoutConfig, content_box: BoundingBox, scroll_offset: ?ScrollOffset) void {
         const is_horizontal = layout.layout_direction.isHorizontal();
-        const gap: f32 = @floatFromInt(layout.child_gap);
+        const base_gap: f32 = @floatFromInt(layout.child_gap);
         const alignment = layout.child_alignment;
+        const distribution = layout.main_axis_distribution;
 
         // Apply scroll offset if present
         const offset_x: f32 = if (scroll_offset) |s| -s.x else 0;
         const offset_y: f32 = if (scroll_offset) |s| -s.y else 0;
 
-        // Calculate total children size for alignment (skip floating elements)
-        var total_main: f32 = 0;
+        // Calculate total children size (without gaps) and count (skip floating elements)
+        var total_children_size: f32 = 0;
         var child_count: u32 = 0;
         var child_idx: ?u32 = first_child;
 
@@ -937,33 +943,80 @@ pub const LayoutEngine = struct {
             const child = self.elements.getConst(ci);
             // Skip floating elements - they don't participate in normal flow
             if (child.config.floating == null) {
-                total_main += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
+                total_children_size += if (is_horizontal) child.computed.sized_width else child.computed.sized_height;
                 child_count += 1;
             }
             child_idx = child.next_sibling_index;
         }
 
-        if (child_count > 1) {
-            total_main += gap * @as(f32, @floatFromInt(child_count - 1));
+        // Early exit if no children
+        if (child_count == 0) return;
+
+        // Calculate available space and distribution parameters
+        const container_main_size = if (is_horizontal) content_box.width else content_box.height;
+        const remaining_space = container_main_size - total_children_size;
+
+        // Calculate effective gap and starting offset based on distribution mode
+        var effective_gap: f32 = base_gap;
+        var start_offset: f32 = 0;
+
+        switch (distribution) {
+            .start => {
+                // Children packed at start with base gap
+                effective_gap = base_gap;
+                start_offset = 0;
+            },
+            .center => {
+                // Children centered with base gap
+                effective_gap = base_gap;
+                const total_with_gaps = total_children_size + base_gap * @as(f32, @floatFromInt(@max(1, child_count) - 1));
+                start_offset = (container_main_size - total_with_gaps) / 2;
+            },
+            .end => {
+                // Children packed at end with base gap
+                effective_gap = base_gap;
+                const total_with_gaps = total_children_size + base_gap * @as(f32, @floatFromInt(@max(1, child_count) - 1));
+                start_offset = container_main_size - total_with_gaps;
+            },
+            .space_between => {
+                // Equal space between children, no space at edges
+                // gap = remaining_space / (child_count - 1)
+                if (child_count > 1) {
+                    effective_gap = remaining_space / @as(f32, @floatFromInt(child_count - 1));
+                } else {
+                    effective_gap = 0;
+                }
+                start_offset = 0;
+            },
+            .space_around => {
+                // Equal space around each child (half space at edges)
+                // Each child gets equal "padding" on both sides
+                // gap = remaining_space / child_count
+                // start_offset = gap / 2
+                if (child_count > 0) {
+                    const space_per_child = remaining_space / @as(f32, @floatFromInt(child_count));
+                    effective_gap = space_per_child;
+                    start_offset = space_per_child / 2;
+                }
+            },
+            .space_evenly => {
+                // Equal space between and around children
+                // gap = remaining_space / (child_count + 1)
+                // start_offset = gap
+                if (child_count > 0) {
+                    effective_gap = remaining_space / @as(f32, @floatFromInt(child_count + 1));
+                    start_offset = effective_gap;
+                }
+            },
         }
 
-        // Calculate starting position based on alignment
-        var cursor_x: f32 = content_box.x + offset_x;
-        var cursor_y: f32 = content_box.y + offset_y;
+        // Ensure gap is non-negative (can happen if children overflow container)
+        effective_gap = @max(0, effective_gap);
+        start_offset = @max(0, start_offset);
 
-        if (is_horizontal) {
-            cursor_x += switch (alignment.x) {
-                .left => 0,
-                .center => (content_box.width - total_main) / 2,
-                .right => content_box.width - total_main,
-            };
-        } else {
-            cursor_y += switch (alignment.y) {
-                .top => 0,
-                .center => (content_box.height - total_main) / 2,
-                .bottom => content_box.height - total_main,
-            };
-        }
+        // Calculate starting position
+        var cursor_x: f32 = content_box.x + offset_x + if (is_horizontal) start_offset else 0;
+        var cursor_y: f32 = content_box.y + offset_y + if (!is_horizontal) start_offset else 0;
 
         // Position each child
         child_idx = first_child;
@@ -998,9 +1051,9 @@ pub const LayoutEngine = struct {
 
             // Advance cursor
             if (is_horizontal) {
-                cursor_x += child.computed.sized_width + gap;
+                cursor_x += child.computed.sized_width + effective_gap;
             } else {
-                cursor_y += child.computed.sized_height + gap;
+                cursor_y += child.computed.sized_height + effective_gap;
             }
 
             child_idx = child.next_sibling_index;
@@ -1078,11 +1131,19 @@ pub const LayoutEngine = struct {
             if (td.wrapped_lines) |lines| {
                 // Render each wrapped line
                 const line_height = td.config.lineHeightPx();
+                // Use container width for alignment if available (from wrapping), otherwise use bbox
+                const align_width = if (td.container_width > 0) td.container_width else bbox.width;
                 for (lines, 0..) |line, i| {
                     const line_y = bbox.y + @as(f32, @floatFromInt(i)) * line_height;
+                    // Calculate x offset based on text alignment within container
+                    const line_x = bbox.x + switch (td.config.alignment) {
+                        .left => 0,
+                        .center => (align_width - line.width) / 2,
+                        .right => align_width - line.width,
+                    };
                     try self.commands.append(.{
                         .bounding_box = .{
-                            .x = bbox.x,
+                            .x = line_x,
                             .y = line_y,
                             .width = line.width,
                             .height = line_height,
@@ -1103,8 +1164,21 @@ pub const LayoutEngine = struct {
                 }
             } else {
                 // Single line (no wrapping)
+                // Use container width for alignment if available, otherwise use bbox
+                const align_width = if (td.container_width > 0) td.container_width else bbox.width;
+                // Calculate x offset based on text alignment
+                const text_x = bbox.x + switch (td.config.alignment) {
+                    .left => 0,
+                    .center => (align_width - td.measured_width) / 2,
+                    .right => align_width - td.measured_width,
+                };
                 try self.commands.append(.{
-                    .bounding_box = bbox,
+                    .bounding_box = .{
+                        .x = text_x,
+                        .y = bbox.y,
+                        .width = td.measured_width,
+                        .height = bbox.height,
+                    },
                     .command_type = .text,
                     .z_index = z_index,
                     .id = elem.id,
@@ -1887,4 +1961,364 @@ test "getZIndex returns inherited z-index" {
     try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("floating").id));
     // Nested element inherits from floating ancestor
     try std.testing.expectEqual(@as(i16, 50), engine.getZIndex(LayoutId.init("nested").id));
+}
+
+test "text alignment positions wrapped lines correctly" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    // Mock: each char is 10px wide
+    const mockMeasure = struct {
+        fn measure(
+            text: []const u8,
+            _: u16,
+            font_size: u16,
+            _: ?f32,
+            _: ?*anyopaque,
+        ) TextMeasurement {
+            return .{
+                .width = @as(f32, @floatFromInt(text.len)) * 10.0,
+                .height = @floatFromInt(font_size),
+            };
+        }
+    }.measure;
+
+    engine.setMeasureTextFn(mockMeasure, null);
+    engine.beginFrame(800, 600);
+
+    // Container is 200px wide, text lines are shorter
+    try engine.openElement(.{
+        .layout = .{ .sizing = Sizing.fixed(200, 100) },
+    });
+    {
+        // "AA\nBBBB" - line 1 is 20px, line 2 is 40px
+        try engine.text("AA\nBBBB", .{
+            .wrap_mode = .newlines,
+            .alignment = .center,
+            .font_size = 20,
+            .line_height = 100, // 100% = 20px per line
+        });
+    }
+    engine.closeElement();
+
+    const commands = try engine.endFrame();
+
+    // Find text commands
+    var text_commands: [2]?types.BoundingBox = .{ null, null };
+    var text_cmd_idx: usize = 0;
+    for (commands) |cmd| {
+        if (cmd.command_type == .text and text_cmd_idx < 2) {
+            text_commands[text_cmd_idx] = cmd.bounding_box;
+            text_cmd_idx += 1;
+        }
+    }
+
+    // Both lines should exist
+    try std.testing.expect(text_commands[0] != null);
+    try std.testing.expect(text_commands[1] != null);
+
+    const line1 = text_commands[0].?;
+    const line2 = text_commands[1].?;
+
+    // Line 1 "AA" = 20px wide, centered in 200px container
+    // Expected x = (200 - 20) / 2 = 90
+    try std.testing.expectEqual(@as(f32, 90.0), line1.x);
+    try std.testing.expectEqual(@as(f32, 20.0), line1.width);
+
+    // Line 2 "BBBB" = 40px wide, centered in 200px container
+    // Expected x = (200 - 40) / 2 = 80
+    try std.testing.expectEqual(@as(f32, 80.0), line2.x);
+    try std.testing.expectEqual(@as(f32, 40.0), line2.width);
+}
+
+test "text alignment right aligns text" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    const mockMeasure = struct {
+        fn measure(
+            text: []const u8,
+            _: u16,
+            font_size: u16,
+            _: ?f32,
+            _: ?*anyopaque,
+        ) TextMeasurement {
+            return .{
+                .width = @as(f32, @floatFromInt(text.len)) * 10.0,
+                .height = @floatFromInt(font_size),
+            };
+        }
+    }.measure;
+
+    engine.setMeasureTextFn(mockMeasure, null);
+    engine.beginFrame(800, 600);
+
+    try engine.openElement(.{
+        .layout = .{ .sizing = Sizing.fixed(200, 50) },
+    });
+    {
+        // Single line "test" = 40px, right aligned in 200px
+        try engine.text("test", .{
+            .alignment = .right,
+            .font_size = 20,
+        });
+    }
+    engine.closeElement();
+
+    const commands = try engine.endFrame();
+
+    // Find the text command
+    var text_box: ?types.BoundingBox = null;
+    for (commands) |cmd| {
+        if (cmd.command_type == .text) {
+            text_box = cmd.bounding_box;
+            break;
+        }
+    }
+
+    try std.testing.expect(text_box != null);
+    const bbox = text_box.?;
+
+    // "test" = 40px wide, right aligned in 200px container
+    // Expected x = 200 - 40 = 160
+    try std.testing.expectEqual(@as(f32, 160.0), bbox.x);
+    try std.testing.expectEqual(@as(f32, 40.0), bbox.width);
+}
+
+test "space_between distributes children evenly" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Container: 300px wide, horizontal layout with space_between
+    // 3 children: 50px each = 150px total
+    // Remaining space: 300 - 150 = 150px
+    // space_between: gap = 150 / (3-1) = 75px between children
+    try engine.openElement(.{
+        .id = LayoutId.init("container"),
+        .layout = .{
+            .sizing = Sizing.fixed(300, 100),
+            .layout_direction = .left_to_right,
+            .main_axis_distribution = .space_between,
+        },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("child1"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child2"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child3"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    // Get child positions
+    const child1 = engine.elements.getConst(1);
+    const child2 = engine.elements.getConst(2);
+    const child3 = engine.elements.getConst(3);
+
+    // Child 1: starts at x=0
+    try std.testing.expectEqual(@as(f32, 0.0), child1.computed.bounding_box.x);
+    // Child 2: starts at x=0 + 50 + 75 = 125
+    try std.testing.expectEqual(@as(f32, 125.0), child2.computed.bounding_box.x);
+    // Child 3: starts at x=125 + 50 + 75 = 250
+    try std.testing.expectEqual(@as(f32, 250.0), child3.computed.bounding_box.x);
+}
+
+test "space_around distributes space around children" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Container: 300px wide, horizontal layout with space_around
+    // 3 children: 50px each = 150px total
+    // Remaining space: 300 - 150 = 150px
+    // space_around: space_per_child = 150 / 3 = 50px
+    // start_offset = 50 / 2 = 25px, gap = 50px
+    try engine.openElement(.{
+        .id = LayoutId.init("container"),
+        .layout = .{
+            .sizing = Sizing.fixed(300, 100),
+            .layout_direction = .left_to_right,
+            .main_axis_distribution = .space_around,
+        },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("child1"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child2"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child3"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const child1 = engine.elements.getConst(1);
+    const child2 = engine.elements.getConst(2);
+    const child3 = engine.elements.getConst(3);
+
+    // Child 1: starts at x=25 (start_offset)
+    try std.testing.expectEqual(@as(f32, 25.0), child1.computed.bounding_box.x);
+    // Child 2: starts at x=25 + 50 + 50 = 125
+    try std.testing.expectEqual(@as(f32, 125.0), child2.computed.bounding_box.x);
+    // Child 3: starts at x=125 + 50 + 50 = 225
+    try std.testing.expectEqual(@as(f32, 225.0), child3.computed.bounding_box.x);
+}
+
+test "space_evenly distributes space evenly" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Container: 300px wide, horizontal layout with space_evenly
+    // 3 children: 50px each = 150px total
+    // Remaining space: 300 - 150 = 150px
+    // space_evenly: gap = 150 / (3+1) = 37.5px
+    // start_offset = gap = 37.5px
+    try engine.openElement(.{
+        .id = LayoutId.init("container"),
+        .layout = .{
+            .sizing = Sizing.fixed(300, 100),
+            .layout_direction = .left_to_right,
+            .main_axis_distribution = .space_evenly,
+        },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("child1"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child2"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child3"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const child1 = engine.elements.getConst(1);
+    const child2 = engine.elements.getConst(2);
+    const child3 = engine.elements.getConst(3);
+
+    // Child 1: starts at x=37.5
+    try std.testing.expectEqual(@as(f32, 37.5), child1.computed.bounding_box.x);
+    // Child 2: starts at x=37.5 + 50 + 37.5 = 125
+    try std.testing.expectEqual(@as(f32, 125.0), child2.computed.bounding_box.x);
+    // Child 3: starts at x=125 + 50 + 37.5 = 212.5
+    try std.testing.expectEqual(@as(f32, 212.5), child3.computed.bounding_box.x);
+}
+
+test "space_between with vertical layout" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // Container: 200px tall, vertical layout with space_between
+    // 2 children: 40px each = 80px total
+    // Remaining space: 200 - 80 = 120px
+    // space_between with 2 children: gap = 120 / 1 = 120px
+    try engine.openElement(.{
+        .id = LayoutId.init("container"),
+        .layout = .{
+            .sizing = Sizing.fixed(100, 200),
+            .layout_direction = .top_to_bottom,
+            .main_axis_distribution = .space_between,
+        },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("child1"),
+            .layout = .{ .sizing = Sizing.fixed(50, 40) },
+        });
+        engine.closeElement();
+
+        try engine.openElement(.{
+            .id = LayoutId.init("child2"),
+            .layout = .{ .sizing = Sizing.fixed(50, 40) },
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const child1 = engine.elements.getConst(1);
+    const child2 = engine.elements.getConst(2);
+
+    // Child 1: starts at y=0
+    try std.testing.expectEqual(@as(f32, 0.0), child1.computed.bounding_box.y);
+    // Child 2: starts at y=0 + 40 + 120 = 160
+    try std.testing.expectEqual(@as(f32, 160.0), child2.computed.bounding_box.y);
+}
+
+test "space_between with single child stays at start" {
+    var engine = LayoutEngine.init(std.testing.allocator);
+    defer engine.deinit();
+
+    engine.beginFrame(800, 600);
+
+    // With a single child, space_between should position it at the start
+    try engine.openElement(.{
+        .id = LayoutId.init("container"),
+        .layout = .{
+            .sizing = Sizing.fixed(300, 100),
+            .layout_direction = .left_to_right,
+            .main_axis_distribution = .space_between,
+        },
+    });
+    {
+        try engine.openElement(.{
+            .id = LayoutId.init("child"),
+            .layout = .{ .sizing = Sizing.fixed(50, 50) },
+        });
+        engine.closeElement();
+    }
+    engine.closeElement();
+
+    _ = try engine.endFrame();
+
+    const child = engine.elements.getConst(1);
+
+    // Single child should be at start (x=0)
+    try std.testing.expectEqual(@as(f32, 0.0), child.computed.bounding_box.x);
 }

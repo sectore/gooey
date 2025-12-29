@@ -19,6 +19,7 @@ pub const Padding = types.Padding;
 pub const ChildAlignment = types.ChildAlignment;
 pub const AlignmentX = types.AlignmentX;
 pub const AlignmentY = types.AlignmentY;
+pub const MainAxisDistribution = types.MainAxisDistribution;
 pub const Color = types.Color;
 pub const CornerRadius = types.CornerRadius;
 pub const BorderConfig = types.BorderConfig;

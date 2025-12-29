@@ -214,6 +214,22 @@ pub const AlignmentY = enum {
     bottom,
 };
 
+/// Main axis distribution mode for children
+pub const MainAxisDistribution = enum {
+    /// Children packed at start (default)
+    start,
+    /// Children centered
+    center,
+    /// Children packed at end
+    end,
+    /// Equal space between children, no space at edges
+    space_between,
+    /// Equal space around children (half space at edges)
+    space_around,
+    /// Equal space between and around children
+    space_evenly,
+};
+
 /// Child alignment configuration
 pub const ChildAlignment = struct {
     x: AlignmentX = .left,
@@ -408,6 +424,8 @@ pub const LayoutConfig = struct {
     child_gap: u16 = 0,
     child_alignment: ChildAlignment = .{},
     layout_direction: LayoutDirection = .left_to_right,
+    /// Main axis distribution mode for children
+    main_axis_distribution: MainAxisDistribution = .start,
     /// Aspect ratio (width / height). When set, height is derived from width.
     aspect_ratio: ?f32 = null,
 
@@ -515,9 +533,11 @@ pub const TextConfig = struct {
     letter_spacing: i16 = 0,
     line_height: u16 = 120,
     wrap_mode: WrapMode = .none,
+    alignment: TextAlignment = .left,
     decoration: TextDecorationConfig = .{},
 
     pub const WrapMode = enum { none, words, newlines };
+    pub const TextAlignment = enum { left, center, right };
 
     pub const TextDecorationConfig = packed struct {
         underline: bool = false,

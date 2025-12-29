@@ -97,11 +97,13 @@ pub const TextStyle = struct {
     weight: Weight = .regular,
     italic: bool = false,
     wrap: WrapMode = .none,
+    alignment: Alignment = .left,
     underline: bool = false,
     strikethrough: bool = false,
 
     pub const Weight = enum { thin, light, regular, medium, semibold, bold, black };
     pub const WrapMode = enum { none, words, newlines };
+    pub const Alignment = enum { left, center, right };
 };
 
 // =============================================================================
@@ -161,7 +163,7 @@ pub const Box = struct {
         main: MainAxis = .start,
         cross: CrossAxis = .start,
 
-        pub const MainAxis = enum { start, center, end, space_between, space_around };
+        pub const MainAxis = enum { start, center, end, space_between, space_around, space_evenly };
         pub const CrossAxis = enum { start, center, end, stretch };
     };
 

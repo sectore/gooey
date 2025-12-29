@@ -543,6 +543,12 @@ const OverviewSection = struct {
                 },
             }),
 
+            // Text alignment demo
+            TextAlignmentDemo{},
+
+            // Space distribution demo
+            SpaceDistributionDemo{},
+
             // Quick stats
             QuickStats{},
         });
@@ -600,6 +606,163 @@ const FeatureCard = struct {
             },
             ui.text(self.title, .{ .size = 16, .color = t.text }),
             ui.text(self.description, .{ .size = 13, .color = t.muted, .wrap = .words }),
+        });
+    }
+};
+
+const TextAlignmentDemo = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const t = cx.theme();
+
+        cx.box(.{
+            .fill_width = true,
+            .padding = .{ .all = 20 },
+            .background = t.surface,
+            .corner_radius = t.radius_md,
+            .gap = 16,
+        }, .{
+            ui.text("Text Alignment", .{ .size = 18, .color = t.text }),
+
+            // Three columns showing left, center, right alignment
+            cx.hstack(.{ .gap = 16 }, .{
+                // Left aligned
+                cx.box(.{
+                    .grow = true,
+                    .padding = .{ .all = 16 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .gap = 8,
+                }, .{
+                    ui.text("Left Aligned", .{ .size = 12, .color = t.muted }),
+                    ui.text("This text wraps and aligns to the left edge of its container.", .{
+                        .size = 14,
+                        .color = t.text,
+                        .wrap = .words,
+                        .alignment = .left,
+                    }),
+                }),
+                // Center aligned
+                cx.box(.{
+                    .grow = true,
+                    .padding = .{ .all = 16 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .gap = 8,
+                }, .{
+                    ui.text("Center Aligned", .{ .size = 12, .color = t.muted }),
+                    ui.text("This text wraps and aligns to the center of its container.", .{
+                        .size = 14,
+                        .color = t.text,
+                        .wrap = .words,
+                        .alignment = .center,
+                    }),
+                }),
+                // Right aligned
+                cx.box(.{
+                    .grow = true,
+                    .padding = .{ .all = 16 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .gap = 8,
+                }, .{
+                    ui.text("Right Aligned", .{ .size = 12, .color = t.muted }),
+                    ui.text("This text wraps and aligns to the right edge of its container.", .{
+                        .size = 14,
+                        .color = t.text,
+                        .wrap = .words,
+                        .alignment = .right,
+                    }),
+                }),
+            }),
+        });
+    }
+};
+
+const SpaceDistributionDemo = struct {
+    pub fn render(_: @This(), cx: *Cx) void {
+        const t = cx.theme();
+
+        cx.box(.{
+            .fill_width = true,
+            .padding = .{ .all = 20 },
+            .background = t.surface,
+            .corner_radius = t.radius_md,
+            .gap = 16,
+        }, .{
+            ui.text("Space Distribution", .{ .size = 18, .color = t.text }),
+            ui.text("Control how children are distributed along the main axis", .{ .size = 13, .color = t.muted }),
+
+            // space-between demo
+            cx.box(.{ .gap = 8 }, .{
+                ui.text("space_between", .{ .size = 12, .color = t.subtext }),
+                cx.box(.{
+                    .fill_width = true,
+                    .height = 50,
+                    .padding = .{ .all = 8 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .direction = .row,
+                    .alignment = .{ .main = .space_between, .cross = .center },
+                }, .{
+                    DistributionBox{ .label = "A" },
+                    DistributionBox{ .label = "B" },
+                    DistributionBox{ .label = "C" },
+                }),
+            }),
+
+            // space-around demo
+            cx.box(.{ .gap = 8 }, .{
+                ui.text("space_around", .{ .size = 12, .color = t.subtext }),
+                cx.box(.{
+                    .fill_width = true,
+                    .height = 50,
+                    .padding = .{ .all = 8 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .direction = .row,
+                    .alignment = .{ .main = .space_around, .cross = .center },
+                }, .{
+                    DistributionBox{ .label = "A" },
+                    DistributionBox{ .label = "B" },
+                    DistributionBox{ .label = "C" },
+                }),
+            }),
+
+            // space-evenly demo
+            cx.box(.{ .gap = 8 }, .{
+                ui.text("space_evenly", .{ .size = 12, .color = t.subtext }),
+                cx.box(.{
+                    .fill_width = true,
+                    .height = 50,
+                    .padding = .{ .all = 8 },
+                    .background = t.bg,
+                    .corner_radius = t.radius_sm,
+                    .direction = .row,
+                    .alignment = .{ .main = .space_evenly, .cross = .center },
+                }, .{
+                    DistributionBox{ .label = "A" },
+                    DistributionBox{ .label = "B" },
+                    DistributionBox{ .label = "C" },
+                }),
+            }),
+        });
+    }
+};
+
+const DistributionBox = struct {
+    label: []const u8,
+
+    pub fn render(self: @This(), cx: *Cx) void {
+        const t = cx.theme();
+
+        cx.box(.{
+            .width = 40,
+            .height = 30,
+            .background = t.primary,
+            .corner_radius = 4,
+            .alignment = .{ .main = .center, .cross = .center },
+        }, .{
+            ui.text(self.label, .{ .size = 14, .color = ui.Color.white }),
         });
     }
 };
