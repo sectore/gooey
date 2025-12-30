@@ -119,9 +119,18 @@ pub const mac = if (!is_wasm and !is_linux) struct {
 pub const linux = if (is_linux) struct {
     pub const platform = @import("linux/platform.zig");
     pub const window = @import("linux/window.zig");
-    pub const renderer = @import("linux/renderer.zig");
     pub const wayland = @import("linux/wayland.zig");
-    pub const wgpu = @import("linux/wgpu.zig");
+    pub const vulkan = @import("linux/vulkan.zig");
+    pub const vk_renderer = @import("linux/vk_renderer.zig");
+    pub const unified = @import("wgpu/unified.zig");
+    pub const clipboard = @import("linux/clipboard.zig");
+    pub const dbus = @import("linux/dbus.zig");
+    pub const file_dialog = @import("linux/file_dialog.zig");
+
+    // Type aliases
+    pub const LinuxPlatform = platform.LinuxPlatform;
+    pub const Window = window.Window;
+    pub const VulkanRenderer = vk_renderer.VulkanRenderer;
 } else struct {};
 
 pub const web = if (is_wasm) struct {

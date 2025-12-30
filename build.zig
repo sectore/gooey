@@ -136,7 +136,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // =============================================================================
-    // Linux Native Builds
+    // Linux Native Builds (Vulkan + Wayland)
     // =============================================================================
 
     if (is_native_linux) {
@@ -147,24 +147,79 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
 
-        // Link Linux system libraries
-        mod.linkSystemLibrary("wayland-client", .{});
+        // Add Vulkan SPIR-V shader embeds
+        mod.addAnonymousImport("unified_vert_spv", .{
+            .root_source_file = b.path("src/platform/linux/shaders/unified.vert.spv"),
+        });
+        mod.addAnonymousImport("unified_frag_spv", .{
+            .root_source_file = b.path("src/platform/linux/shaders/unified.frag.spv"),
+        });
+        mod.addAnonymousImport("text_vert_spv", .{
+            .root_source_file = b.path("src/platform/linux/shaders/text.vert.spv"),
+        });
+        mod.addAnonymousImport("text_frag_spv", .{
+            .root_source_file = b.path("src/platform/linux/shaders/text.frag.spv"),
+        });
+
+        // Link Vulkan
+        mod.addSystemIncludePath(.{ .cwd_relative = "/usr/include" });
+        mod.linkSystemLibrary("vulkan", .{});
+
+        // Link text rendering libraries (FreeType, HarfBuzz, Fontconfig)
+        mod.linkSystemLibrary("freetype", .{});
+        mod.linkSystemLibrary("harfbuzz", .{});
+        mod.linkSystemLibrary("fontconfig", .{});
+        // Link image loading library (libpng)
+        mod.linkSystemLibrary("png", .{});
+        // Link D-Bus for XDG portal file dialogs
+        mod.linkSystemLibrary("dbus-1", .{});
         mod.link_libc = true;
 
-        // Add shader embeds (same as WASM, shared WGSL shaders)
-        mod.addAnonymousImport("unified_wgsl", .{
-            .root_source_file = b.path("src/platform/wgpu/shaders/unified.wgsl"),
-        });
-        mod.addAnonymousImport("text_wgsl", .{
-            .root_source_file = b.path("src/platform/wgpu/shaders/text.wgsl"),
-        });
-
         // =========================================================================
-        // Linux Demo (Showcase)
+        // Linux Showcase (Main Demo)
         // =========================================================================
 
         const exe = b.addExecutable(.{
             .name = "gooey",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/showcase.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "gooey", .module = mod },
+                },
+            }),
+        });
+
+        // Link system libraries (Vulkan + Wayland + text rendering)
+        exe.linkSystemLibrary("vulkan");
+        exe.linkSystemLibrary("wayland-client");
+        exe.linkSystemLibrary("freetype");
+        exe.linkSystemLibrary("harfbuzz");
+        exe.linkSystemLibrary("fontconfig");
+        exe.linkSystemLibrary("png");
+        exe.linkSystemLibrary("dbus-1");
+        exe.linkLibC();
+
+        b.installArtifact(exe);
+
+        // Run step
+        const run_step = b.step("run", "Run the showcase demo");
+        const run_cmd = b.addRunArtifact(exe);
+        run_cmd.setCwd(b.path(".")); // Run from project root so assets/ can be found
+        run_step.dependOn(&run_cmd.step);
+        run_cmd.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            run_cmd.addArgs(args);
+        }
+
+        // =========================================================================
+        // Linux Basic Demo (Simple Wayland + Vulkan test)
+        // =========================================================================
+
+        const basic_exe = b.addExecutable(.{
+            .name = "gooey-basic",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/examples/linux_demo.zig"),
                 .target = target,
@@ -175,22 +230,88 @@ pub fn build(b: *std.Build) void {
             }),
         });
 
-        // Link wgpu-native (must be installed or provided)
-        exe.root_module.linkSystemLibrary("wgpu_native", .{});
-        exe.root_module.linkSystemLibrary("wayland-client", .{});
-        exe.root_module.link_libc = true;
+        basic_exe.linkSystemLibrary("vulkan");
+        basic_exe.linkSystemLibrary("wayland-client");
+        basic_exe.linkSystemLibrary("freetype");
+        basic_exe.linkSystemLibrary("harfbuzz");
+        basic_exe.linkSystemLibrary("fontconfig");
+        basic_exe.linkSystemLibrary("png");
+        basic_exe.linkSystemLibrary("dbus-1");
+        basic_exe.linkLibC();
 
-        b.installArtifact(exe);
+        b.installArtifact(basic_exe);
 
-        // Run step
-        const run_step = b.step("run", "Run the Linux demo");
-        const run_cmd = b.addRunArtifact(exe);
-        run_step.dependOn(&run_cmd.step);
-        run_cmd.step.dependOn(b.getInstallStep());
+        const run_basic_step = b.step("run-basic", "Run the basic Linux demo (simple Wayland + Vulkan test)");
+        const run_basic_cmd = b.addRunArtifact(basic_exe);
+        run_basic_cmd.setCwd(b.path(".")); // Run from project root so assets/ can be found
+        run_basic_step.dependOn(&run_basic_cmd.step);
+        run_basic_cmd.step.dependOn(b.getInstallStep());
 
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
+        // =========================================================================
+        // Linux Text Demo (uses full UI framework with text rendering)
+        // =========================================================================
+
+        const text_exe = b.addExecutable(.{
+            .name = "gooey-text",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/linux_text_demo.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "gooey", .module = mod },
+                },
+            }),
+        });
+
+        text_exe.linkSystemLibrary("vulkan");
+        text_exe.linkSystemLibrary("wayland-client");
+        text_exe.linkSystemLibrary("freetype");
+        text_exe.linkSystemLibrary("harfbuzz");
+        text_exe.linkSystemLibrary("fontconfig");
+        text_exe.linkSystemLibrary("png");
+        text_exe.linkSystemLibrary("dbus-1");
+        text_exe.linkLibC();
+
+        b.installArtifact(text_exe);
+
+        const run_text_step = b.step("run-text", "Run the Linux text demo");
+        const run_text_cmd = b.addRunArtifact(text_exe);
+        run_text_cmd.setCwd(b.path(".")); // Run from project root so assets/ can be found
+        run_text_step.dependOn(&run_text_cmd.step);
+        run_text_cmd.step.dependOn(b.getInstallStep());
+
+        // =========================================================================
+        // Linux File Dialog Demo
+        // =========================================================================
+
+        const file_dialog_exe = b.addExecutable(.{
+            .name = "gooey-file-dialog",
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("src/examples/linux_file_dialog.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "gooey", .module = mod },
+                },
+            }),
+        });
+
+        file_dialog_exe.linkSystemLibrary("vulkan");
+        file_dialog_exe.linkSystemLibrary("wayland-client");
+        file_dialog_exe.linkSystemLibrary("freetype");
+        file_dialog_exe.linkSystemLibrary("harfbuzz");
+        file_dialog_exe.linkSystemLibrary("fontconfig");
+        file_dialog_exe.linkSystemLibrary("png");
+        file_dialog_exe.linkSystemLibrary("dbus-1");
+        file_dialog_exe.linkLibC();
+
+        b.installArtifact(file_dialog_exe);
+
+        const run_file_dialog_step = b.step("run-file-dialog", "Run the Linux file dialog demo");
+        const run_file_dialog_cmd = b.addRunArtifact(file_dialog_exe);
+        run_file_dialog_cmd.setCwd(b.path(".")); // Run from project root so assets/ can be found
+        run_file_dialog_step.dependOn(&run_file_dialog_cmd.step);
+        run_file_dialog_cmd.step.dependOn(b.getInstallStep());
 
         // =====================================================================
         // Tests
@@ -199,6 +320,15 @@ pub fn build(b: *std.Build) void {
         const mod_tests = b.addTest(.{
             .root_module = mod,
         });
+        mod_tests.linkSystemLibrary("vulkan");
+        mod_tests.linkSystemLibrary("wayland-client");
+        mod_tests.linkSystemLibrary("freetype");
+        mod_tests.linkSystemLibrary("harfbuzz");
+        mod_tests.linkSystemLibrary("fontconfig");
+        mod_tests.linkSystemLibrary("png");
+        mod_tests.linkSystemLibrary("dbus-1");
+        mod_tests.linkLibC();
+
         const run_mod_tests = b.addRunArtifact(mod_tests);
 
         const test_step = b.step("test", "Run tests");
