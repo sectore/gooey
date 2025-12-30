@@ -140,25 +140,43 @@ pub fn build(b: *std.Build) void {
     // =============================================================================
 
     if (is_native_linux) {
+        // =========================================================================
+        // Shader Compilation (GLSL -> SPIR-V)
+        // =========================================================================
+        // Compiles shaders to source tree so @embedFile can find them.
+        // Pre-committed .spv files mean this only needs to run when shaders change.
+
+        const compile_shaders_step = b.step("compile-shaders", "Compile GLSL shaders to SPIR-V (requires glslc)");
+
+        const shader_dir = "src/platform/linux/shaders";
+        const shaders = [_]struct { source: []const u8, output: []const u8, stage: []const u8 }{
+            .{ .source = "unified.vert", .output = "unified.vert.spv", .stage = "vertex" },
+            .{ .source = "unified.frag", .output = "unified.frag.spv", .stage = "fragment" },
+            .{ .source = "text.vert", .output = "text.vert.spv", .stage = "vertex" },
+            .{ .source = "text.frag", .output = "text.frag.spv", .stage = "fragment" },
+            .{ .source = "svg.vert", .output = "svg.vert.spv", .stage = "vertex" },
+            .{ .source = "svg.frag", .output = "svg.frag.spv", .stage = "fragment" },
+            .{ .source = "image.vert", .output = "image.vert.spv", .stage = "vertex" },
+            .{ .source = "image.frag", .output = "image.frag.spv", .stage = "fragment" },
+        };
+
+        inline for (shaders) |shader| {
+            const compile_cmd = b.addSystemCommand(&.{
+                "glslc",
+                "-fshader-stage=" ++ shader.stage,
+                "-O", // Optimize for release
+                "-o",
+                shader_dir ++ "/" ++ shader.output,
+                shader_dir ++ "/" ++ shader.source,
+            });
+            compile_shaders_step.dependOn(&compile_cmd.step);
+        }
+
         // Create the gooey module for Linux
         const mod = b.addModule("gooey", .{
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
-        });
-
-        // Add Vulkan SPIR-V shader embeds
-        mod.addAnonymousImport("unified_vert_spv", .{
-            .root_source_file = b.path("src/platform/linux/shaders/unified.vert.spv"),
-        });
-        mod.addAnonymousImport("unified_frag_spv", .{
-            .root_source_file = b.path("src/platform/linux/shaders/unified.frag.spv"),
-        });
-        mod.addAnonymousImport("text_vert_spv", .{
-            .root_source_file = b.path("src/platform/linux/shaders/text.vert.spv"),
-        });
-        mod.addAnonymousImport("text_frag_spv", .{
-            .root_source_file = b.path("src/platform/linux/shaders/text.frag.spv"),
         });
 
         // Link Vulkan
