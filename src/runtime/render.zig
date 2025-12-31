@@ -5,13 +5,13 @@
 const std = @import("std");
 
 // Core imports
-const gooey_mod = @import("../core/gooey.zig");
-const scene_mod = @import("../core/scene.zig");
+const gooey_mod = @import("../context/gooey.zig");
+const scene_mod = @import("../scene/mod.zig");
 const render_bridge = @import("../core/render_bridge.zig");
 const layout_mod = @import("../layout/layout.zig");
 const text_mod = @import("../text/mod.zig");
-const svg_instance_mod = @import("../core/svg_instance.zig");
-const image_instance_mod = @import("../core/image_instance.zig");
+const svg_instance_mod = @import("../scene/svg_instance.zig");
+const image_instance_mod = @import("../scene/image_instance.zig");
 const image_mod = @import("../image/mod.zig");
 
 const Gooey = gooey_mod.Gooey;

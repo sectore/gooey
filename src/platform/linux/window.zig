@@ -10,10 +10,10 @@ const LinuxPlatform = @import("platform.zig").LinuxPlatform;
 const interface_mod = @import("../interface.zig");
 const geometry = @import("../../core/geometry.zig");
 const Size = geometry.Size(f64);
-const scene_mod = @import("../../core/scene.zig");
+const scene_mod = @import("../../scene/mod.zig");
 const text_mod = @import("../../text/mod.zig");
 const svg_mod = @import("../../svg/atlas.zig");
-const input = @import("../../core/input.zig");
+const input = @import("../../input/events.zig");
 const linux_input = @import("input.zig");
 
 const Allocator = std.mem.Allocator;

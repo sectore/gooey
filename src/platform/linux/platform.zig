@@ -8,7 +8,7 @@ const wayland = @import("wayland.zig");
 const interface_mod = @import("../interface.zig");
 const LinuxWindow = @import("window.zig").Window;
 const linux_input = @import("input.zig");
-const input = @import("../../core/input.zig");
+const input = @import("../../input/events.zig");
 const clipboard = @import("clipboard.zig");
 
 // Static listeners - must persist for lifetime of Wayland objects

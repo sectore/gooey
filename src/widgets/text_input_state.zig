@@ -42,9 +42,9 @@ else
         }
     };
 
-// Direct imports from core modules (not through root.zig to avoid cycles)
-const scene_mod = @import("../core/scene.zig");
-const input_mod = @import("../core/input.zig");
+// Direct imports from modules (not through root.zig to avoid cycles)
+const scene_mod = @import("../scene/mod.zig");
+const input_mod = @import("../input/events.zig");
 const text_mod = @import("../text/mod.zig");
 
 const common = @import("text_common.zig");

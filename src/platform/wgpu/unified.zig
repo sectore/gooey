@@ -5,7 +5,7 @@
 //! for efficient single-pass rendering with one draw call.
 
 const std = @import("std");
-const scene = @import("../../core/scene.zig");
+const scene = @import("../../scene/mod.zig");
 
 /// Primitive types for the unified shader
 pub const PrimitiveType = enum(u32) {

@@ -6,8 +6,8 @@
 const std = @import("std");
 const objc = @import("objc");
 const mtl = @import("api.zig");
-const scene = @import("../../../core/scene.zig");
-const SvgInstance = @import("../../../core/svg_instance.zig").SvgInstance;
+const scene = @import("../../../scene/mod.zig");
+const SvgInstance = @import("../../../scene/svg_instance.zig").SvgInstance;
 const Atlas = @import("../../../text/atlas.zig").Atlas;
 
 pub const svg_shader_source =

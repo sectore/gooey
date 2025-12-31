@@ -6,10 +6,10 @@
 const std = @import("std");
 const vk = @import("vulkan.zig");
 const unified = @import("../wgpu/unified.zig");
-const scene_mod = @import("../../core/scene.zig");
+const scene_mod = @import("../../scene/mod.zig");
 const text_mod = @import("../../text/mod.zig");
-const svg_instance_mod = @import("../../core/svg_instance.zig");
-const image_instance_mod = @import("../../core/image_instance.zig");
+const svg_instance_mod = @import("../../scene/svg_instance.zig");
+const image_instance_mod = @import("../../scene/image_instance.zig");
 const scene_renderer = @import("scene_renderer.zig");
 
 const SvgInstance = svg_instance_mod.SvgInstance;

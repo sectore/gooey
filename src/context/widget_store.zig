@@ -3,12 +3,12 @@
 //! Now includes animation state management.
 
 const std = @import("std");
-const TextInput = @import("../widgets/text_input.zig").TextInput;
-const Bounds = @import("../widgets/text_input.zig").Bounds;
+const TextInput = @import("../widgets/text_input_state.zig").TextInput;
+const Bounds = @import("../widgets/text_input_state.zig").Bounds;
 const ScrollContainer = @import("../widgets/scroll_container.zig").ScrollContainer;
-const TextArea = @import("../widgets/text_area.zig").TextArea;
-const TextAreaBounds = @import("../widgets/text_area.zig").Bounds;
-const animation = @import("animation.zig");
+const TextArea = @import("../widgets/text_area_state.zig").TextArea;
+const TextAreaBounds = @import("../widgets/text_area_state.zig").Bounds;
+const animation = @import("../animation/animation.zig");
 const AnimationState = animation.AnimationState;
 const AnimationConfig = animation.AnimationConfig;
 const AnimationHandle = animation.AnimationHandle;

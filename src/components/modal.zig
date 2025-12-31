@@ -30,7 +30,7 @@ const Color = ui.Color;
 const Theme = ui.Theme;
 const HandlerRef = ui.HandlerRef;
 const ShadowConfig = ui.ShadowConfig;
-const animation_mod = @import("../core/animation.zig");
+const animation_mod = @import("../animation/mod.zig");
 const Easing = animation_mod.Easing;
 const AnimationHandle = animation_mod.AnimationHandle;
 

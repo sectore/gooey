@@ -35,8 +35,8 @@ const platform = @import("platform/mod.zig");
 const runtime = @import("runtime/mod.zig");
 
 // Core imports
-const gooey_mod = @import("core/gooey.zig");
-const input_mod = @import("core/input.zig");
+const gooey_mod = @import("context/gooey.zig");
+const input_mod = @import("input/mod.zig");
 const shader_mod = @import("core/shader.zig");
 const cx_mod = @import("cx.zig");
 const ui_mod = @import("ui/mod.zig");
@@ -138,7 +138,7 @@ pub fn WebApp(
 
     const web_imports = @import("platform/wgpu/web/imports.zig");
     const WebRenderer = @import("platform/wgpu/web/renderer.zig").WebRenderer;
-    const handler_mod = @import("core/handler.zig");
+    const handler_mod = @import("context/handler.zig");
 
     return struct {
         const Self = @This();

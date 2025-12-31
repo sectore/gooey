@@ -4,7 +4,7 @@
 //! and provides utilities for parsing Wayland input events.
 
 const std = @import("std");
-const input = @import("../../core/input.zig");
+const input = @import("../../input/events.zig");
 const geometry = @import("../../core/geometry.zig");
 const wayland = @import("wayland.zig");
 

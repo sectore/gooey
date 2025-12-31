@@ -7,17 +7,17 @@
 const std = @import("std");
 
 // Core imports
-const dispatch_mod = @import("../core/dispatch.zig");
+const dispatch_mod = @import("../context/dispatch.zig");
 const DispatchTree = dispatch_mod.DispatchTree;
 const DispatchNodeId = dispatch_mod.DispatchNodeId;
-const focus_mod = @import("../core/focus.zig");
+const focus_mod = @import("../context/focus.zig");
 const FocusId = focus_mod.FocusId;
 const FocusHandle = focus_mod.FocusHandle;
-const action_mod = @import("../core/action.zig");
+const action_mod = @import("../input/actions.zig");
 const actionTypeId = action_mod.actionTypeId;
-const handler_mod = @import("../core/handler.zig");
-const entity_mod = @import("../core/entity.zig");
-const gooey_mod = @import("../core/gooey.zig");
+const handler_mod = @import("../context/handler.zig");
+const entity_mod = @import("../context/entity.zig");
+const gooey_mod = @import("../context/gooey.zig");
 pub const HandlerRef = handler_mod.HandlerRef;
 pub const EntityId = entity_mod.EntityId;
 pub const Gooey = gooey_mod.Gooey;
@@ -43,7 +43,7 @@ const BoundingBox = layout_mod.BoundingBox;
 const MainAxisDistribution = layout_mod.MainAxisDistribution;
 
 // Scene imports
-const scene_mod = @import("../core/scene.zig");
+const scene_mod = @import("../scene/mod.zig");
 const Scene = scene_mod.Scene;
 const Hsla = scene_mod.Hsla;
 

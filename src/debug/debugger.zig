@@ -11,8 +11,8 @@
 //! use pre-allocated fixed-capacity arrays. No dynamic allocation after initialization.
 
 const std = @import("std");
-const scene_mod = @import("scene.zig");
-const input_mod = @import("input.zig");
+const scene_mod = @import("../scene/scene.zig");
+const input_mod = @import("../input/events.zig");
 const layout_mod = @import("../layout/layout.zig");
 const engine_mod = @import("../layout/engine.zig");
 const types_mod = @import("../layout/types.zig");

@@ -21,7 +21,7 @@
 //! ```
 
 const std = @import("std");
-const input_mod = @import("input.zig");
+const input_mod = @import("events.zig");
 
 const KeyCode = input_mod.KeyCode;
 const Modifiers = input_mod.Modifiers;

@@ -107,7 +107,7 @@ pub fn build(b: *std.Build) void {
         const watcher_exe = b.addExecutable(.{
             .name = "gooey-hot",
             .root_module = b.createModule(.{
-                .root_source_file = b.path("src/hot/watcher.zig"),
+                .root_source_file = b.path("src/runtime/watcher.zig"),
                 .target = target,
                 .optimize = .Debug,
             }),

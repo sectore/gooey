@@ -17,7 +17,7 @@ pub const ObjectFit = styles.ObjectFit;
 pub const HandlerRef = styles.HandlerRef;
 
 // Action system
-const action_mod = @import("../core/action.zig");
+const action_mod = @import("../input/actions.zig");
 const actionTypeId = action_mod.actionTypeId;
 
 // =============================================================================

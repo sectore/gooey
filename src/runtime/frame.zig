@@ -6,7 +6,7 @@
 const std = @import("std");
 
 // Core imports
-const gooey_mod = @import("../core/gooey.zig");
+const gooey_mod = @import("../context/gooey.zig");
 const render_bridge = @import("../core/render_bridge.zig");
 const layout_mod = @import("../layout/layout.zig");
 const text_mod = @import("../text/mod.zig");

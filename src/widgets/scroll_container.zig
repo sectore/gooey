@@ -11,7 +11,7 @@
 //! scrolling when content exceeds the viewport size.
 
 const std = @import("std");
-const scene_mod = @import("../core/scene.zig");
+const scene_mod = @import("../scene/mod.zig");
 const layout_types = @import("../layout/types.zig");
 
 const Scene = scene_mod.Scene;

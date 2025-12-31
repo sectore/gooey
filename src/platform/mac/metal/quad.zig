@@ -4,7 +4,7 @@
 const std = @import("std");
 const objc = @import("objc");
 const mtl = @import("api.zig");
-const scene = @import("../../../core/scene.zig");
+const scene = @import("../../../scene/mod.zig");
 
 /// Metal Shading Language source for quad rendering
 pub const quad_shader_source =

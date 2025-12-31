@@ -5,7 +5,7 @@
 //! for scroll/wheel events. JavaScript writes to the buffer, Zig reads from it.
 //! No JS↔WASM calls needed during frame processing.
 
-const input = @import("../../../core/input.zig");
+const input = @import("../../../input/events.zig");
 const geometry = @import("../../../core/geometry.zig");
 
 /// Packed scroll event - exactly 24 bytes

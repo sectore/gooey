@@ -6,12 +6,18 @@
 //!
 //! Gooey is organized into logical namespaces:
 //!
-//! - `core` - Geometry, input, scene primitives, events
+//! - `core` - Foundational types (geometry, color)
+//! - `input` - Input events, keycodes, action bindings
+//! - `scene` - GPU primitives (Quad, Shadow, GlyphInstance)
+//! - `context` - Application context (Gooey, focus, dispatch, entity)
+//! - `animation` - Animation system (easing, interpolation)
 //! - `layout` - Clay-inspired layout engine
 //! - `text` - Text rendering with backend abstraction
-//! - `ui` - Declarative component builder
-//! - `platform` - Platform abstraction (macOS/Metal currently)
-//! - `elements` - Reusable widgets (TextInput, etc.)
+//! - `ui` - Declarative UI builder and primitives
+//! - `components` - High-level UI components (Button, TextInput, etc.)
+//! - `widgets` - Stateful widget implementations
+//! - `platform` - Platform abstraction (macOS/Metal, Linux/Vulkan, Web/WGPU)
+//! - `debug` - Debugging tools (inspector, profiler, render stats)
 //!
 //! ## Quick Start
 //!
@@ -51,8 +57,23 @@ const std = @import("std");
 // Module Namespaces (for explicit imports)
 // =============================================================================
 
-/// Core primitives: geometry, input, scene, events
+/// Core primitives: geometry, color (foundational types with no internal deps)
 pub const core = @import("core/mod.zig");
+
+/// Input system: events, keycodes, action bindings
+pub const input = @import("input/mod.zig");
+
+/// Scene: GPU primitives for rendering
+pub const scene = @import("scene/mod.zig");
+
+/// Context: application context, focus, dispatch, entity system
+pub const context = @import("context/mod.zig");
+
+/// Animation: time-based interpolation for UI transitions
+pub const animation = @import("animation/mod.zig");
+
+/// Debug tools: inspector, profiler, render stats
+pub const debug = @import("debug/mod.zig");
 
 /// Layout engine (Clay-inspired)
 pub const layout = @import("layout/layout.zig");
@@ -63,11 +84,14 @@ pub const text = @import("text/mod.zig");
 /// Declarative UI builder
 pub const ui = @import("ui/mod.zig");
 
-/// Platform abstraction (macOS/Metal)
+/// Platform abstraction (macOS/Metal, Linux/Vulkan, Web/WGPU)
 pub const platform = @import("platform/mod.zig");
 
 /// Image loading and caching
 pub const image = @import("image/mod.zig");
+
+/// Stateful widget implementations
+pub const widgets = @import("widgets/mod.zig");
 
 // Components (preferred)
 pub const components = @import("components/mod.zig");
@@ -111,8 +135,7 @@ pub const Edges = core.Edges;
 pub const Corners = core.Corners;
 pub const Pixels = core.Pixels;
 
-// Input events
-pub const input = core.input;
+// Input events (types from core for convenience)
 pub const InputEvent = core.InputEvent;
 pub const KeyEvent = core.KeyEvent;
 pub const KeyCode = core.KeyCode;
@@ -218,16 +241,16 @@ pub const isView = core.isView;
 
 // Handler system
 pub const HandlerRef = core.HandlerRef;
+pub const typeId = context.typeId;
 
-// Animation system
-pub const Animation = core.Animation;
-pub const AnimationHandle = core.AnimationHandle;
-pub const Easing = core.Easing;
-pub const Duration = core.Duration;
-pub const animation = core.animation;
-pub const lerp = core.lerp;
-pub const lerpInt = core.lerpInt;
-pub const lerpColor = core.lerpColor;
+// Animation system (types from animation module for convenience)
+pub const Animation = animation.Animation;
+pub const AnimationHandle = animation.AnimationHandle;
+pub const Easing = animation.Easing;
+pub const Duration = animation.Duration;
+pub const lerp = animation.lerp;
+pub const lerpInt = animation.lerpInt;
+pub const lerpColor = animation.lerpColor;
 
 // Text system
 pub const TextSystem = text.TextSystem;
@@ -239,6 +262,14 @@ pub const Builder = ui.Builder;
 
 // Theme system
 pub const Theme = ui.Theme;
+
+// UI style types
+pub const Box = ui.Box;
+pub const StackStyle = ui.StackStyle;
+pub const CenterStyle = ui.CenterStyle;
+pub const ScrollStyle = ui.ScrollStyle;
+pub const InputStyle = ui.InputStyle;
+pub const TextAreaStyle = ui.TextAreaStyle;
 
 // Platform (for direct access)
 pub const MacPlatform = platform.Platform;

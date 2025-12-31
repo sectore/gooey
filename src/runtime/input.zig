@@ -6,10 +6,10 @@
 const std = @import("std");
 
 // Core imports
-const gooey_mod = @import("../core/gooey.zig");
-const input_mod = @import("../core/input.zig");
-const dispatch_mod = @import("../core/dispatch.zig");
-const debugger_mod = @import("../core/debugger.zig");
+const gooey_mod = @import("../context/gooey.zig");
+const input_mod = @import("../input/events.zig");
+const dispatch_mod = @import("../context/dispatch.zig");
+const debugger_mod = @import("../debug/debugger.zig");
 const cx_mod = @import("../cx.zig");
 const ui_mod = @import("../ui/mod.zig");
 

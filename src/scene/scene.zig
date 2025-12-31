@@ -22,7 +22,7 @@
 //! Collects all primitives for a frame, handles z-ordering and clipping.
 
 const std = @import("std");
-const geometry = @import("geometry.zig");
+const geometry = @import("../core/geometry.zig");
 const svg_instance_mod = @import("svg_instance.zig");
 pub const SvgInstance = svg_instance_mod.SvgInstance;
 const image_instance_mod = @import("image_instance.zig");
@@ -391,7 +391,7 @@ pub const Scene = struct {
     culling_enabled: bool,
 
     // Stats tracking (optional)
-    stats: ?*@import("render_stats.zig").RenderStats,
+    stats: ?*@import("../debug/render_stats.zig").RenderStats,
 
     const Self = @This();
 
@@ -793,7 +793,7 @@ pub const Scene = struct {
     }
 
     /// Attach stats tracker (optional)
-    pub fn setStats(self: *Self, stats: *@import("render_stats.zig").RenderStats) void {
+    pub fn setStats(self: *Self, stats: *@import("../debug/render_stats.zig").RenderStats) void {
         self.stats = stats;
     }
 };

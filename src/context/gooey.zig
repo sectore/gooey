@@ -20,8 +20,8 @@
 //! ```
 
 const std = @import("std");
-const debugger_mod = @import("debugger.zig");
-const render_stats = @import("render_stats.zig");
+const debugger_mod = @import("../debug/debugger.zig");
+const render_stats = @import("../debug/render_stats.zig");
 
 // Layout
 const layout_mod = @import("../layout/layout.zig");
@@ -43,11 +43,11 @@ const entity_mod = @import("entity.zig");
 const EntityMap = entity_mod.EntityMap;
 pub const EntityId = entity_mod.EntityId;
 
-const action_mod = @import("action.zig");
+const action_mod = @import("../input/actions.zig");
 const Keymap = action_mod.Keymap;
 
 // Scene
-const scene_mod = @import("scene.zig");
+const scene_mod = @import("../scene/scene.zig");
 const Scene = scene_mod.Scene;
 
 // Text
@@ -57,15 +57,15 @@ const TextSystem = text_mod.TextSystem;
 // Widgets
 const widget_store_mod = @import("widget_store.zig");
 const WidgetStore = widget_store_mod.WidgetStore;
-const TextInput = @import("../widgets/text_input.zig").TextInput;
-const TextArea = @import("../widgets/text_area.zig").TextArea;
+const TextInput = @import("../widgets/text_input_state.zig").TextInput;
+const TextArea = @import("../widgets/text_area_state.zig").TextArea;
 
 // Platform
 const platform = @import("../platform/mod.zig");
 const Window = platform.Window;
 
 // Input
-const input_mod = @import("input.zig");
+const input_mod = @import("../input/events.zig");
 const InputEvent = input_mod.InputEvent;
 
 // Focus

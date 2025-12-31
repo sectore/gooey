@@ -11,10 +11,10 @@ const DEBUG_BATCHES = builtin.mode == .Debug and false;
 
 const vk = @import("vulkan.zig");
 const unified = @import("../wgpu/unified.zig");
-const scene_mod = @import("../../core/scene.zig");
-const batch_iter = @import("../../core/batch_iterator.zig");
-const SvgInstance = @import("../../core/svg_instance.zig").SvgInstance;
-const ImageInstance = @import("../../core/image_instance.zig").ImageInstance;
+const scene_mod = @import("../../scene/mod.zig");
+const batch_iter = @import("../../scene/batch_iterator.zig");
+const SvgInstance = @import("../../scene/svg_instance.zig").SvgInstance;
+const ImageInstance = @import("../../scene/image_instance.zig").ImageInstance;
 
 // Re-export for convenience
 pub const BatchIterator = batch_iter.BatchIterator;

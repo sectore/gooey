@@ -4,7 +4,7 @@ const std = @import("std");
 const objc = @import("objc");
 
 const geometry = @import("../../../core/geometry.zig");
-const scene_mod = @import("../../../core/scene.zig");
+const scene_mod = @import("../../../scene/mod.zig");
 const mtl = @import("api.zig");
 const pipelines = @import("pipelines.zig");
 const render_pass = @import("render_pass.zig");

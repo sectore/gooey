@@ -2,9 +2,9 @@
 
 const std = @import("std");
 const platform = @import("../platform/mod.zig");
-const Scene = @import("../core/scene.zig").Scene;
-const Quad = @import("../core/scene.zig").Quad;
-const GlyphInstance = @import("../core/scene.zig").GlyphInstance;
+const Scene = @import("../scene/mod.zig").Scene;
+const Quad = @import("../scene/mod.zig").Quad;
+const GlyphInstance = @import("../scene/mod.zig").GlyphInstance;
 const TextSystem = @import("text_system.zig").TextSystem;
 const Hsla = @import("../core/mod.zig").Hsla;
 const types = @import("types.zig");

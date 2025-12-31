@@ -1,5 +1,5 @@
 const std = @import("std");
-const geometry = @import("geometry.zig");
+const geometry = @import("../core/geometry.zig");
 
 /// Virtual key codes (based on macOS keycodes, used cross-platform)
 pub const KeyCode = enum(u16) {

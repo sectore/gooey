@@ -7,6 +7,7 @@ pub const runner = @import("runner.zig");
 pub const frame = @import("frame.zig");
 pub const input = @import("input.zig");
 pub const render = @import("render.zig");
+pub const watcher = @import("watcher.zig");
 
 // Re-export commonly used types and functions
 pub const runCx = runner.runCx;

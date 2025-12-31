@@ -471,6 +471,23 @@ pub fn lerpColor(a: Color, b: Color, t: f32) Color {
 const Color = @import("../layout/types.zig").Color;
 
 // =============================================================================
+// Trigger Hashing (for animateOn)
+// =============================================================================
+
+/// Compute a hash for any trigger value for use with animateOn.
+///
+/// Uses type-specific handling for common types:
+/// - `bool` → 0 or 1
+/// - `enum` → integer value from @intFromEnum
+/// - Other types → Wyhash of byte representation
+pub fn computeTriggerHash(comptime T: type, value: T) u64 {
+    const info = @typeInfo(T);
+    if (info == .bool) return if (value) 1 else 0;
+    if (info == .@"enum") return @intFromEnum(value);
+    return std.hash.Wyhash.hash(0, std.mem.asBytes(&value));
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

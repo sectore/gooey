@@ -2,20 +2,21 @@
 //!
 //! This module contains the foundational types used throughout gooey:
 //! - Geometry types (Point, Size, Rect, Color)
-//! - Input events (keyboard, mouse)
-//! - Scene primitives (Quad, Shadow, Glyph)
+//! - Input events (keyboard, mouse) - re-exported from `input` module
+//! - Scene primitives (Quad, Shadow, Glyph) - re-exported from `scene` module
 //! - Event system
 //! - Render bridge (layout -> scene conversion)
 //!
 //! ## Architecture
 //!
 //! The core module is designed to have minimal dependencies and serve as
-//! the foundation for all other gooey modules.
+//! the foundation for all other gooey modules. Many types are re-exported
+//! from their canonical locations in other modules for backward compatibility.
 
 const std = @import("std");
 
 // =============================================================================
-// Geometry (platform-agnostic primitives)
+// Geometry (platform-agnostic primitives) - LOCAL
 // =============================================================================
 
 pub const geometry = @import("geometry.zig");
@@ -52,10 +53,10 @@ pub const GpuEdges = geometry.GpuEdges;
 pub const Pixels = geometry.Pixels;
 
 // =============================================================================
-// Input Events
+// Input Events - RE-EXPORTED from input module
 // =============================================================================
 
-pub const input = @import("input.zig");
+pub const input = @import("../input/mod.zig");
 
 pub const InputEvent = input.InputEvent;
 pub const MouseEvent = input.MouseEvent;
@@ -63,12 +64,15 @@ pub const MouseButton = input.MouseButton;
 pub const KeyEvent = input.KeyEvent;
 pub const KeyCode = input.KeyCode;
 pub const Modifiers = input.Modifiers;
+pub const TextInputEvent = input.TextInputEvent;
+pub const CompositionEvent = input.CompositionEvent;
+pub const ScrollEvent = input.ScrollEvent;
 
 // =============================================================================
-// Scene (GPU primitives)
+// Scene (GPU primitives) - RE-EXPORTED from scene module
 // =============================================================================
 
-pub const scene = @import("scene.zig");
+pub const scene = @import("../scene/mod.zig");
 
 pub const Scene = scene.Scene;
 pub const Quad = scene.Quad;
@@ -78,25 +82,26 @@ pub const GlyphInstance = scene.GlyphInstance;
 pub const SvgInstance = scene.SvgInstance;
 pub const ImageInstance = scene.ImageInstance;
 pub const DrawOrder = scene.DrawOrder;
+pub const ContentMask = scene.ContentMask;
 
 // =============================================================================
-// Batch Iterator (draw-order interleaving)
+// Batch Iterator - RE-EXPORTED from scene module
 // =============================================================================
 
-pub const batch_iterator = @import("batch_iterator.zig");
+pub const batch_iterator = scene.batch_iterator;
 
-pub const BatchIterator = batch_iterator.BatchIterator;
-pub const PrimitiveBatch = batch_iterator.PrimitiveBatch;
-pub const PrimitiveKind = batch_iterator.PrimitiveKind;
+pub const BatchIterator = scene.BatchIterator;
+pub const PrimitiveBatch = scene.PrimitiveBatch;
+pub const PrimitiveKind = scene.PrimitiveKind;
 
 // =============================================================================
-// SVG Support
+// SVG Support - LOCAL
 // =============================================================================
 
 pub const svg = @import("svg.zig");
 
 // =============================================================================
-// Render Bridge (layout -> scene conversion)
+// Render Bridge (layout -> scene conversion) - LOCAL
 // =============================================================================
 
 pub const render_bridge = @import("render_bridge.zig");
@@ -105,7 +110,7 @@ pub const colorToHsla = render_bridge.colorToHsla;
 pub const renderCommandsToScene = render_bridge.renderCommandsToScene;
 
 // =============================================================================
-// Event System
+// Event System - LOCAL
 // =============================================================================
 
 pub const event = @import("event.zig");
@@ -115,51 +120,50 @@ pub const EventPhase = event.EventPhase;
 pub const EventResult = event.EventResult;
 
 // =============================================================================
-// Action System
+// Action System - RE-EXPORTED from input module
 // =============================================================================
 
-pub const action = @import("action.zig");
+pub const action = input.actions;
 
-pub const Keymap = action.Keymap;
-pub const Keystroke = action.Keystroke;
-pub const KeyBinding = action.KeyBinding;
-pub const actionTypeId = action.actionTypeId;
+pub const Keymap = input.Keymap;
+pub const Keystroke = input.Keystroke;
+pub const KeyBinding = input.KeyBinding;
+pub const actionTypeId = input.actionTypeId;
 
 // =============================================================================
-// Context System
+// Context System - RE-EXPORTED from context module
 // =============================================================================
 
-// pub const context = @import("context.zig");
-// pub const Context = context.Context;
+pub const context = @import("../context/mod.zig");
 
 // Handler
-pub const handler = @import("handler.zig");
-pub const HandlerRef = handler.HandlerRef;
+pub const handler = context.handler;
+pub const HandlerRef = context.HandlerRef;
 
 // =============================================================================
-// Entity System
+// Entity System - RE-EXPORTED from context module
 // =============================================================================
 
-pub const entity = @import("entity.zig");
-pub const Entity = entity.Entity;
-pub const EntityId = entity.EntityId;
-pub const EntityMap = entity.EntityMap;
-pub const EntityContext = entity.EntityContext;
-pub const isView = entity.isView;
+pub const entity = context.entity;
+pub const Entity = context.Entity;
+pub const EntityId = context.EntityId;
+pub const EntityMap = context.EntityMap;
+pub const EntityContext = context.EntityContext;
+pub const isView = context.isView;
 
 // =============================================================================
-// Focus System
+// Focus System - RE-EXPORTED from context module
 // =============================================================================
 
-pub const focus = @import("focus.zig");
+pub const focus = context.focus;
 
-pub const FocusManager = focus.FocusManager;
-pub const FocusId = focus.FocusId;
-pub const FocusHandle = focus.FocusHandle;
-pub const FocusEvent = focus.FocusEvent;
+pub const FocusManager = context.FocusManager;
+pub const FocusId = context.FocusId;
+pub const FocusHandle = context.FocusHandle;
+pub const FocusEvent = context.FocusEvent;
 
 // =============================================================================
-// Element Types
+// Element Types - LOCAL
 // =============================================================================
 
 pub const element_types = @import("element_types.zig");
@@ -167,37 +171,39 @@ pub const element_types = @import("element_types.zig");
 pub const ElementId = element_types.ElementId;
 
 // =============================================================================
-// Gooey Context & Widget Store
+// Gooey Context & Widget Store - RE-EXPORTED from context module
 // =============================================================================
 
-pub const gooey = @import("gooey.zig");
-pub const Gooey = gooey.Gooey;
+pub const gooey = context.gooey;
+pub const Gooey = context.Gooey;
 
-pub const widget_store = @import("widget_store.zig");
-pub const WidgetStore = widget_store.WidgetStore;
-
-// =============================================================================
-// Render Stats (performance monitoring)
-// =============================================================================
-
-pub const render_stats = @import("render_stats.zig");
-pub const RenderStats = render_stats.RenderStats;
+pub const widget_store = context.widget_store;
+pub const WidgetStore = context.WidgetStore;
 
 // =============================================================================
-// Debugger/Inspector
+// Render Stats - RE-EXPORTED from debug module
 // =============================================================================
 
-pub const debugger = @import("debugger.zig");
-pub const Debugger = debugger.Debugger;
-pub const DebugMode = debugger.DebugMode;
+pub const debug = @import("../debug/mod.zig");
+
+pub const render_stats = debug.render_stats;
+pub const RenderStats = debug.RenderStats;
 
 // =============================================================================
-// Animation System
+// Debugger/Inspector - RE-EXPORTED from debug module
 // =============================================================================
 
-pub const animation = @import("animation.zig");
+pub const debugger = debug.debugger;
+pub const Debugger = debug.Debugger;
+pub const DebugMode = debug.DebugMode;
 
-pub const Animation = animation.AnimationConfig;
+// =============================================================================
+// Animation System - RE-EXPORTED from animation module
+// =============================================================================
+
+pub const animation = @import("../animation/mod.zig");
+
+pub const Animation = animation.Animation;
 pub const AnimationHandle = animation.AnimationHandle;
 pub const AnimationState = animation.AnimationState;
 pub const Easing = animation.Easing;
@@ -207,7 +213,7 @@ pub const lerpInt = animation.lerpInt;
 pub const lerpColor = animation.lerpColor;
 
 // =============================================================================
-// Custom Shaders
+// Custom Shaders - LOCAL
 // =============================================================================
 
 pub const shader = @import("shader.zig");

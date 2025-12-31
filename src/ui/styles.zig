@@ -17,7 +17,7 @@ pub const ShadowConfig = layout_types.ShadowConfig;
 pub const AttachPoint = layout_types.AttachPoint;
 pub const CornerRadius = layout_mod.CornerRadius;
 pub const ObjectFit = @import("../image/atlas.zig").ObjectFit;
-pub const HandlerRef = @import("../core/handler.zig").HandlerRef;
+pub const HandlerRef = @import("../context/handler.zig").HandlerRef;
 
 // =============================================================================
 // Floating Configuration

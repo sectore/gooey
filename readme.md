@@ -627,13 +627,24 @@ src/
 ├── app.zig          # App entry points (runCx, App, WebApp)
 ├── cx.zig           # Unified context (Cx)
 ├── root.zig         # Public API exports
-├── core/            # Geometry, input, scene, entities, animations
+│
+├── core/            # Foundational types (geometry, events, shaders)
+├── input/           # Input handling (events, actions, keymaps)
+├── scene/           # GPU primitives (scene graph, batching)
+├── context/         # App context (focus, entity, dispatch, widget store)
+├── animation/       # Animation system and easing
+├── debug/           # Debugging tools and render stats
+│
+├── ui/              # Declarative builder (box, vstack, hstack, primitives)
+├── components/      # UI components (Button, TextInput, Modal, Tooltip, etc.)
+├── widgets/         # Stateful widget implementations (text input/area state)
 ├── layout/          # Flexbox-style layout engine
-├── text/            # Text rendering (CoreText, FreeType/HarfBuzz, Canvas backends)
-├── ui/              # Declarative builder (box, vstack, hstack, etc.)
-├── components/      # Button, Checkbox, TextInput, TextArea, Modal, Tooltip, Select, Image, Svg
-├── widgets/         # Lower-level retained widgets
+│
+├── text/            # Text rendering (CoreText, FreeType/HarfBuzz, Canvas)
+├── image/           # Image loading and atlas management
+├── svg/             # SVG rasterization (CoreGraphics, Linux, Canvas)
 ├── platform/        # macOS/Metal, Linux/Vulkan/Wayland, WASM/WebGPU
+├── runtime/         # Frame rendering and input handling
 └── examples/        # Demo applications
 ```
 

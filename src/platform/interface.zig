@@ -44,8 +44,8 @@
 
 const std = @import("std");
 const geometry = @import("../core/geometry.zig");
-const scene_mod = @import("../core/scene.zig");
-const input = @import("../core/input.zig");
+const scene_mod = @import("../scene/mod.zig");
+const input = @import("../input/mod.zig");
 const text_mod = @import("../text/mod.zig");
 
 // =============================================================================

@@ -6,7 +6,7 @@
 const std = @import("std");
 const objc = @import("objc");
 const geometry = @import("../../core/geometry.zig");
-const scene_mod = @import("../../core/scene.zig");
+const scene_mod = @import("../../scene/mod.zig");
 const shader_mod = @import("../../core/shader.zig");
 const text_mod = @import("../../text/mod.zig");
 const Atlas = text_mod.Atlas;
@@ -14,7 +14,7 @@ const platform = @import("platform.zig");
 const metal = @import("metal/metal.zig");
 const custom_shader = metal.custom_shader;
 const input_view = @import("input_view.zig");
-const input = @import("../../core/input.zig");
+const input = @import("../../input/events.zig");
 const display_link = @import("display_link.zig");
 const appkit = @import("appkit.zig");
 

@@ -166,8 +166,8 @@ pub const DispatchNode = struct {
 // Event Listeners
 // =============================================================================
 
-const event_mod = @import("event.zig");
-const input_mod = @import("input.zig");
+const event_mod = @import("../core/event.zig");
+const input_mod = @import("../input/events.zig");
 
 pub const EventPhase = event_mod.EventPhase;
 pub const EventResult = event_mod.EventResult;
@@ -207,7 +207,7 @@ pub const SimpleKeyListener = struct {
     callback: *const fn (event: KeyEvent) EventResult,
 };
 
-const action_mod = @import("action.zig");
+const action_mod = @import("../input/actions.zig");
 pub const ActionTypeId = action_mod.ActionTypeId;
 pub const actionTypeId = action_mod.actionTypeId;
 

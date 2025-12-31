@@ -10,10 +10,10 @@ const platform = @import("../platform/mod.zig");
 const interface_mod = @import("../platform/interface.zig");
 
 // Core imports
-const gooey_mod = @import("../core/gooey.zig");
+const gooey_mod = @import("../context/gooey.zig");
 const geometry_mod = @import("../core/geometry.zig");
-const input_mod = @import("../core/input.zig");
-const handler_mod = @import("../core/handler.zig");
+const input_mod = @import("../input/mod.zig");
+const handler_mod = @import("../context/handler.zig");
 const cx_mod = @import("../cx.zig");
 const ui_mod = @import("../ui/mod.zig");
 
@@ -92,7 +92,7 @@ pub fn runCx(
         ._gooey = &gooey_ctx,
         ._builder = &builder,
         .state_ptr = @ptrCast(state),
-        .state_type_id = cx_mod.typeId(State),
+        .state_type_id = handler_mod.typeId(State),
     };
 
     // Set cx_ptr on builder so components can receive *Cx

@@ -4,7 +4,7 @@
 //! The shader uses a type discriminator to branch between quad and shadow rendering.
 
 const std = @import("std");
-const scene = @import("../../../core/scene.zig");
+const scene = @import("../../../scene/mod.zig");
 
 /// Primitive types for the unified shader
 pub const PrimitiveType = enum(u32) {

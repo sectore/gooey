@@ -67,42 +67,39 @@
 const std = @import("std");
 
 // Core imports
-const gooey_mod = @import("core/gooey.zig");
+const gooey_mod = @import("context/gooey.zig");
 const Gooey = gooey_mod.Gooey;
 const ui_mod = @import("ui/mod.zig");
 const Builder = ui_mod.Builder;
-const handler_mod = @import("core/handler.zig");
-const entity_mod = @import("core/entity.zig");
-const text_field_mod = @import("widgets/text_input.zig");
-const text_area_mod = @import("widgets/text_area.zig");
+const handler_mod = @import("context/handler.zig");
+const entity_mod = @import("context/entity.zig");
+const text_field_mod = @import("widgets/text_input_state.zig");
+const text_area_mod = @import("widgets/text_area_state.zig");
 const scroll_view_mod = @import("widgets/scroll_container.zig");
 
-// Animation imports
-const animation_mod = @import("core/animation.zig");
-pub const Animation = animation_mod.AnimationConfig;
-pub const AnimationHandle = animation_mod.AnimationHandle;
-pub const Easing = animation_mod.Easing;
-pub const Duration = animation_mod.Duration;
-pub const lerp = animation_mod.lerp;
-pub const lerpInt = animation_mod.lerpInt;
-pub const lerpColor = animation_mod.lerpColor;
+// Animation types (re-exported from root.zig for users)
+const animation_mod = @import("animation/mod.zig");
+const Animation = animation_mod.AnimationConfig;
+const AnimationHandle = animation_mod.AnimationHandle;
 
-// Re-export handler types
-pub const HandlerRef = handler_mod.HandlerRef;
-pub const EntityId = entity_mod.EntityId;
-pub const Entity = entity_mod.Entity;
-pub const EntityMap = entity_mod.EntityMap;
-pub const EntityContext = entity_mod.EntityContext;
+// Handler types (re-exported from root.zig for users)
+const HandlerRef = handler_mod.HandlerRef;
+const typeId = handler_mod.typeId;
+const packArg = handler_mod.packArg;
+const unpackArg = handler_mod.unpackArg;
 
-// Re-export UI types for convenience
-pub const Box = ui_mod.Box;
-pub const StackStyle = ui_mod.StackStyle;
-pub const CenterStyle = ui_mod.CenterStyle;
-pub const ScrollStyle = ui_mod.ScrollStyle;
-pub const InputStyle = ui_mod.InputStyle;
-pub const TextAreaStyle = ui_mod.TextAreaStyle;
-pub const Color = ui_mod.Color;
-pub const Theme = ui_mod.Theme;
+// Entity types (re-exported from root.zig for users)
+const EntityId = entity_mod.EntityId;
+const Entity = entity_mod.Entity;
+const EntityMap = entity_mod.EntityMap;
+const EntityContext = entity_mod.EntityContext;
+
+// UI types (re-exported from root.zig for users)
+const Box = ui_mod.Box;
+const StackStyle = ui_mod.StackStyle;
+const CenterStyle = ui_mod.CenterStyle;
+const ScrollStyle = ui_mod.ScrollStyle;
+const Theme = ui_mod.Theme;
 
 /// Cx - The unified rendering context
 ///
@@ -184,10 +181,6 @@ pub const Cx = struct {
 
         if (comptime platform.is_wasm) {
             // No-op on web - glass effects not supported
-            // _ = self;
-            // _ = style;
-            // _ = opacity;
-            // _ = corner_radius;
         } else {
             const mac_window = platform.mac.window;
             const window: *mac_window.Window = @ptrCast(@alignCast(self._gooey.window.ptr));
@@ -201,10 +194,8 @@ pub const Cx = struct {
         const platform = @import("platform/mod.zig");
 
         if (comptime platform.is_wasm) {
-            // _ = self;
             // No-op on web - can't close browser tabs
         } else {
-            // Get the mac window and request close
             const mac_window = platform.mac.window;
             const window: *mac_window.Window = @ptrCast(@alignCast(self._gooey.window.ptr));
             window.performClose();
@@ -228,9 +219,7 @@ pub const Cx = struct {
 
         const Wrapper = struct {
             fn invoke(g: *Gooey, _: EntityId) void {
-                const state_ptr = handler_mod.getRootState(State) orelse {
-                    return;
-                };
+                const state_ptr = handler_mod.getRootState(State) orelse return;
                 method(state_ptr);
                 g.requestRender();
             }
@@ -267,9 +256,7 @@ pub const Cx = struct {
 
         const Wrapper = struct {
             fn invoke(g: *Gooey, packed_arg: EntityId) void {
-                const state_ptr = handler_mod.getRootState(State) orelse {
-                    return;
-                };
+                const state_ptr = handler_mod.getRootState(State) orelse return;
                 const unpacked = unpackArg(Arg, packed_arg);
                 method(state_ptr, unpacked);
                 g.requestRender();
@@ -302,9 +289,7 @@ pub const Cx = struct {
 
         const Wrapper = struct {
             fn invoke(g: *Gooey, _: EntityId) void {
-                const state_ptr = handler_mod.getRootState(State) orelse {
-                    return;
-                };
+                const state_ptr = handler_mod.getRootState(State) orelse return;
                 method(state_ptr, g);
                 g.requestRender();
             }
@@ -340,9 +325,7 @@ pub const Cx = struct {
 
         const Wrapper = struct {
             fn invoke(g: *Gooey, packed_arg: EntityId) void {
-                const state_ptr = handler_mod.getRootState(State) orelse {
-                    return;
-                };
+                const state_ptr = handler_mod.getRootState(State) orelse return;
                 const unpacked = unpackArg(Arg, packed_arg);
                 method(state_ptr, g, unpacked);
                 g.requestRender();
@@ -563,7 +546,7 @@ pub const Cx = struct {
     }
 
     // =========================================================================
-    // Animation API (with comptime optimization)
+    // Animation API
     // =========================================================================
 
     /// Animate with compile-time string hashing (most efficient for literals)
@@ -617,8 +600,7 @@ pub const Cx = struct {
 // =============================================================================
 
 /// Compute a hash for any trigger value for use with animateOn.
-/// Uses Wyhash for types with unique representation, otherwise
-/// attempts direct bit casting for primitives.
+/// Uses type-specific handling for common types.
 fn computeTriggerHash(comptime T: type, value: T) u64 {
     const info = @typeInfo(T);
     if (info == .bool) return if (value) 1 else 0;
@@ -626,94 +608,11 @@ fn computeTriggerHash(comptime T: type, value: T) u64 {
     return std.hash.Wyhash.hash(0, std.mem.asBytes(&value));
 }
 
-/// Get a unique type ID for a type (used for runtime type checking).
-pub fn typeId(comptime T: type) usize {
-    const name_ptr: [*]const u8 = @typeName(T).ptr;
-    return @intFromPtr(name_ptr);
-}
-
-/// Pack an argument into an EntityId for transport through the handler system.
-fn packArg(comptime Arg: type, arg: Arg) EntityId {
-    var storage: u64 = 0;
-    const arg_bytes = std.mem.asBytes(&arg);
-    @memcpy(std.mem.asBytes(&storage)[0..@sizeOf(Arg)], arg_bytes);
-    return .{ .id = storage };
-}
-
-/// Unpack an argument from an EntityId.
-fn unpackArg(comptime Arg: type, entity_id: EntityId) Arg {
-    var result: Arg = undefined;
-    const id_bytes = std.mem.asBytes(&entity_id.id);
-    @memcpy(std.mem.asBytes(&result), id_bytes[0..@sizeOf(Arg)]);
-    return result;
-}
-
 // =============================================================================
 // Tests
 // =============================================================================
 
-test "typeId returns consistent values" {
-    const TestA = struct { a: i32 };
-    const TestB = struct { b: i32 };
-
-    const id_a1 = typeId(TestA);
-    const id_a2 = typeId(TestA);
-    const id_b = typeId(TestB);
-
-    try std.testing.expectEqual(id_a1, id_a2);
-    try std.testing.expect(id_a1 != id_b);
-}
-
-test "packArg/unpackArg roundtrip" {
-    // Test enum
-    const Page = enum { home, settings, about };
-    const page_id = packArg(Page, .settings);
-    const unpacked_page = unpackArg(Page, page_id);
-    try std.testing.expectEqual(Page.settings, unpacked_page);
-
-    // Test i32
-    const int_id = packArg(i32, 42);
-    const unpacked_int = unpackArg(i32, int_id);
-    try std.testing.expectEqual(@as(i32, 42), unpacked_int);
-
-    // Test negative i32
-    const neg_id = packArg(i32, -999);
-    const unpacked_neg = unpackArg(i32, neg_id);
-    try std.testing.expectEqual(@as(i32, -999), unpacked_neg);
-
-    // Test struct that fits in 8 bytes
-    const Point = struct { x: i16, y: i16 };
-    const point_id = packArg(Point, .{ .x = 100, .y = 200 });
-    const unpacked_point = unpackArg(Point, point_id);
-    try std.testing.expectEqual(@as(i16, 100), unpacked_point.x);
-    try std.testing.expectEqual(@as(i16, 200), unpacked_point.y);
-
-    // Test usize (index)
-    const idx_id = packArg(usize, 12345);
-    const unpacked_idx = unpackArg(usize, idx_id);
-    try std.testing.expectEqual(@as(usize, 12345), unpacked_idx);
-
-    // Test bool
-    const bool_id = packArg(bool, true);
-    const unpacked_bool = unpackArg(bool, bool_id);
-    try std.testing.expectEqual(true, unpacked_bool);
-
-    // Test u8
-    const u8_id = packArg(u8, 255);
-    const unpacked_u8 = unpackArg(u8, u8_id);
-    try std.testing.expectEqual(@as(u8, 255), unpacked_u8);
-}
-
-test "packArg/unpackArg with zero values" {
-    const zero_int = packArg(i32, 0);
-    try std.testing.expectEqual(@as(i32, 0), unpackArg(i32, zero_int));
-
-    const zero_usize = packArg(usize, 0);
-    try std.testing.expectEqual(@as(usize, 0), unpackArg(usize, zero_usize));
-
-    const false_bool = packArg(bool, false);
-    try std.testing.expectEqual(false, unpackArg(bool, false_bool));
-}
+// Note: Tests for typeId, packArg, unpackArg are in core/handler.zig
 
 test "pure state methods are fully testable" {
     // This demonstrates the key benefit of the Cx pattern:

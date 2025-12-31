@@ -6,7 +6,7 @@
 const std = @import("std");
 
 // Re-export KeyCode from core input (canonical location)
-pub const KeyCode = @import("../../core/input.zig").KeyCode;
+pub const KeyCode = @import("../../input/events.zig").KeyCode;
 
 // ============================================================================
 // Geometry Types

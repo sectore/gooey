@@ -10,10 +10,10 @@ const builtin = @import("builtin");
 const DEBUG_BATCHES = builtin.mode == .Debug and false; // Set second condition to true to enable batch debug output
 const objc = @import("objc");
 const mtl = @import("api.zig");
-const scene_mod = @import("../../../core/scene.zig");
-const batch_iter = @import("../../../core/batch_iterator.zig");
+const scene_mod = @import("../../../scene/mod.zig");
+const batch_iter = @import("../../../scene/batch_iterator.zig");
 const text_pipeline = @import("text.zig");
-const render_stats = @import("../../../core/render_stats.zig");
+const render_stats = @import("../../../debug/render_stats.zig");
 const unified = @import("unified.zig");
 const svg_pipeline = @import("svg_pipeline.zig");
 const image_pipeline = @import("image_pipeline.zig");
@@ -193,7 +193,7 @@ fn drawGlyphBatch(
 /// Draw a batch of SVG instances using the SVG pipeline
 fn drawSvgBatch(
     encoder: objc.Object,
-    svgs: []const @import("../../../core/svg_instance.zig").SvgInstance,
+    svgs: []const @import("../../../scene/svg_instance.zig").SvgInstance,
     pipelines: Pipelines,
     viewport_size: [2]f32,
     stats: ?*render_stats.RenderStats,
@@ -218,7 +218,7 @@ fn drawSvgBatch(
 /// Draw a batch of image instances using the image pipeline
 fn drawImageBatch(
     encoder: objc.Object,
-    images: []const @import("../../../core/image_instance.zig").ImageInstance,
+    images: []const @import("../../../scene/image_instance.zig").ImageInstance,
     pipelines: Pipelines,
     viewport_size: [2]f32,
     stats: ?*render_stats.RenderStats,
