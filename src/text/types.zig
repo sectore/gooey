@@ -127,6 +127,8 @@ pub const ShapedRun = struct {
     glyphs: []ShapedGlyph,
     /// Total advance width
     width: f32,
+    /// Whether this run owns its memory (false for cache hits)
+    owned: bool = true,
 
     // CoreFoundation release function (for fallback fonts) - macOS only
     const CFRelease = if (is_macos)
@@ -139,6 +141,12 @@ pub const ShapedRun = struct {
         }.f;
 
     pub fn deinit(self: *ShapedRun, allocator: std.mem.Allocator) void {
+        // Skip cleanup for cache hits (they don't own their memory)
+        if (!self.owned) {
+            self.* = undefined;
+            return;
+        }
+
         if (self.glyphs.len > 0) {
             // Release any retained fallback fonts (avoid double-release)
             // Only needed on macOS where we use CoreFoundation

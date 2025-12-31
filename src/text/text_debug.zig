@@ -89,7 +89,7 @@ pub fn logGlyphRasterization(
 
 /// Shape text and log debug info
 pub fn debugShapeText(text_system: *TextSystem, text: []const u8) !void {
-    var shaped = try text_system.shapeText(text);
+    var shaped = try text_system.shapeText(text, null);
     defer shaped.deinit(text_system.allocator);
 
     logShapedRun(text, shaped);
@@ -101,7 +101,7 @@ pub fn debugShapeText(text_system: *TextSystem, text: []const u8) !void {
 
 /// Compare expected vs actual text width
 pub fn checkTextWidth(text_system: *TextSystem, text: []const u8, expected_width: f32, tolerance: f32) !bool {
-    var shaped = try text_system.shapeText(text);
+    var shaped = try text_system.shapeText(text, null);
     defer shaped.deinit(text_system.allocator);
 
     const diff = @abs(shaped.width - expected_width);
@@ -131,7 +131,7 @@ fn getCharPreview(text: []const u8, cluster: u32) []const u8 {
 /// Debug helper to compare glyph advances between platforms
 /// Call this with the same text on both native and web builds
 pub fn logGlyphAdvances(text_system: *TextSystem, text: []const u8) !void {
-    var shaped = try text_system.shapeText(text);
+    var shaped = try text_system.shapeText(text, null);
     defer shaped.deinit(text_system.allocator);
 
     debugLog("Glyph advances for \"{s}\" ({s}):", .{ text, platform_name });

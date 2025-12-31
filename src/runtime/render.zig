@@ -113,6 +113,7 @@ pub fn renderCommand(gooey_ctx: *Gooey, cmd: layout_mod.RenderCommand) !void {
                         .underline = text_data.underline,
                         .strikethrough = text_data.strikethrough,
                     },
+                    .stats = gooey_ctx.scene.stats,
                 },
             );
         },

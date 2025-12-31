@@ -1022,7 +1022,7 @@ pub const TextArea = struct {
     fn measureText(self: *Self, text_system: *TextSystem, text: []const u8) !f32 {
         _ = self;
         if (text.len == 0) return 0;
-        var shaped = try text_system.shapeText(text);
+        var shaped = try text_system.shapeText(text, null);
         defer shaped.deinit(text_system.allocator);
         return shaped.width;
     }

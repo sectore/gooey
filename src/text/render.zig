@@ -9,6 +9,7 @@ const TextSystem = @import("text_system.zig").TextSystem;
 const Hsla = @import("../core/mod.zig").Hsla;
 const types = @import("types.zig");
 const TextDecoration = types.TextDecoration;
+const RenderStats = @import("../debug/render_stats.zig").RenderStats;
 
 const is_wasm = platform.is_wasm;
 
@@ -20,6 +21,8 @@ pub const RenderTextOptions = struct {
     decoration: TextDecoration = .{},
     /// Optional separate color for decorations (uses text color if null)
     decoration_color: ?Hsla = null,
+    /// Optional stats for performance tracking (pass null to skip)
+    stats: ?*RenderStats = null,
 };
 
 pub fn renderText(
@@ -34,7 +37,7 @@ pub fn renderText(
 ) !f32 {
     if (text.len == 0) return 0;
 
-    var shaped = try text_system.shapeText(text);
+    var shaped = try text_system.shapeText(text, options.stats);
     defer shaped.deinit(text_system.allocator);
 
     var pen_x = x;

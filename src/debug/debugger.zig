@@ -47,6 +47,9 @@ pub const FrameSnapshot = struct {
     quads_rendered: u32 = 0,
     glyphs_rendered: u32 = 0,
     draw_calls: u32 = 0,
+    shape_misses: u32 = 0,
+    shape_time_ns: u64 = 0,
+    shape_cache_hits: u32 = 0,
 };
 
 /// Cached element information for inspector display
@@ -115,7 +118,7 @@ pub const Debugger = struct {
     const PANEL_PADDING: f32 = 12;
     const PANEL_MARGIN: f32 = 16;
     const PROFILER_WIDTH: f32 = 320;
-    const PROFILER_HEIGHT: f32 = 200;
+    const PROFILER_HEIGHT: f32 = 220;
     const GRAPH_HEIGHT: f32 = 80;
 
     const COLOR_HOVER = Hsla.init(0.55, 0.9, 0.5, 0.25);
@@ -198,6 +201,9 @@ pub const Debugger = struct {
             .quads_rendered = if (stats) |s| s.quads_rendered else 0,
             .glyphs_rendered = if (stats) |s| s.glyphs_rendered else 0,
             .draw_calls = if (stats) |s| s.draw_calls else 0,
+            .shape_misses = if (stats) |s| s.shape_misses else 0,
+            .shape_time_ns = if (stats) |s| s.shape_time_ns else 0,
+            .shape_cache_hits = if (stats) |s| s.shape_cache_hits else 0,
         };
         self.frame_history[self.frame_history_index] = snapshot;
         self.frame_history_index = (self.frame_history_index + 1) % FRAME_HISTORY_SIZE;
@@ -513,6 +519,20 @@ pub const Debugger = struct {
         try renderTextSimple(s, text_renderer, self.fmtInt(last_snapshot.quads_rendered), x_left + 60, y4, TEXT_VALUE, scale_factor, metrics);
         try renderTextSimple(s, text_renderer, "Glyphs:", x_left + 120, y4, TEXT_SECONDARY, scale_factor, metrics);
         try renderTextSimple(s, text_renderer, self.fmtInt(last_snapshot.glyphs_rendered), x_left + 180, y4, TEXT_VALUE, scale_factor, metrics);
+        row += 1;
+
+        // Text shaping stats - key for debugging text performance
+        const shape_time_ms = @as(f32, @floatFromInt(last_snapshot.shape_time_ns)) / 1_000_000.0;
+        const shape_color = if (shape_time_ms > 5.0) COLOR_BAD_FPS else if (shape_time_ms > 2.0) COLOR_OK_FPS else TEXT_VALUE;
+        const cache_color = if (last_snapshot.shape_cache_hits > 0) COLOR_GOOD_FPS else TEXT_VALUE;
+        const y5 = panel_y + PANEL_PADDING + row * row_height;
+        try renderTextSimple(s, text_renderer, "Shape:", x_left, y5, TEXT_SECONDARY, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, self.fmtInt(last_snapshot.shape_misses), x_left + 60, y5, shape_color, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, "/", x_left + 90, y5, TEXT_SECONDARY, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, self.fmtInt(last_snapshot.shape_cache_hits), x_left + 100, y5, cache_color, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, "hit", x_left + 135, y5, TEXT_SECONDARY, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, self.fmtFloat(shape_time_ms), x_left + 165, y5, shape_color, scale_factor, metrics);
+        try renderTextSimple(s, text_renderer, "ms", x_left + 215, y5, TEXT_SECONDARY, scale_factor, metrics);
         row += 1.5;
 
         const graph_y = panel_y + PANEL_PADDING + row * row_height;

@@ -28,6 +28,11 @@ pub const RenderStats = struct {
     glyph_batches: u32 = 0,
     svg_batches: u32 = 0,
 
+    // Text shaping stats
+    shape_misses: u32 = 0,
+    shape_time_ns: u64 = 0,
+    shape_cache_hits: u32 = 0,
+
     const Self = @This();
 
     /// Reset all counters to zero (call at start of frame)
@@ -89,6 +94,22 @@ pub const RenderStats = struct {
         self.svgs_culled += count;
     }
 
+    /// Record a text shaping cache miss with timing
+    pub inline fn recordShapeMiss(self: *Self, elapsed_ns: u64) void {
+        self.shape_misses += 1;
+        self.shape_time_ns += elapsed_ns;
+    }
+
+    /// Record a shape cache hit (no shaping needed)
+    pub inline fn recordShapeCacheHit(self: *Self) void {
+        self.shape_cache_hits += 1;
+    }
+
+    /// Get shaping time in milliseconds
+    pub fn shapeTimeMs(self: *const Self) f32 {
+        return @as(f32, @floatFromInt(self.shape_time_ns)) / 1_000_000.0;
+    }
+
     /// Calculate culling efficiency (0.0 = no culling, 1.0 = 100% culled)
     pub fn cullingEfficiency(self: *const Self) f32 {
         const total_quads = self.quads_rendered + self.quads_culled;
@@ -128,6 +149,11 @@ pub const RenderStats = struct {
             \\  Glyph batches:  {d}
             \\  SVG batches:    {d}
             \\  Culling efficiency: {d:.1}%
+            \\───────────────────────────────────────
+            \\  Text shaping:
+            \\    Shape misses: {d}
+            \\    Shape time:   {d:.2}ms
+            \\    Cache hits:   {d}
             \\═══════════════════════════════════════
             \\
         , .{
@@ -148,12 +174,15 @@ pub const RenderStats = struct {
             self.glyph_batches,
             self.svg_batches,
             self.cullingEfficiency() * 100.0,
+            self.shape_misses,
+            self.shapeTimeMs(),
+            self.shape_cache_hits,
         });
     }
 
     /// Format stats as a single-line summary (for HUD overlay)
     pub fn summary(self: *const Self, buf: []u8) []const u8 {
-        const result = std.fmt.bufPrint(buf, "DC:{d} PS:{d} Q:{d}/{d} S:{d} G:{d} V:{d}", .{
+        const result = std.fmt.bufPrint(buf, "DC:{d} PS:{d} Q:{d}/{d} S:{d} G:{d} V:{d} Sh:{d}/{d:.1}ms", .{
             self.draw_calls,
             self.pipeline_switches,
             self.quads_rendered,
@@ -161,6 +190,8 @@ pub const RenderStats = struct {
             self.shadows_rendered,
             self.glyphs_rendered,
             self.svgs_rendered,
+            self.shape_misses,
+            self.shapeTimeMs(),
         }) catch return "stats error";
         return result;
     }
@@ -193,4 +224,18 @@ test "RenderStats basic operations" {
     try std.testing.expectEqual(@as(u32, 2), stats.quad_batches);
     try std.testing.expectEqual(@as(u32, 3), stats.quads_culled);
     try std.testing.expectEqual(@as(f32, 7.5), stats.avgQuadBatchSize());
+}
+
+test "RenderStats shape tracking" {
+    var stats = RenderStats{};
+
+    stats.recordShapeMiss(1_000_000); // 1ms
+    stats.recordShapeMiss(500_000); // 0.5ms
+    stats.recordShapeCacheHit();
+    stats.recordShapeCacheHit();
+
+    try std.testing.expectEqual(@as(u32, 2), stats.shape_misses);
+    try std.testing.expectEqual(@as(u64, 1_500_000), stats.shape_time_ns);
+    try std.testing.expectEqual(@as(u32, 2), stats.shape_cache_hits);
+    try std.testing.expectEqual(@as(f32, 1.5), stats.shapeTimeMs());
 }
